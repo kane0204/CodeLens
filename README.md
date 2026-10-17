@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/kane0204/CodeLens/actions/workflows/ci.yml/badge.svg)](https://github.com/kane0204/CodeLens/actions/workflows/ci.yml)
 ![阶段](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5-Week--01%20%E9%9C%80%E6%B1%82%E5%AE%9A%E4%B9%89-blue)
-![许可证](https://img.shields.io/badge/License-TBD-lightgrey)
+![许可证](https://img.shields.io/badge/License-MIT-green)
 
 > **一句话简介**：CodeLens 把「看不懂的代码」变成「能讲清楚的老师」——面向编程初学者的代码解读、调试引导与练习生成平台。
 
@@ -147,4 +147,4 @@ CodeLens/
 
 ## 许可证
 
-许可证待小组确认后补充（候选：MIT / Apache-2.0）。
+本项目采用 [MIT License](LICENSE)，版权归项目组所有。

@@ -27,11 +27,11 @@
 
 | 列（Status） | 含义 |
 |---|---|
-| `📋 Planned` | 已进入本次迭代候选池但未排期 |
-| `🎯 This Week` | 本周承诺完成 |
-| `⏭ Next Week` | 下周计划 |
-| `⚠️ At Risk` | 进度落后或阻塞，需在周会上说明 |
-| `✅ Done` | 已交付并验证 |
+| `Planned` | 已进入本次迭代候选池但未排期 |
+| `This Week` | 本周承诺完成 |
+| `Next Week` | 下周计划 |
+| `At Risk` | 进度落后或阻塞，需在周会上说明 |
+| `Done` | 已交付并验证 |
 
 自定义字段：`Week`（W1–W6）、`Owner`、`Estimate`（工时）、`Priority`（P0–P3）。
 
@@ -41,12 +41,12 @@
 
 | 列（Status） | 进入条件 |
 |---|---|
-| `📥 Backlog` | 已建 Issue，尚未细化 |
-| `🔍 Ready` | 验收标准明确、可直接开工 |
-| `🚧 In progress` | 已认领并正在做（同时进行不超过 2 项/人） |
-| `👀 In review` | 已提 PR，等待 Review |
-| `✅ Done` | 已合并、已验证、Issue 已关闭 |
-| `⛔ Blocked` | 有外部依赖或需他人决策 |
+| `Backlog` | 已建 Issue，尚未细化 |
+| `Ready` | 验收标准明确、可直接开工 |
+| `In progress` | 已认领并正在做（同时进行不超过 2 项/人） |
+| `In review` | 已提 PR，等待 Review |
+| `Done` | 已合并、已验证、Issue 已关闭 |
+| `Blocked` | 有外部依赖或需他人决策 |
 
 流转规则：一个任务同一时刻只能有 1 名负责人；状态变更需在 Issue 中留一句说明；`Done` 前必须关闭对应 Issue。
 
@@ -56,12 +56,14 @@
 
 | 列（Status） | 含义 |
 |---|---|
-| `🆕 New` | 新报告，待确认 |
-| `🔬 Triaged` | 已复现、已定级、已指派 |
-| `🛠 Fixing` | 修复中 |
-| `🧪 Verifying` | 待回归验证（由报告者验证） |
-| `✅ Closed` | 验证通过并关闭 |
-| `🚫 Won't fix` | 明确不修复，需写明理由 |
+| `New` | 新报告，待确认 |
+| `Triaged` | 已复现、已定级、已指派 |
+| `Fixing` | 修复中 |
+| `Verifying` | 待回归验证（由报告者验证） |
+| `Closed` | 验证通过并关闭 |
+| `Won't fix` | 明确不修复，需写明理由 |
+
+> 三块看板已按上述列完成配置；Kanban 与 Team planning 已加入全部初始 Issue（#1–#10），Bug tracker 等待首个缺陷。
 
 约定：缺陷必须绑定严重程度标签（`priority: P0`–`P3`）；P0 缺陷当日内响应；验证由**非修复者**执行。
 

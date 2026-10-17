@@ -156,7 +156,7 @@ CodeLens/
 | 看板 | 用途 | 主要内容 |
 |---|---|---|
 | [**Team planning**](https://github.com/users/kane0204/projects/1) | 迭代规划与容量管理 | 按周排期、成员认领、优先级排序 |
-| [**Kanban**](https://github.com/users/kane0204/projects/2) | 日常任务流转 | Backlog → Ready → In progress → Review → Done |
+| [**Kanban**](https://github.com/users/kane0204/projects/2) | 日常任务流转 | Backlog → Ready → In progress → In review → Done（+ Blocked） |
 | [**Bug tracker**](https://github.com/users/kane0204/projects/3) | 缺陷跟踪 | 缺陷提交、复现、修复、回归验证 |
 
 看板入口：[Team planning](https://github.com/users/kane0204/projects/1)｜[Kanban](https://github.com/users/kane0204/projects/2)｜[Bug tracker](https://github.com/users/kane0204/projects/3)

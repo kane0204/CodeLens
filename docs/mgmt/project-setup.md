@@ -13,7 +13,13 @@
 
 ## 2. 三个 Projects 看板
 
-按课程要求在仓库的 **Projects** 中建立以下三个看板。建议均使用 Board（表格）视图，并在看板中配置「分组按 Status、排序按 Priority」。
+按课程要求已在仓库 **Projects** 中建立以下三个看板。建议均使用 Board 视图，并在看板中配置「分组按 Status、排序按 Priority」。
+
+| 看板 | 链接 |
+|---|---|
+| Team planning | https://github.com/users/kane0204/projects/1 |
+| Kanban | https://github.com/users/kane0204/projects/2 |
+| Bug tracker | https://github.com/users/kane0204/projects/3 |
 
 ### 2.1 Team planning（迭代规划）
 

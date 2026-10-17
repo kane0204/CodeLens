@@ -155,11 +155,11 @@ CodeLens/
 
 | 看板 | 用途 | 主要内容 |
 |---|---|---|
-| **Team planning** | 迭代规划与容量管理 | 按周排期、成员认领、优先级排序 |
-| **Kanban** | 日常任务流转 | Backlog → Ready → In progress → Review → Done |
-| **Bug tracker** | 缺陷跟踪 | 缺陷提交、复现、修复、回归验证 |
+| [**Team planning**](https://github.com/users/kane0204/projects/1) | 迭代规划与容量管理 | 按周排期、成员认领、优先级排序 |
+| [**Kanban**](https://github.com/users/kane0204/projects/2) | 日常任务流转 | Backlog → Ready → In progress → Review → Done |
+| [**Bug tracker**](https://github.com/users/kane0204/projects/3) | 缺陷跟踪 | 缺陷提交、复现、修复、回归验证 |
 
-看板入口：<https://github.com/kane0204/CodeLens/projects>（创建后请 Pin 到仓库侧边栏）
+看板入口：[Team planning](https://github.com/users/kane0204/projects/1)｜[Kanban](https://github.com/users/kane0204/projects/2)｜[Bug tracker](https://github.com/users/kane0204/projects/3)
 
 流程约定：先在 Issue 中描述任务或缺陷，由负责人在看板上认领并移动状态，通过分支与 PR 提交代码，至少 1 人 Review 后合并，最后关闭 Issue。标签与看板配置见 [docs/mgmt/project-setup.md](docs/mgmt/project-setup.md)。
 

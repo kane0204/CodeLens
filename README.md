@@ -1,16 +1,18 @@
-# CodeLens · 项目结构可视化工具
+# CodeLens · AI 生成代码的可解释性与可信度分析
 
 [![CI](https://github.com/kane0204/CodeLens/actions/workflows/ci.yml/badge.svg)](https://github.com/kane0204/CodeLens/actions/workflows/ci.yml)
 ![阶段](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5-Week--01%20%E9%9C%80%E6%B1%82%E5%AE%9A%E4%B9%89-blue)
 ![许可证](https://img.shields.io/badge/License-MIT-green)
 
-> **一句话简介**：CodeLens 给一个项目文件夹，还你一张看得懂的架构图——自动生成类图、时序图与模块依赖图，帮助初学者快速建立对陌生代码库的整体认知。
+> **一句话简介**：输入一个由 AI 生成（或 AI 辅助）的项目文件夹，CodeLens 输出**它到底在做什么**（代码逻辑）、**结构长什么样**（类图/时序图）、**哪里不可信**（复杂度、坏味、SOLID、AI 特有风险），让黑盒变成可审查的代码。
 
 ## 目录
 
-- [项目简介](#项目简介)
+- [要解决的问题](#要解决的问题)
+- [输出物](#输出物)
 - [核心功能](#核心功能)
-- [输出示例（规划）](#输出示例规划)
+- [逻辑输出长什么样](#逻辑输出长什么样)
+- [证据分级](#证据分级)
 - [技术栈](#技术栈)
 - [快速开始](#快速开始)
 - [项目结构](#项目结构)
@@ -20,102 +22,147 @@
 - [团队与分工](#团队与分工)
 - [文档索引](#文档索引)
 
-## 项目简介
+## 要解决的问题
 
-拿到一个陌生项目时，初学者面对的往往是一屏目录树、几十上百个源文件、分散在文件之间的类关系与调用链。README 通常只讲「怎么跑」，很少讲「结构是什么」；IDE 的跳转只能一次看一个文件；类图插件往往只支持单文件或单一语言，时序图更是少有工具能一键生成。结果是：**能跑起来，但说不清它由哪些模块组成、谁调用了谁、一次请求经过了哪些类。**
+AI 编码工具让代码产量成倍上升，但**代码的可理解性与可信度没有同步上升**。一个模块「能跑」，不代表团队知道它做了什么、为什么这么做、在什么条件下会出错。典型的黑盒表现有四种：
 
-CodeLens 要解决的是「**看懂一个项目**」，而不是「学会一门语言」：
+| 黑盒表现 | 具体症状 |
+|---|---|
+| **逻辑不透明** | 函数能运行，但没人能说清输入经过哪些步骤、在哪些分支会走哪条路、有哪些副作用 |
+| **结构不可见** | 模块、类、调用链散落在大量文件中，评审时只能逐个文件读 |
+| **质量不可量** | 复杂度、重复实现、God Class、循环依赖没有统一度量，问题靠感觉 |
+| **风险不可查** | 隐含假设（非空、网络可用、类型正确）、未处理的异常、可疑的依赖调用被忽略 |
 
-- **输入**：一个本地项目文件夹（或打包后的项目压缩包）；
-- **处理**：多文件静态解析，构建符号表、类型关系图与调用图；
-- **输出**：类图、时序图、模块依赖图等可视化结果，并支持导出为 Mermaid / PlantUML / SVG 与 Markdown 报告；
-- **面向对象**：刚加入课程项目组的学生、第一次接手项目的初级开发者、需要快速评估项目结构的教师与评审。
+CodeLens 的目标是**把 AI 生成的代码从黑盒变成可审查对象**：用静态分析重建代码逻辑与结构，用指标与规则量化风险，用证据等级区分「确定的」与「推断的」。**全流程不调用大模型**——同样的输入与配置，永远得到同样的输出。
 
-本工具**不做**逐行代码讲解、不做刷题与练习生成、不替代 IDE——它是理解项目结构的「望远镜」。
+> 产品面向使用 AI 编码的开发者与代码评审者（尤其是刚接手陌生代码的初学者），核心是**理解与审查**，不是替人写代码，也不是替人改代码。
 
-本项目为课程小组协作开发项目，按「需求 → 算法 → 软件 → 管理 → 复盘」五个阶段推进，全过程在 GitHub 上以 Issue / Kanban / PR 的方式协作与留痕。
+## 输出物
+
+| 类别 | 输出 | 回答的问题 |
+|---|---|---|
+| **代码逻辑** | 语句级轨迹（AST 类型 + 目标）、控制流图（CFG）、def-use 数据流、副作用、隐含假设 | 这段代码到底在做什么？ |
+| **结构视图** | 类图、时序图、模块依赖图、调用图 | 它由哪些部分组成、怎么串起来？ |
+| **质量体检** | 圈复杂度、认知复杂度、函数长度、嵌套、WMC/DIT/CBO/LCOM、坏味清单 | 哪里最难维护？ |
+| **设计检查** | SOLID 的 S/O/D 三条规则命中 | 哪里违反了设计原则？ |
+| **风险清单** | AI 代码特有风险：重复实现、未处理异常、硬编码、死代码、可疑依赖 | 哪里最可能出问题？ |
+| **审查报告** | 证据等级 + 代码位置 + 建议复核点，可导出 Markdown / JSON | 我该重点看哪里？ |
+
+所有结论都携带 `文件:行号`，可点击回到源码。
 
 ## 核心功能
 
 | 编号 | 功能 | 说明 | 阶段 |
 |---|---|---|---|
 | F1 | 项目扫描与多文件解析 | 递归扫描文件夹，识别语言、源文件、包/模块结构，构建符号表 | MVP |
-| F2 | 类图生成 | 抽取类、属性、方法及继承、实现、组合、关联、依赖关系，输出标准类图 | MVP |
-| F3 | 时序图生成 | 从入口函数（如 `main`、路由处理函数）或用户指定函数出发，跨文件推导调用链，生成消息序列图 | MVP |
-| F4 | 模块依赖图 / 调用图 | 包与文件级依赖、函数级调用关系，用于理解整体分层与耦合 | MVP（基础版） |
-| F5 | 交互式浏览 | Web 页面查看图，点击节点跳转到对应源码位置（文件 + 行号） | 迭代 2 |
-| F6 | 导出与报告 | 导出 Mermaid / PlantUML / SVG，生成 Markdown 架构报告，可接入 CI 自动更新 | MVP（导出）/ 迭代 2（报告） |
-| F7 | 智能补充说明 | 可选的模型辅助：为模块/类生成一句话职责说明；**图结构始终来自静态分析** | 迭代 2 |
+| F2 | **逻辑抽取** | 为函数/模块构建逻辑模型：语句轨迹、CFG、def-use、分支、异常、副作用、前置假设 | MVP |
+| F3 | **逻辑说明生成** | 用模板把逻辑模型转成文字，逐条引用代码位置；不调用模型，输出确定可复现 | MVP |
+| F4 | 类图生成 | 类、属性、方法及继承/实现/组合/关联/依赖 | MVP |
+| F5 | 时序图生成 | 从入口或指定函数出发的跨文件调用链与消息顺序 | MVP |
+| F6 | 模块依赖图 / 调用图 | 依赖方向、循环依赖、函数级调用 | MVP |
+| F7 | 复杂度与坏味 | 函数/类/模块三级指标 + 10 类坏味 + 健康度评分 | MVP |
+| F8 | SOLID 检查 | 首期 SRP / OCP / DIP 三条规则 | MVP |
+| F9 | AI 代码风险检查 | 重复实现、未处理异常、硬编码、死代码、可疑依赖调用等 | MVP（基础）/ 迭代 2（扩展） |
+| F10 | 交互式审查 | 逻辑步骤与代码行联动、图与风险联动、按模块过滤 | 迭代 2 |
+| F11 | 报告导出 | Markdown 审查报告 + JSON + Mermaid/PlantUML/SVG | MVP |
 
-**准确性原则**：图中的节点与边必须可溯源到代码位置（文件:行号）；模型只负责文字描述，不参与「猜结构」，避免生成看起来合理但不存在的类或调用。
+## 逻辑输出长什么样
 
-## 输出示例（规划）
+以一段 AI 生成的代码为例：
 
-```mermaid
-classDiagram
-    class OrderService {
-        +createOrder(items)
-        +cancelOrder(id)
-    }
-    class OrderRepository {
-        +save(order)
-        +findById(id)
-    }
-    class PaymentGateway {
-        +charge(amount)
-    }
-    OrderService --> OrderRepository : uses
-    OrderService --> PaymentGateway : calls
+```python
+def process_orders(orders, repo, pay):
+    total = 0
+    for o in orders:
+        if o.status == "paid":
+            total += o.amount
+    if total > 1000:
+        pay.charge(total * 0.9)
+    return total
 ```
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant S as OrderService
-    participant R as OrderRepository
-    participant P as PaymentGateway
-    C->>S: createOrder(items)
-    S->>R: save(order)
-    S->>P: charge(amount)
-    P-->>S: success
-    S-->>C: orderId
+CodeLens 输出（示意）：
+
+```text
+低层逻辑  process_orders(orders, repo, pay)   service/order.py:1-8
+
+语句轨迹
+  :2  total = 0                      assign   target=total
+  :3  for o in orders:               loop     iter=orders
+  :4    if o.status == "paid":       branch   cond=(Compare: o.status == "paid")
+  :5      total += o.amount          assign   target=total  value=(BinOp: total + o.amount)
+  :6  if total > 1000:               branch   cond=(Compare: total > 1000)
+  :7    pay.charge(total * 0.9)      call     callee=pay.charge  args=[total * 0.9]
+  :8  return total                   return   value=total
+
+控制流（CFG）
+  :2 → :3 → :4 --true--> :5 → :3
+             └--false--------------→ :3 → (exit) → :6 → :7 → :8
+
+数据流（def-use）
+  orders → o（迭代） → o.status / o.amount → total → total → return
+  定义：:2 total，:5 total（重定义）
+  使用：:4 o，:5 o.amount，:6 total，:7 total，:8 total
+
+副作用
+  :7 call → 目标解析失败（属性调用、类型未知）→ 推断为外部调用
+
+假设与风险
+  :4 直接访问 o.status，未判空
+  :7 调用未包裹异常处理
+  [推断] 重复执行会重复扣款（无幂等判断）
+  [事实] 金额使用浮点运算（:5）
 ```
 
-> 上图为格式示意，实际输出将由分析器从项目源码中抽取，并附源码位置索引。
+这类输出直接回答三个问题：**每一步做了什么、数据怎么流动、哪里可能出事**。描述由模板从 AST/CFG/def-use 生成，措辞固定、可逐行核对。
+
+## 证据分级
+
+报告中的每条结论都标注来源，避免把推测当成事实：
+
+| 等级 | 含义 | 示例 |
+|---|---|---|
+| **事实** | 由语法/符号/调用图直接得到，可精确复现 | 「第 7 行调用了 `pay.charge`」 |
+| **推断** | 由启发式规则推断，可能有例外 | 「该调用可能触发外部支付请求」 |
+
+> 所有文字描述都由模板从事实生成；不引入模型，也不存在「模型编造结构」的风险。推断类结论单独标注。
 
 ## 技术栈
 
 | 层 | 选型 | 说明 |
 |---|---|---|
-| 解析与图构建 | Python 3.11 + tree-sitter（多语言）+ networkx | 多文件 AST 解析、符号解析、依赖与调用图构建 |
-| 图生成与布局 | Mermaid / PlantUML 生成器 + Graphviz（可选） | 类图、时序图、依赖图输出；大规模图自动裁剪与聚类 |
-| 后端 | Python（FastAPI）+ 任务队列 | 接收项目、调度分析任务、产出图表与报告 |
-| 前端 | TypeScript + React + 图渲染库 | 上传/选择项目、交互式查看图、源码跳转 |
-| 测试 | pytest + 样例项目集 + Playwright | 解析准确率回归、图表渲染、E2E |
-| CI/CD | GitHub Actions | 结构检查 → 单元测试 → 样例项目分析回归 |
+| 解析与建模 | Python 3.11 + 标准库 `ast`（首期）+ networkx | 多文件 AST、符号表、控制流/数据流、关系图 |
+| 度量与规则 | 自研指标计算 + 规则引擎（阈值可配置） | 复杂度、坏味、SOLID S/O/D、AI 代码风险 |
+| 逻辑说明 | 纯模板生成（无模型） | 从 AST/CFG/def-use 逐条生成文字，输出确定、可复现 |
+| 图生成 | Mermaid / PlantUML 生成器 + Graphviz（可选） | 类图、时序图、依赖图 |
+| 后端 | Python（FastAPI）+ 任务队列 | 分析任务调度、结果存储、报告生成 |
+| 前端 | TypeScript + React + 图渲染库 | 逻辑步骤浏览、图查看、风险定位 |
+| 测试 | pytest + 样例项目集 + Playwright | 指标对拍、规则正反例、端到端 |
 
-> 具体版本与依赖将在 W3 架构设计中锁定；首期支持语言见 [docs/requirements/problem_definition.md](docs/requirements/problem_definition.md) 第 5 节的待确认项。
+**首期范围**：Python 3.11（标准库 `ast`）；SOLID 实现 SRP / OCP / DIP；LSP / ISP 列入后续迭代；全流程不使用大模型。
 
 ## 快速开始
 
 目标形态（W3 起提供，当前尚未实现代码）：
 
 ```bash
-# 克隆仓库
 git clone https://github.com/kane0204/CodeLens.git
 cd CodeLens
 git checkout develop
 
-# 分析一个项目文件夹（规划中的 CLI 形态）
-codelens analyze ./examples/shop \
+codelens analyze ./examples/ai-generated-shop \
   --out ./out \
-  --format mermaid
+  --format mermaid \
+  --report markdown
 
 # 产出（示意）
-# out/class-diagram.mmd      类图
-# out/sequence/*.mmd         时序图（每个入口一条）
-# out/module-deps.mmd        模块依赖图
-# out/report.md              架构报告（含源码位置索引）
+# out/logic.json            逻辑模型（语句/CFG/def-use/假设）
+# out/logic.md              逻辑说明
+# out/class-diagram.mmd
+# out/sequence/*.mmd
+# out/metrics.json          复杂度与规模指标
+# out/findings.json         坏味、SOLID、AI 风险
+# out/report.md             审查报告
 ```
 
 ## 项目结构
@@ -124,79 +171,70 @@ codelens analyze ./examples/shop \
 CodeLens/
 ├── docs/
 │   ├── requirements/     # 需求工程：问题定义、5W1H、用户故事、用例
-│   ├── algorithm/        # 算法设计：多文件解析、符号解析、类图/调用链/时序图
+│   ├── algorithm/        # 算法设计：解析、逻辑抽取、图构建、度量、规则
 │   ├── software/         # 软件设计：架构、接口、数据模型、测试方案
 │   ├── mgmt/             # 项目管理：看板说明、迭代计划、Backlog、协作规范
 │   └── retrospection/    # 阶段复盘与经验教训
 ├── code/
-│   ├── backend/          # 服务端 API、分析任务调度、报告产出
-│   ├── frontend/         # Web 前端：项目导入、图表浏览、源码跳转
-│   └── core_engine/      # 核心引擎：解析、符号表、关系图、图表生成
+│   ├── backend/          # 服务端 API、任务调度、报告生成
+│   ├── frontend/         # Web 前端：逻辑浏览、图查看、风险定位
+│   └── core_engine/      # 核心引擎：解析、逻辑建模、图、指标、规则
 ├── tests/
-│   ├── unit/             # 单元测试（解析器、图构建、生成器）
-│   └── integration/      # 集成测试（样例项目端到端分析）
+│   ├── unit/             # 单元测试（解析、逻辑模型、指标、规则）
+│   └── integration/      # 集成测试（样例项目端到端）
 └── .github/
-    ├── workflows/        # CI 流水线
-    └── ISSUE_TEMPLATE/   # 任务 / 缺陷 / 需求 / 检查点模板
+    ├── workflows/
+    └── ISSUE_TEMPLATE/
 ```
 
 ## 分支与提交规范
 
-- `main`：生产/交付分支，始终保持可发布状态，只接受来自 `develop` 或 `release/*` 的 PR；
-- `develop`：开发主分支，集成所有已完成的功能；
-- `feature/<name>`、`fix/<name>`、`docs/<name>`：日常开发分支，从 `develop` 切出，完成后 PR 回 `develop`；
+- `main`：生产/交付分支，只接受来自 `develop` 或 `release/*` 的 PR；
+- `develop`：开发主分支；
+- `feature/<name>`、`fix/<name>`、`docs/<name>`：从 `develop` 切出，完成后 PR 回 `develop`；
 - 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)，须关联 Issue 编号。
 
 完整规则见 [docs/mgmt/branching-and-commit.md](docs/mgmt/branching-and-commit.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 协作流程
 
-项目在 GitHub 上建立三个看板（Projects）：
-
-| 看板 | 用途 | 主要内容 |
+| 看板 | 用途 | 链接 |
 |---|---|---|
-| [**Team planning**](https://github.com/users/kane0204/projects/1) | 迭代规划与容量管理 | 按周排期、成员认领、优先级排序 |
-| [**Kanban**](https://github.com/users/kane0204/projects/2) | 日常任务流转 | Backlog → Ready → In progress → In review → Done（+ Blocked） |
-| [**Bug tracker**](https://github.com/users/kane0204/projects/3) | 缺陷跟踪 | 缺陷提交、复现、修复、回归验证 |
+| Team planning | 迭代规划与容量管理 | https://github.com/users/kane0204/projects/1 |
+| Kanban | 日常任务流转 | https://github.com/users/kane0204/projects/2 |
+| Bug tracker | 缺陷跟踪 | https://github.com/users/kane0204/projects/3 |
 
-看板入口：[Team planning](https://github.com/users/kane0204/projects/1)｜[Kanban](https://github.com/users/kane0204/projects/2)｜[Bug tracker](https://github.com/users/kane0204/projects/3)
-
-流程约定：先在 Issue 中描述任务或缺陷，由负责人在看板上认领并移动状态，通过分支与 PR 提交代码，至少 1 人 Review 后合并，最后关闭 Issue。标签与看板配置见 [docs/mgmt/project-setup.md](docs/mgmt/project-setup.md)。
+流程：Issue 描述任务 → 看板认领 → 功能分支开发 → PR（`Closes #编号`）→ 至少 1 人 Review → 合并 → 关闭 Issue。
 
 ## 迭代计划
 
 | 周次 | 目标 | 交付物 | 检查点 |
 |---|---|---|---|
-| W1 | 立项与问题定义 | 仓库结构、README、5W1H 与产品描述、三个看板 | 提交仓库链接，通过 Issue 获得第一轮反馈 |
-| W2 | 需求与算法设计 | 用户故事、用例、多文件解析与类图/时序图算法方案 | 需求评审 |
-| W3 | 架构与骨架 | 架构与接口定义、CLI 解析出「类 + 调用」结构化 JSON、可用假数据渲染图 | 设计评审 |
-| W4–W6 | MVP 实现 | 项目扫描 → 类图 → 时序图 → 导出 Mermaid，样例项目端到端跑通 | 迭代演示 |
-
-详细排期与任务分解见 [docs/mgmt/backlog.md](docs/mgmt/backlog.md)。
+| W1 | 立项与问题定义 | 仓库结构、README、5W1H 与产品描述、三个看板 | 提交仓库链接，获得第一轮反馈 |
+| W2 | 需求与算法设计 | 逻辑模型定义、指标与规则、Python 样例项目 | 需求与规则评审 |
+| W3 | 架构与骨架 | 解析 → 逻辑模型 JSON → 类图 + 指标骨架 | 设计评审 |
+| W4–W6 | MVP | 逻辑说明 + 类图/时序图 + 复杂度/坏味 + SOLID S/O/D + AI 风险 + 审查报告 | 迭代演示 |
 
 ## 团队与分工
 
 | 角色 | 成员 | 职责 |
 |---|---|---|
 | 组长 / 项目管理 | TBD | 排期、看板维护、对外提交检查点 |
-| 需求与算法 | TBD | 需求文档、解析与图生成算法设计 |
-| 核心引擎 | TBD | 多文件解析、符号表、关系图、图表生成 |
-| 前端 / 后端 | TBD | 项目导入、图交互、API 与报告 |
-| 测试与质量 | TBD | 样例项目集、准确率回归、CI、缺陷跟踪 |
-
-> 成员与分工确定后请更新本表，并在 `docs/mgmt/` 中同步任务认领。
+| 需求与规则设计 | TBD | 需求文档、逻辑模型定义、指标与规则 |
+| 核心引擎 | TBD | 解析、逻辑抽取、图构建、度量与规则 |
+| 前端 / 后端 | TBD | 逻辑浏览与审查界面、API 与报告 |
+| 测试与质量 | TBD | 样例项目、准确率与误报率回归、CI |
 
 ## 文档索引
 
 | 文档 | 内容 |
 |---|---|
-| [docs/requirements/problem_definition.md](docs/requirements/problem_definition.md) | 问题定义：5W1H 报告与产品描述（第 1 周交付物） |
-| [docs/mgmt/project-setup.md](docs/mgmt/project-setup.md) | GitHub 看板、标签、里程碑配置 |
+| [docs/requirements/problem_definition.md](docs/requirements/problem_definition.md) | 问题定义：5W1H 与产品描述 |
 | [docs/mgmt/backlog.md](docs/mgmt/backlog.md) | 迭代 Backlog 与验收标准 |
-| [docs/mgmt/branching-and-commit.md](docs/mgmt/branching-and-commit.md) | 分支策略与提交规范 |
-| [docs/algorithm/README.md](docs/algorithm/README.md) | 算法文档规划（解析、类图、调用链、时序图） |
-| [docs/software/README.md](docs/software/README.md) | 软件设计文档规划（架构、接口、数据模型） |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南（新成员从这里开始） |
+| [docs/algorithm/README.md](docs/algorithm/README.md) | 算法文档规划（逻辑抽取、图、指标、规则） |
+| [docs/software/README.md](docs/software/README.md) | 软件设计文档规划 |
+| [docs/mgmt/project-setup.md](docs/mgmt/project-setup.md) | 看板、标签、里程碑配置 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 
 ## 许可证
 

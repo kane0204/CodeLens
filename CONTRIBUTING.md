@@ -27,7 +27,7 @@ git config user.email "<邮箱>"
 ## 3. 分支与提交
 
 - 分支：`main`（生产）← `develop`（开发）← `feature/*` / `fix/*` / `docs/*`；
-- 提交信息：`<type>(<scope>): <简述> (#<Issue>)`，例如 `feat(core_engine): 支持 Python AST 分块解析 (#12)`；
+- 提交信息：`<type>(<scope>): <简述> (#<Issue>)`，例如 `feat(core_engine): 支持 Python AST 语句轨迹抽取 (#12)`；
 - `type` 取值：`feat` `fix` `docs` `test` `refactor` `chore` `perf`；
 - 一次提交只做一件事，不要把无关改动混在同一次提交里。
 
@@ -52,8 +52,8 @@ git config user.email "<邮箱>"
 | 目录 | 写什么 | 主要维护人 |
 |---|---|---|
 | `docs/requirements/` | 需求、5W1H、用户故事、用例 | 需求负责人 |
-| `docs/algorithm/` | 算法思路、伪代码、复杂度、实验数据 | 算法负责人 |
-| `docs/software/` | 架构、模块与接口、数据库、测试方案 | 架构/开发负责人 |
+| `docs/algorithm/` | 逻辑模型、图算法、指标公式、规则设计、实验数据 | 算法负责人 |
+| `docs/software/` | 架构、模块与接口、数据模型、测试方案 | 架构/开发负责人 |
 | `docs/mgmt/` | 看板与迭代计划、协作规范、会议记录 | 组长 |
 | `docs/retrospection/` | 阶段复盘、经验教训、改进项 | 全员参与 |
 

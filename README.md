@@ -201,7 +201,7 @@ CodeLens/
 | 看板 | 用途 | 链接 |
 |---|---|---|
 | Team planning | 迭代规划与容量管理 | https://github.com/users/kane0204/projects/1 |
-| Kanban | 日常任务流转 | https://github.com/users/kane0204/projects/2 |
+| Kanban | 日常任务流转（Backlog → To Do → In Progress → In Review → Done） | https://github.com/users/kane0204/projects/2 |
 | Bug tracker | 缺陷跟踪 | https://github.com/users/kane0204/projects/3 |
 
 流程：Issue 描述任务 → 看板认领 → 功能分支开发 → PR（`Closes #编号`）→ 至少 1 人 Review → 合并 → 关闭 Issue。

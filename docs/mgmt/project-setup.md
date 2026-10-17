@@ -41,14 +41,40 @@
 
 | 列（Status） | 进入条件 |
 |---|---|
-| `Backlog` | 已建 Issue，尚未细化 |
-| `Ready` | 验收标准明确、可直接开工 |
-| `In progress` | 已认领并正在做（同时进行不超过 2 项/人） |
-| `In review` | 已提 PR，等待 Review |
-| `Done` | 已合并、已验证、Issue 已关闭 |
-| `Blocked` | 有外部依赖或需他人决策 |
+| `📋 Backlog` | 想法或待细化的任务，尚未进入本迭代 |
+| `📝 To Do` | 验收标准明确、可开工（已排入本迭代） |
+| `🚧 In Progress` | 已认领并开发中（同时进行不超过 2 项/人） |
+| `🔍 In Review` | 已提 PR，等待 Review |
+| `✅ Done` | PR 已合并 / Issue 已关闭并验证 |
 
 流转规则：一个任务同一时刻只能有 1 名负责人；状态变更需在 Issue 中留一句说明；`Done` 前必须关闭对应 Issue。
+
+**字段与标签**
+
+| 项 | 要求 |
+|---|---|
+| 卡片来源 | 每张卡片 = 一个 Issue 或 PR |
+| Story Points | 数值字段，默认序列 1 / 2 / 3 / 5 / 8 / 13 |
+| 标签 | `feature`（功能）、`bug`（缺陷）、`chore`（杂项） |
+
+**自动化规则**
+
+在 `Kanban` 看板的 **⋯ → Workflows** 中启用：
+
+1. `Pull request merged` → 将卡片状态设为 `Done`；
+2. `Item closed` → 将卡片状态设为 `Done`；
+3. `Auto-add to project` → 新建的 Issue 自动进入 `Backlog`（筛选 `is:issue`）。
+
+> 自动化在 GitHub 网页端配置，GraphQL 未开放这些内置工作流的写接口。
+
+**燃尽图**
+
+GitHub 原生 Projects 不提供燃尽图。可用两种方式：
+
+1. 看板的 **Insights → Burn up / Burn down** 视图（按迭代周期查看完成量）；
+2. 第三方可视化（如 GitHub Projects 的 Chart 插件或导出 CSV 后用表格绘制）。
+
+每周复盘时记录「剩余 Story Points / 剩余任务数」，即可得到迭代燃尽曲线。
 
 ### 2.3 Bug tracker（缺陷跟踪）
 
@@ -63,7 +89,7 @@
 | `Closed` | 验证通过并关闭 |
 | `Won't fix` | 明确不修复，需写明理由 |
 
-> 三块看板已按上述列完成配置；Kanban 与 Team planning 已加入全部初始 Issue（#1–#10），Bug tracker 等待首个缺陷。
+> 三块看板已按上述列完成配置；Issue 由小组按迭代计划自行创建，并添加到对应看板，Bug tracker 用于缺陷。
 
 约定：缺陷必须绑定严重程度标签（`priority: P0`–`P3`）；P0 缺陷当日内响应；验证由**非修复者**执行。
 
@@ -93,7 +119,7 @@
 1. 打开 <https://github.com/kane0204/CodeLens/projects/new>，名称填 `Team planning`，模板选 **Board**，创建后按 2.1 节重命名列；
 2. 重复上述步骤，分别创建 `Kanban`（按 2.2 节列）与 `Bug tracker`（按 2.3 节列）；
 3. 回到仓库首页，把三个看板 **Pin** 到侧边栏，方便组员直达；
-4. 在 `Kanban` 看板上点击 `+ Add item`，把已创建的 Issue（#1–#7）加入看板；
+4. 在 `Kanban` 看板上点击 `+ Add item`，把已创建的 Issue 加入看板；
 5. 把三个看板链接填回 [README.md](../../README.md) 与检查点 Issue #1。
 
 > 为什么不能由脚本一次建完？创建 Projects 需要 GitHub 令牌具备 `project` 范围，而当前本机 Git 凭据（`git-credential-manager`）只有 `gist/repo/workflow`，因此脚本只能创建标签、里程碑与 Issue。

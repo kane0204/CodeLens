@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repo-check:
+    name: 仓库结构与文档检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 校验必需目录与文件
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          required_dirs=(
+            docs/requirements
+            docs/algorithm
+            docs/software
+            docs/mgmt
+            docs/retrospection
+            code/backend
+            code/frontend
+            code/core_engine
+            tests/unit
+            tests/integration
+            .github/workflows
+          )
+
+          required_files=(
+            README.md
+            CONTRIBUTING.md
+            .gitignore
+            docs/requirements/problem_definition.md
+          )
+
+          fail=0
+          for d in "${required_dirs[@]}"; do
+            if [ -d "$d" ]; then
+              echo "OK   目录 $d"
+            else
+              echo "::error::缺少必需目录：$d"
+              fail=1
+            fi
+          done
+
+          for f in "${required_files[@]}"; do
+            if [ -f "$f" ]; then
+              echo "OK   文件 $f"
+            else
+              echo "::error::缺少必需文件：$f"
+              fail=1
+            fi
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::仓库结构不符合规范，请参考 README.md 中的『项目结构』一节。"
+          fi
+          exit "$fail"
+
+      - name: 检查提交信息规范（仅 PR）
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -uo pipefail
+          pattern='^(feat|fix|docs|test|refactor|chore|perf|merge)(\(.+\))?!?: .+'
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          bad=0
+          while read -r subject; do
+            [ -z "$subject" ] && continue
+            case "$subject" in
+              Merge*|Revert*|"fixup!"*) echo "跳过：$subject" ;;
+              *)
+                if ! printf '%s' "$subject" | grep -Eq "$pattern"; then
+                  echo "::warning::提交信息不符合 Conventional Commits：$subject"
+                  bad=1
+                fi
+                ;;
+            esac
+          done < <(git log --format=%s "$base..$head")
+          if [ "$bad" -ne 0 ]; then
+            echo "提示：提交信息规范见 docs/mgmt/branching-and-commit.md（此检查不阻塞合并）。"
+          fi
+          exit 0

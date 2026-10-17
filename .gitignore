@@ -1,0 +1,62 @@
+# ---- 操作系统 ----
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- 编辑器 / IDE ----
+.vscode/*
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Node / 前端 ----
+node_modules/
+dist/
+build/
+.next/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- C/C++ 构建产物 ----
+*.o
+*.obj
+*.exe
+*.stackdump
+*.dll
+*.pdb
+cmake-build-*/
+
+# ---- 本地配置与密钥 ----
+.env
+.env.*
+!.env.example
+*.local.json
+secrets/
+
+# ---- 数据与日志 ----
+*.log
+logs/
+data/*.db
+data/*.sqlite3
+
+# ---- 临时文件 ----
+tmp/
+.tmp/
+*.bak
+*~

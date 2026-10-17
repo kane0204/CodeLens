@@ -110,6 +110,8 @@ CodeLens/
 | **Kanban** | 日常任务流转 | Backlog → Ready → In progress → Review → Done |
 | **Bug tracker** | 缺陷跟踪 | 缺陷提交、复现、修复、回归验证 |
 
+看板入口：<https://github.com/kane0204/CodeLens/projects>（创建后请 Pin 到仓库侧边栏）
+
 流程约定：先在 Issue 中描述任务或缺陷，由负责人在看板上认领并移动状态，通过分支与 PR 提交代码，至少 1 人 Review 后合并，最后关闭 Issue。标签与看板配置见 [docs/mgmt/project-setup.md](docs/mgmt/project-setup.md)。
 
 ## 迭代计划

@@ -80,6 +80,16 @@
 
 ## 5. 配置方式
 
+### 2 分钟网页创建清单（推荐）
+
+1. 打开 <https://github.com/kane0204/CodeLens/projects/new>，名称填 `Team planning`，模板选 **Board**，创建后按 2.1 节重命名列；
+2. 重复上述步骤，分别创建 `Kanban`（按 2.2 节列）与 `Bug tracker`（按 2.3 节列）；
+3. 回到仓库首页，把三个看板 **Pin** 到侧边栏，方便组员直达；
+4. 在 `Kanban` 看板上点击 `+ Add item`，把已创建的 Issue（#1–#7）加入看板；
+5. 把三个看板链接填回 [README.md](../../README.md) 与检查点 Issue #1。
+
+> 为什么不能由脚本一次建完？创建 Projects 需要 GitHub 令牌具备 `project` 范围，而当前本机 Git 凭据（`git-credential-manager`）只有 `gist/repo/workflow`，因此脚本只能创建标签、里程碑与 Issue。
+
 ### 方式一：网页操作（推荐给组长）
 
 1. 打开仓库 → **Projects** → **New project** → 选择 Board，分别建立 `Team planning`、`Kanban`、`Bug tracker`；

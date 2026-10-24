@@ -10,12 +10,30 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <a class="skip" href="#main">跳到主要内容</a>
+  <a class="skip" href="#main" aria-label="跳到主要内容">跳到主要内容</a>
   <div id="app"><main class="import-page"><section class="import-card"><h1>CodeLens 代码分析</h1><p role="status">正在连接分析服务</p><div class="skeleton"></div></section></main></div>
   <input id="folder-input" type="file" webkitdirectory multiple hidden aria-label="选择 Python 项目文件夹">
   <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title">重新导入项目</h2><p>新分析成功后替换当前结果。中止或失败时仍可查看上一次结果。</p><div class="actions"><button data-action="close-dialog" aria-label="取消重新导入">取消</button><button class="primary" data-action="confirm-import" aria-label="确定重新导入">确定</button></div></dialog>
   <dialog id="detail-dialog" class="wide-dialog" aria-label="详细内容"></dialog>
+  <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+    <form id="llm-settings-form">
+      <div class="heading"><h2 id="settings-title">设置</h2><button type="button" class="text" data-action="settings-close" aria-label="关闭设置">×</button></div>
+      <h3>大模型 API（可选）</h3>
+      <p class="muted">暂未接入模型功能。配置可以全部留空，不影响本地代码分析；保存不会发送请求。</p>
+      <label for="llm-base-url">接口地址（Base URL）</label>
+      <input id="llm-base-url" aria-label="大模型接口地址" name="baseUrl" type="url" placeholder="https://your-provider.example/v1" autocomplete="off" spellcheck="false" aria-describedby="llm-url-help">
+      <small id="llm-url-help">用于兼容 OpenAI 格式的接口；填写服务商提供的基础地址。</small>
+      <label for="llm-model">模型名称</label>
+      <input id="llm-model" aria-label="模型名称" name="model" type="text" placeholder="填写服务商提供的模型 ID" autocomplete="off" spellcheck="false" maxlength="200">
+      <label for="llm-api-key">API Key</label>
+      <div class="key-field"><input id="llm-api-key" aria-label="API Key" name="apiKey" type="password" placeholder="可留空" autocomplete="off" spellcheck="false" aria-describedby="llm-key-help"><button type="button" data-action="settings-key-toggle" aria-label="显示 API Key" aria-pressed="false">显示</button></div>
+      <small id="llm-key-help">密钥仅保存在当前页面内存中，刷新后需重新填写，不写入报告或项目文件。</small>
+      <p class="footnote">接口地址和模型名称保存在本机浏览器；目前不验证服务连通性。</p>
+      <p id="settings-error" class="critical" role="alert" hidden></p>
+      <div class="actions"><button type="button" class="text danger" data-action="settings-clear" aria-label="清空配置表单">清空</button><button type="button" data-action="settings-close" aria-label="取消设置">取消</button><button type="submit" class="primary" aria-label="保存设置">保存</button></div>
+    </form>
+  </dialog>
   <noscript>请启用 JavaScript 后使用本地分析工作台。</noscript>
 </body>
 </html>

@@ -59,26 +59,26 @@ CodeLens 的目标是**把 AI 生成的代码从黑盒变成可审查对象**：
 
 ## 快速开始
 
-目标形态（W3 起提供，当前尚未实现代码）：
+已实现本地工作台与基础 Python AST 分析引擎。需要 Python 3.11+；运行服务仅使用标准库，无需安装依赖。
 
 ```bash
 git clone https://github.com/kane0204/CodeLens.git
 cd CodeLens
-git checkout develop
+python -B code/backend/server.py
+```
 
-codelens analyze ./examples/ai-generated-shop \
-  --out ./out \
-  --format mermaid \
-  --report markdown
+打开 [本机工作台](http://127.0.0.1:18766)，选择 Python 项目文件夹并开始分析。Windows 可双击 `start-codelens.cmd`；macOS/Linux 可运行 `sh start-codelens.sh`。端口被占用时使用 `--port 18767` 并访问对应地址。
 
-# 产出（示意）
-# out/logic.json            逻辑模型（语句/CFG/def-use/假设）
-# out/logic.md              逻辑说明
-# out/class-diagram.mmd
-# out/sequence/*.mmd
-# out/metrics.json          复杂度与规模指标
-# out/findings.json         坏味、SOLID、AI 风险
-# out/report.md             审查报告
+当前提供真实文件统计、函数/类识别、带行号的逻辑步骤、复杂度、模块依赖/循环依赖、可确定的调用/继承、6 条基础规则及 Markdown/JSON/Mermaid 导出。没有预置项目或模拟结果。完整 CFG、def-use、时序图、SOLID、重复代码和健康度仍在规划中，上文功能清单不表示全部已交付。
+
+源码仅交给本机服务内存解析，不执行或导入目标项目。最多 200 个 Python 文件、单文件 1 MB、总计 8 MB；默认排除测试、虚拟环境和构建目录。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
+
+检查命令（前端检查另需 Node.js 22+）：
+
+```bash
+python -B -m unittest discover -s tests -p 'test_*.py' -v
+node --check code/frontend/app.js
+node tests/integration/test_frontend.cjs
 ```
 
 ## 项目结构
@@ -111,6 +111,7 @@ CodeLens/
 | [docs/mgmt/backlog.md](docs/mgmt/backlog.md) | 迭代 Backlog 与验收标准 |
 | [docs/algorithm/README.md](docs/algorithm/README.md) | 算法文档规划（逻辑抽取、图、指标、规则） |
 | [docs/software/README.md](docs/software/README.md) | 软件设计文档规划 |
+| [docs/software/local-workbench.md](docs/software/local-workbench.md) | 本地真实分析工作台、接口与限制 |
 | [docs/mgmt/project-setup.md](docs/mgmt/project-setup.md) | 看板、标签、里程碑配置 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 

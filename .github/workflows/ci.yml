@@ -11,6 +11,27 @@ permissions:
   contents: read
 
 jobs:
+  analysis-check:
+    name: 本地分析与工作台测试
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Python 引擎与本机接口回归
+        run: python -B -m unittest discover -s tests -p 'test_*.py' -v
+      - name: 前端语法与真实数据链路
+        run: |
+          node --check code/frontend/app.js
+          node tests/integration/test_frontend.cjs
+
   repo-check:
     name: 仓库结构与文档检查
     runs-on: ubuntu-latest

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="CodeLens 本地 Python 静态分析工作台"><title>CodeLens · 代码审查工作台</title><link rel="stylesheet" href="styles.css"></head>
+<body>
+<aside class="sidebar">
+ <a class="brand" href="#overview"><span class="brand-icon">⌘</span> CodeLens<span class="version">LOCAL</span></a>
+ <div class="workspace-label">工作空间 <span>PYTHON AST</span></div>
+ <button class="project-switch" id="project-switch"><span class="project-icon">P</span><span><strong id="project-label">尚未选择项目</strong><small id="project-status">等待导入 Python 文件夹</small></span><span>⌄</span></button>
+ <div class="nav-caption">分析与审查</div>
+ <nav aria-label="主导航"><button data-page="overview"><span>◫</span>项目概览</button><button data-page="logic"><span>≋</span>逻辑浏览</button><button data-page="structure"><span>◇</span>结构视图</button><button data-page="risks"><span>⚑</span>风险审查 <b id="nav-count">—</b></button><button data-page="export"><span>⇩</span>导出报告</button></nav>
+ <div class="side-bottom"><div class="local-state"><i></i><span id="engine-state">正在连接本机引擎</span></div><p>让代码可理解，让结论可复核。</p><div class="profile"><span>CL</span><div>CodeLens 工作台<small>真实静态分析 · v0.2</small></div></div></div>
+</aside>
+<div class="shell"><header><div class="breadcrumb">工作空间 <span>/</span><span id="breadcrumb-project">未选择项目</span><span>/</span><b id="crumb">项目概览</b></div><div class="header-actions"><span class="demo-badge" id="connection-badge">连接中</span><button class="button small" id="import-button">＋ 导入项目</button></div></header>
+<main id="main"></main><footer>CodeLens / 从黑盒代码到可审查证据 <span>本机 AST 分析 · 不执行源码</span></footer></div>
+<dialog id="import-dialog"><div class="modal-header"><div><span class="eyebrow">NEW PROJECT</span><h2>分析真实 Python 项目</h2></div><button class="icon-button close-dialog" aria-label="关闭">×</button></div><p class="muted">选择项目文件夹。源码只发送到此电脑的本地分析服务，在内存中处理。</p><label class="dropzone"><span class="upload-icon">⇧</span><strong>选择 Python 项目文件夹</strong><span>最多 200 个文件 / 单文件 1 MB / 总计 8 MB</span><input id="folder-input" type="file" webkitdirectory multiple></label><label class="include-tests"><input id="include-tests-note" type="checkbox" checked disabled> 默认排除 tests、虚拟环境和构建目录</label><div id="file-summary" class="file-summary" aria-live="polite">尚未选择文件夹。</div><div class="notice" id="import-notice">不会执行或导入被分析的代码。关闭页面后，本次源码与结果不会被保存在服务器。</div><div class="modal-actions"><button class="button close-dialog">取消</button><button class="button primary" id="run-analysis" disabled>开始真实分析 →</button></div></dialog>
+<dialog id="detail-dialog"></dialog><div id="toast" role="status"></div><script src="app.js"></script>
+</body></html>

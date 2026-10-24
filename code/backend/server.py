@@ -12,15 +12,158 @@ if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
 from core_engine.engine import analyze, VERSION
+from core_engine import health
+from core_engine import rules as extra_rules
+from core_engine import sequence
+from core_engine.ir import build_index
+from ai import contract as ai_contract
+from ai import provider as ai_provider
+from ai import runner as ai_runner
+from ai import skills as ai_skills
 
 ROOT = CODE_ROOT / "frontend"
 TOKEN = secrets.token_urlsafe(32)
 MAX_BODY = 12 * 1024 * 1024
+MAX_AI_TARGETS = ai_runner.MAX_TARGETS
 STATIC = {"/":("index.html","text/html"),"/index.html":("index.html","text/html"),
           "/app.js":("app.js","text/javascript"),"/styles.css":("styles.css","text/css")}
 # 前端按模块拆成多份静态资源，这里只放行 ROOT 下这几个目录与这几种扩展名。
 ASSET_DIRS = ("lib", "views", "features", "assets")
 ASSET_TYPES = {".js":"text/javascript", ".css":"text/css", ".svg":"image/svg+xml", ".woff2":"font/woff2"}
+
+
+def ai_error(code, message):
+    """AI 接口的错误体：结构化的 code 便于前端区分"没开""没证据""参数错"。"""
+    return {"error": {"code": code, "message": message}}
+
+
+# 补充规则单列在这里：引擎 config.rules 仍然只列引擎自己执行的规则，
+# 前端靠这份清单判断「设计检查」页该展示哪几条。
+EXTRA_RULE_IDS = ("SRP-01", "OCP-01", "DIP-01", "A5-DEAD", "A8-DEFENSIVE")
+
+
+def merge_extra(result):
+    """把补充规则（S/O/D、死代码、防御式捕获）并入引擎结果，返回 (merged, extra)。
+
+    只新增 findings 与 config.rules 里的规则名，不改动引擎已产出的键值。
+    """
+    extra = extra_rules.evaluate(result)
+    merged = extra_rules.merge(result, extra)
+    config = merged.get("config")
+    if not isinstance(config, dict):
+        config = {}
+        merged["config"] = config
+    ids = [item for item in (config.get("rules") or []) if isinstance(item, str)]
+    for rule_id in EXTRA_RULE_IDS:
+        if rule_id not in ids:
+            ids.append(rule_id)
+    config["rules"] = ids
+    merged["extra_rules"] = {
+        "findings": len(extra.get("findings") or []),
+        "metrics": extra.get("metrics") or {},
+        "notes": list(extra.get("notes") or []),
+    }
+    return merged, extra
+
+
+def enrich(result):
+    """analyze() 之后补齐三样前端需要的派生数据：补充规则、健康度得分、时序序列。
+
+    三者都是确定性计算，不含模型、不含随机；analyze() 本身的返回契约不受影响。
+    """
+    if not isinstance(result, dict) or result.get("status") in ("empty", "failed"):
+        return result
+    merged, _ = merge_extra(result)
+    merged = health.apply(merged)
+    merged["sequence"] = sequence.build(merged)
+    return merged
+
+
+
+def ai_status():
+    """AI 层的自述：有哪些 skill、当前用哪个 provider、各项上限是多少。"""
+    provider, degraded = ai_provider.resolve_provider()
+    return {
+        "ready": True,
+        "enabled": True,
+        "template_only": provider.kind == "template",
+        "providers": [item.describe() for item in ai_provider.candidates()],
+        "skills": ai_skills.catalogue(),
+        "limits": {
+            "max_targets": ai_runner.MAX_TARGETS,
+            "max_claims_per_result": ai_contract.MAX_CLAIMS_PER_RESULT,
+            "max_claim_chars": ai_contract.MAX_CLAIM_CHARS,
+        },
+        "degraded": degraded,
+        "limitations": list(ai_runner.LIMITATIONS),
+    }
+
+
+def ai_analyze(payload):
+    """跑一次 AI 表达层。事实层仍然是 `analyze()`，这里只做"把事实讲清楚"。"""
+    if not isinstance(payload, dict):
+        raise ai_contract.SkillError("refused", "请求必须是 JSON 对象")
+    skills = payload.get("skills")
+    if not isinstance(skills, list) or not skills:
+        raise ai_contract.SkillError("refused", "skills 必须是非空数组")
+    unknown = [item for item in skills if item not in ai_contract.SKILLS]
+    if unknown:
+        raise ai_contract.SkillError("refused", "未注册的 skill：" + "、".join(str(x)[:40] for x in unknown[:4]))
+    targets = payload.get("targets")
+    if targets is not None:
+        if not isinstance(targets, list) or not all(isinstance(item, str) for item in targets):
+            raise ai_contract.SkillError("refused", "targets 必须是字符串数组或 null")
+        if len(targets) > MAX_AI_TARGETS:
+            raise ai_contract.SkillError("refused", "targets 超过上限 " + str(MAX_AI_TARGETS))
+    options = payload.get("options") or {}
+    if not isinstance(options, dict):
+        raise ai_contract.SkillError("refused", "options 必须是对象")
+    include_text = options.get("include_text", True) is not False
+
+    result = analyze({"project": payload.get("project"), "files": payload.get("files") or []})
+    if result.get("status") in ("empty", "failed"):
+        return {
+            "schema_version": ai_contract.SCHEMA_VERSION,
+            "engine_version": VERSION,
+            "project": result.get("project"),
+            "targets": [],
+            "results": [],
+            "summary": {"requested": 0, "ok": 0, "insufficient_evidence": 0,
+                        "need_more": 0, "refused": 0,
+                        "citations": {"count": 0, "resolved": 0, "unresolved": 0, "coverage": 0.0}},
+            "warnings": [{"code": "no-source", "message": "本次没有可分析的源码，AI 层未执行。"}],
+            "limitations": list(ai_runner.LIMITATIONS),
+        }
+
+    # 补充规则（SOLID 的 S/O/D、A5、A8）只并入这条 AI 路径，不改 analyze() 的契约。
+    merged, extra = merge_extra(result)
+    index = build_index(merged)
+    env = ai_runner.build_env(index, rules=extra)
+    env["ensure_trees"]()
+    provider, degraded = ai_provider.resolve_provider()
+    outcome = ai_runner.Runner(env, provider=provider).run(skills, targets=targets)
+
+    results = outcome["results"]
+    if not include_text:
+        for item in results:
+            item["outputs"] = {}
+            item["notes"] = []
+    warnings = list(outcome["warnings"])
+    if degraded:
+        warnings.append({"code": "provider-fallback",
+                         "message": "外部模型不可用，已退回确定性模板：" + degraded})
+    if extra.get("notes"):
+        warnings.append({"code": "extra-rules", "message": "；".join(extra["notes"])})
+    return {
+        "schema_version": ai_contract.SCHEMA_VERSION,
+        "engine_version": VERSION,
+        "project": result.get("project"),
+        "targets": [item["target"] for item in results],
+        "results": results,
+        "summary": outcome["summary"],
+        "warnings": warnings,
+        "limitations": list(outcome["limitations"]),
+    }
 
 
 def resolve_asset(path):
@@ -79,6 +222,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/api/status":
             return self.send_data(200,{"ready":True,"engine_version":VERSION,"token":TOKEN})
+        if path == "/api/ai/status":
+            return self.send_data(200, ai_status())
         asset = resolve_asset(path)
         if asset is None:
             return self.send_data(404,{"error":"路径不存在"})
@@ -92,8 +237,10 @@ class Handler(BaseHTTPRequestHandler):
         origins = {f"http://127.0.0.1:{self.server.server_port}",f"http://localhost:{self.server.server_port}"}
         if not self.allowed_host() or origin not in origins or self.headers.get("X-CodeLens-Token") != TOKEN:
             return self.send_data(403,{"error":"请从本机 CodeLens 页面发起分析"})
-        if urlsplit(self.path).path != "/api/analyze":
+        path = urlsplit(self.path).path
+        if path not in ("/api/analyze", "/api/ai"):
             return self.send_data(404,{"error":"接口不存在"})
+        is_ai = path == "/api/ai"
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
             return self.send_data(415,{"error":"仅支持 JSON 请求"})
         try:
@@ -104,11 +251,19 @@ class Handler(BaseHTTPRequestHandler):
             data = self.rfile.read(length)
             if len(data) != length:
                 raise ValueError("请求数据不完整")
-            result = analyze(json.loads(data))
-            self.send_data(200,result)
+            payload = json.loads(data)
+            if is_ai:
+                return self.send_data(200, ai_analyze(payload))
+            return self.send_data(200, enrich(analyze(payload)))
+        except ai_contract.SkillError as exc:
+            if is_ai:
+                return self.send_data(400, ai_error(exc.kind, str(exc)[:200]))
+            return self.send_data(400,{"error":str(exc)[:200]})
         except (ValueError, UnicodeError, TypeError) as exc:
             self.send_data(400,{"error":str(exc)[:200]})
         except Exception:
+            if is_ai:
+                return self.send_data(500, ai_error("internal", "AI 解读失败；未生成替代结论"))
             self.send_data(500,{"error":"分析失败，请缩小项目范围后重试；未生成替代结果"})
 
 

@@ -1,5 +1,11 @@
 # 后端（code/backend）
 
+## 当前可运行入口
+
+在仓库根目录运行 `python -B code/backend/server.py`，打开 `http://127.0.0.1:18766`。本地适配器使用标准库 ThreadingHTTPServer，调用 `core_engine.engine.analyze` 并服务 `code/frontend`，不需要第三方依赖。
+
+接口与限制见 [工作台说明](../../docs/software/local-workbench.md)。下文 FastAPI、异步任务和持久化为后续正式服务规划。
+
 负责项目导入、分析任务调度、逻辑模型与图/指标/风险结果存储、报告生成与导出下载。
 
 ## 职责

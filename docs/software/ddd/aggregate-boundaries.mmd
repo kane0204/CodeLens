@@ -1,0 +1,21 @@
+flowchart TB
+    subgraph RUN["聚合边界 A：一次分析 · AnalysisRun（聚合根）"]
+        RUNROOT["AnalysisRun<br/>run_id / 生命周期 / 覆盖状态"]
+        SNAP["SourceSnapshot · 值对象<br/>相对路径 + 文件哈希 + 配置摘要"]
+        FILE["FileAnalysis · 实体<br/>文件身份 / 解析状态 / 符号引用"]
+        LOCATION["SourceLocation · 值对象<br/>相对路径 / 起止行"]
+        RUNROOT --- SNAP
+        RUNROOT --- FILE
+        FILE --- LOCATION
+    end
+    subgraph REPORT["聚合边界 B：一份复核报告 · ReviewReport（聚合根）"]
+        REPORTROOT["ReviewReport<br/>report_id / 草稿或完成 / 覆核入口"]
+        REF["AnalysisReference · 值对象<br/>run_id / 输入摘要 / 引擎与规则版本"]
+        FINDING["ReviewFinding · 实体<br/>报告内 finding_id / 人工复核状态"]
+        EVIDENCE["Evidence · 值对象<br/>事实或推断 / 置信度 / 源码位置"]
+        REPORTROOT --- REF
+        REPORTROOT --- FINDING
+        FINDING --- EVIDENCE
+    end
+    RUNROOT -->|"完成后发布不可变结果快照<br/>报告按 run_id 引用，不持有可变根"| REF
+    RULE["质量领域服务<br/>RuleEvaluator"] -->|"FindingRecord DTO<br/>由根校验并纳入报告"| REPORTROOT

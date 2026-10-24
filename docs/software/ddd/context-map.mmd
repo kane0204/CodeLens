@@ -1,0 +1,20 @@
+flowchart LR
+    USER["开发者 / 代码评审者"]
+    subgraph LOCAL["CodeLens 本地进程 · 模块化单体"]
+        INTAKE["项目接入上下文<br/>支持域<br/>项目快照 / 排除 / 输入校验"]
+        UNDERSTAND["代码理解上下文<br/>核心域<br/>AnalysisRun 聚合根<br/>符号 / 语句轨迹 / 关系 / 指标"]
+        QUALITY["质量与风险上下文<br/>核心域<br/>规则版本 / 阈值 / FindingRecord"]
+        REVIEW["审查与报告上下文<br/>支持域<br/>ReviewReport 聚合根<br/>证据展示 / 人工复核 / 导出"]
+        EXPLAIN["文字说明上下文 · P2<br/>支持域<br/>默认模板 / 可选 LLM 适配器"]
+    end
+    MODEL["外部模型服务 · 可选<br/>不属于核心分析流程"]
+    USER -->|"选择目录"| INTAKE
+    INTAKE -->|"U → D · 已发布契约<br/>SourceSnapshot v1"| UNDERSTAND
+    UNDERSTAND -->|"U → D · 已发布契约<br/>AnalysisIR v1 / Metrics"| QUALITY
+    UNDERSTAND -->|"U → D · 已发布契约<br/>AnalysisSnapshot / 覆盖状态"| REVIEW
+    QUALITY -->|"U → D · 已发布契约<br/>FindingRecord / 规则版本"| REVIEW
+    UNDERSTAND -.->|"只读 IR 引用"| EXPLAIN
+    QUALITY -.->|"只读 finding 引用"| EXPLAIN
+    EXPLAIN -.->|"带引用的说明 DTO"| REVIEW
+    EXPLAIN -.->|"防腐层 ACL<br/>显式配置后才调用"| MODEL
+    REVIEW -->|"可追溯结果 / 下载报告"| USER

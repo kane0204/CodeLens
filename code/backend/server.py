@@ -18,6 +18,40 @@ TOKEN = secrets.token_urlsafe(32)
 MAX_BODY = 12 * 1024 * 1024
 STATIC = {"/":("index.html","text/html"),"/index.html":("index.html","text/html"),
           "/app.js":("app.js","text/javascript"),"/styles.css":("styles.css","text/css")}
+# 前端按模块拆成多份静态资源，这里只放行 ROOT 下这几个目录与这几种扩展名。
+ASSET_DIRS = ("lib", "views", "features", "assets")
+ASSET_TYPES = {".js":"text/javascript", ".css":"text/css", ".svg":"image/svg+xml", ".woff2":"font/woff2"}
+
+
+def resolve_asset(path):
+    """把请求路径映射到 ROOT 内的真实文件；不在白名单内一律返回 None（含目录穿越）。"""
+    if path in STATIC:
+        name, mime = STATIC[path]
+        return ROOT / name, mime
+    if ".." in path or "\\" in path or "//" in path:
+        return None
+    parts = [seg for seg in path.split("/") if seg]
+    if len(parts) < 2 or parts[0] not in ASSET_DIRS:
+        return None
+    # 最后一段是文件名：允许 stem 与单个后缀；中间目录只允许字母数字/-_。
+    stem, dot, suffix = parts[-1].rpartition(".")
+    if not dot or not stem or stem.startswith("."):
+        return None
+    if not all(ch.isalnum() or ch in "-_" for ch in stem):
+        return None
+    mime = ASSET_TYPES.get("." + suffix)
+    if mime is None:
+        return None
+    for seg in parts[:-1]:
+        if seg.startswith(".") or not all(ch.isalnum() or ch in "-_" for ch in seg):
+            return None
+    root = ROOT.resolve()
+    candidate = root.joinpath(*parts).resolve()
+    if candidate != root and root not in candidate.parents:
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate, mime
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -45,10 +79,13 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/api/status":
             return self.send_data(200,{"ready":True,"engine_version":VERSION,"token":TOKEN})
-        if path in STATIC:
-            name,mime = STATIC[path]
-            return self.send_data(200,(ROOT/name).read_bytes(),mime)
-        self.send_data(404,{"error":"路径不存在"})
+        asset = resolve_asset(path)
+        if asset is None:
+            return self.send_data(404,{"error":"路径不存在"})
+        try:
+            return self.send_data(200,asset[0].read_bytes(),asset[1])
+        except OSError:
+            return self.send_data(404,{"error":"路径不存在"})
 
     def do_POST(self):
         origin = self.headers.get("Origin")

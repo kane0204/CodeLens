@@ -1,0 +1,282 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-paper: #faf7f2;
+  --color-paper-deep: #f3eee5;
+  --color-card: #ffffff;
+  --color-ink: #292524;
+  --color-muted: #78716c;
+  --color-faint: #a8a29e;
+  --color-line: #e7e5e4;
+  --color-line-strong: #d6d3d1;
+  --color-primary: #8b5e34;
+  --color-primary-hover: #744f2b;
+  --color-tint: #f3ead9;
+  --color-danger: #b91c1c;
+  --color-warning: #c2410c;
+  --color-success: #15803d;
+
+  --font-sans: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', system-ui, sans-serif;
+  --font-serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
+
+  --shadow-card: 0 1px 2px #0000000d;
+  --radius-control: 4px;
+  --radius-card: 6px;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: #e8d7bd;
+    color: var(--color-ink);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  p {
+    margin: 0;
+  }
+
+  summary {
+    cursor: pointer;
+    list-style: none;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+}
+
+@layer utilities {
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .serif {
+    font-family: var(--font-serif);
+  }
+
+  .paper-grid {
+    background-image: radial-gradient(rgba(139, 94, 52, 0.13) 0.8px, transparent 0.8px);
+    background-size: 22px 22px;
+  }
+
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #d6d3d1 transparent;
+  }
+
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: #d6d3d1;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  .scroll-thin::-webkit-scrollbar-thumb:hover {
+    background: #a8a29e;
+    background-clip: content-box;
+  }
+
+  .hairline {
+    border-color: var(--color-line);
+  }
+
+  .stagger-in {
+    animation: rise 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  }
+}
+
+/* 源码行 */
+.source-block {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+
+.source-line {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  white-space: pre;
+}
+
+.source-line > .ln {
+  padding-right: 12px;
+  text-align: right;
+  color: #a8a29e;
+  user-select: none;
+  border-right: 1px solid #f1eeea;
+  margin-right: 12px;
+}
+
+.source-line.hl {
+  background: #fdf3e3;
+}
+
+.source-line.hl > .ln {
+  color: #8b5e34;
+}
+
+/* 图谱画布 */
+.graph-canvas {
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+
+.graph-canvas.panning {
+  cursor: grabbing;
+}
+
+.graph-node {
+  cursor: pointer;
+}
+
+.graph-node rect {
+  transition: fill 120ms ease, stroke 120ms ease;
+}
+
+.graph-node:hover rect,
+.graph-node:focus-visible rect {
+  stroke: #8b5e34;
+  stroke-width: 2;
+}
+
+/* 表格 */
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fbf8f3;
+  border-bottom: 1px solid var(--color-line);
+  padding: 7px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: #78716c;
+  white-space: nowrap;
+}
+
+.data-table tbody td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #f1eeea;
+  vertical-align: top;
+}
+
+.data-table tbody tr:hover td {
+  background: #fdfbf8;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* 弹层动画 */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-left {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-fade {
+  animation: fade 140ms ease both;
+}
+
+.animate-slide-left {
+  animation: slide-left 200ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

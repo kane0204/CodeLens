@@ -219,6 +219,10 @@ def evaluate(result):
         name = fn.get("name")
         if not isinstance(ident, str) or not isinstance(name, str):
             continue
+        # Non-Python dead code is judged by the language analyzer (private helpers
+        # with no inbound call); this rule only understands Python call semantics.
+        if not str(fn.get("file") or "").endswith(".py"):
+            continue
         metrics["functions"] += 1
         if name.startswith("_") or name in ENTRY_NAMES or name.startswith("test"):
             continue

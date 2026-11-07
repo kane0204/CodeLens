@@ -16,6 +16,7 @@ from core_engine import health
 from core_engine import rules as extra_rules
 from core_engine import sequence
 from core_engine import quality
+from core_engine import special
 from core_engine.ir import build_index
 from ai import contract as ai_contract
 from ai import provider as ai_provider
@@ -26,7 +27,8 @@ from ai import explanation
 ROOT = CODE_ROOT / "frontend"
 TOKEN = secrets.token_urlsafe(32)
 API_REVISION = 2
-CAPABILITIES = ["analyze", "explain", "explain-context", "class-metrics", "duplicates", "class-relations"]
+CAPABILITIES = ["analyze", "explain", "explain-context", "project-review", "class-metrics",
+                "duplicates", "class-relations", "multi-language", "special-risks"]
 MAX_BODY = 12 * 1024 * 1024
 MAX_AI_TARGETS = ai_runner.MAX_TARGETS
 STATIC = {"/":("index.html","text/html"),"/index.html":("index.html","text/html"),
@@ -82,6 +84,7 @@ def enrich(result):
     merged["limitations"] = ["静态分析不执行源码；动态调用与运行时行为无法完整还原。", *extra_rules.NOTES, *quality.NOTES]
     merged = health.apply(merged)
     merged["sequence"] = sequence.build(merged)
+    merged["special_risks"] = special.build(merged)
     return merged
 
 
@@ -225,6 +228,32 @@ class Handler(BaseHTTPRequestHandler):
     def allowed_host(self):
         return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
 
+    def stream_review(self, payload):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+        def emit(event):
+            line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+            self.wfile.write(line)
+            self.wfile.flush()
+
+        try:
+            result = explanation.review(payload, progress=emit)
+            emit({"type": "result", "result": result})
+        except explanation.ExplanationError as exc:
+            emit({"type": "error", "error": str(exc)})
+        except (ValueError, UnicodeError, TypeError) as exc:
+            emit({"type": "error", "error": str(exc)[:200]})
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+        except Exception:
+            emit({"type": "error", "error": "AI 审查失败；未生成替代结论"})
+
     def do_GET(self):
         if not self.allowed_host():
             return self.send_data(403,{"error":"只允许本机访问"})
@@ -248,7 +277,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed_host() or origin not in origins or self.headers.get("X-CodeLens-Token") != TOKEN:
             return self.send_data(403,{"error":"请从本机 CodeLens 页面发起分析"})
         path = urlsplit(self.path).path
-        if path not in ("/api/analyze", "/api/ai", "/api/explain"):
+        if path not in ("/api/analyze", "/api/ai", "/api/explain", "/api/review"):
             return self.send_data(404,{"error":"接口不存在"})
         is_ai = path == "/api/ai"
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
@@ -264,6 +293,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(data)
             if path == "/api/explain":
                 return self.send_data(200, explanation.explain(payload))
+            if path == "/api/review":
+                return self.stream_review(payload)
             if is_ai:
                 return self.send_data(200, ai_analyze(payload))
             return self.send_data(200, enrich(analyze(payload)))
@@ -282,7 +313,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CodeLens 本机真实 Python 静态分析")
+    parser = argparse.ArgumentParser(description="CodeLens 本机多语言静态分析")
     parser.add_argument("--port",type=int,default=18766)
     args = parser.parse_args()
     if sys.version_info < (3,11):

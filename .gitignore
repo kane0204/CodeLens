@@ -60,3 +60,6 @@ tmp/
 .tmp/
 *.bak
 *~
+
+# ---- WorkBuddy 内部工作目录 ----
+.workbuddy/

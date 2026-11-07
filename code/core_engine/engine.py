@@ -10,14 +10,17 @@ import re
 import tokenize
 from pathlib import PurePosixPath
 
-VERSION = "0.3.0"
+from . import generic
+
+VERSION = "0.4.0"
 EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", "build", "dist", "tests"}
 MAX_FILES = 200
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
 RULES = ["CC-01", "LEN-01", "DEPTH-01", "A4", "A3-IO", "CYCLE-01"]
 LIMITATIONS = [
-    "仅解析 Python 3.11 语法；不执行、不导入被分析源码。",
+    "Python 使用 3.11 AST 解析；C/C++/Java/JavaScript/TypeScript/Go 使用词法与花括号配对近似解析；均不执行、不导入被分析源码。",
+    *generic.LIMITATIONS,
     "调用解析仅覆盖唯一绑定的函数、类与显式导入；动态调用、实例类型、多态及 super 不作确定还原。",
     "CC 使用已公开的 AST 判定计数口径，尚未完成与 radon 的全量对拍。",
     "A3-IO 仅检查内置 open 的局部 OSError 捕获；上层异常处理需人工复核。",
@@ -168,20 +171,24 @@ def analyze(payload):
     if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
         raise ValueError("请求必须包含 files 列表")
     if len(payload["files"]) > MAX_FILES:
-        raise ValueError(f"最多分析 {MAX_FILES} 个 Python 文件，请缩小目录范围")
-    project = str(payload.get("project", "Python 项目"))[:120]
+        raise ValueError(f"最多分析 {MAX_FILES} 个源码文件，请缩小目录范围")
+    project = str(payload.get("project", "代码项目"))[:120]
     records, total, seen, excluded_count = [], 0, set(), 0
     for item in payload["files"]:
         if not isinstance(item, dict):
             raise ValueError("文件记录无效")
         path = normalized_path(item.get("path"))
-        if not path.endswith(".py") or any(p in EXCLUDED for p in PurePosixPath(path).parts[:-1]):
+        suffix = PurePosixPath(path).suffix.lower()
+        if suffix not in generic.SUPPORTED or any(p in EXCLUDED for p in PurePosixPath(path).parts[:-1]):
             excluded_count += 1
             continue
         if path in seen:
             raise ValueError("存在重复的文件路径")
         seen.add(path)
-        record = {"path": path, "module": module_name(path), "source": "", "status": "error",
+        is_python = suffix == ".py"
+        record = {"path": path, "module": module_name(path) if is_python else path,
+                  "language": "Python 3.11" if is_python else generic.language_of(path),
+                  "source": "", "status": "error",
                   "functions": [], "classes": [], "line_count": 0, "code_lines": 0}
         try:
             if "content_base64" in item:
@@ -194,8 +201,11 @@ def analyze(payload):
                 raise ValueError("文件超过 1 MB")
             total += len(raw)
             record["sha256"] = hashlib.sha256(raw).hexdigest()
-            encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
-            record["source"] = raw.decode(encoding)
+            try:
+                encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+                record["source"] = raw.decode(encoding)
+            except (SyntaxError, LookupError, UnicodeError):
+                record["source"] = raw.decode("utf-8", errors="replace")
             record["line_count"] = len(record["source"].splitlines())
         except (ValueError, UnicodeError, SyntaxError, LookupError) as exc:
             record["error"] = {"file": path, "line": None, "type": type(exc).__name__,
@@ -207,8 +217,11 @@ def analyze(payload):
     trees, definitions, bindings, scope_parent, imports = {}, {}, {}, {}, []
     definition_nodes, owner_scope, parents = {}, {}, {}
     findings, warnings = [], []
+    generic_calls, generic_dependencies = [], []
     module_paths = {}
     for r in records:
+        if not r["path"].endswith(".py"):
+            continue
         if r["module"] in module_paths:
             raise ValueError("同时存在同名模块文件和包目录，无法唯一识别，请缩小分析范围")
         module_paths[r["module"]] = r["path"]
@@ -319,6 +332,23 @@ def analyze(payload):
     for record in records:
         if "error" in record:
             continue
+        if not record["path"].endswith(".py"):
+            try:
+                info = generic.analyze_record(record, {r["path"] for r in records})
+                record["functions"] = info["functions"]
+                record["classes"] = info["classes"]
+                record["code_lines"] = generic.code_line_count(record["source"])
+                record["status"] = "ok"
+                findings.extend(info["findings"])
+                generic_calls.extend(info["calls"])
+                generic_dependencies.extend(info["dependencies"])
+            except (ValueError, RecursionError, MemoryError) as exc:
+                record["status"] = "error"
+                record["functions"] = []
+                record["classes"] = []
+                record["error"] = {"file": record["path"], "line": None, "type": type(exc).__name__,
+                                   "message": "非 Python 源码解析失败；请检查文件编码与结构"}
+            continue
         try:
             tree = ast.parse(record["source"], filename=record["path"], feature_version=(3,11))
             if sum(1 for _ in ast.walk(tree)) > 100000:
@@ -385,7 +415,22 @@ def analyze(payload):
                 return base + "." + expr.attr
         return None
 
-    calls, inheritance = [], []
+    calls, inheritance = list(generic_calls), []
+    # Non-Python inheritance is resolved by unique class name across the project.
+    class_names = {}
+    for record in records:
+        for cls in record["classes"]:
+            class_names.setdefault(cls["name"], cls["id"])
+    for record in records:
+        if record["path"].endswith(".py") or record["status"] != "ok":
+            continue
+        for cls in record["classes"]:
+            for base in cls.get("bases") or []:
+                target = class_names.get(base.split("::")[-1].strip())
+                if target and target != cls["id"]:
+                    inheritance.append({"source": cls["id"], "target": target,
+                                        "file": record["path"], "line": cls["line"],
+                                        "evidence_type": "inference"})
     valid_defs = {key:entry for key,entry in definitions.items() if entry["file"] in trees}
     def handled_io(call):
         current = call
@@ -461,8 +506,11 @@ def analyze(payload):
             edge["target"] = target
         edge["evidence_type"] = "fact"
         dependencies.append(edge)
+    dependencies.extend(generic_dependencies)
     unique_edges = sorted({(d["source"],d["target"]) for d in dependencies if d["internal"]})
-    cycles = cycles_of(module_paths,unique_edges)
+    graph_nodes = set(module_paths) | {r["module"] for r in records
+                                       if r["status"] == "ok" and not r["path"].endswith(".py")}
+    cycles = cycles_of(graph_nodes,unique_edges)
     for group in cycles:
         evidence = next(d for d in dependencies if d["source"] in group and d["target"] in group)
         finding("CYCLE-01","warning",evidence["file"],evidence["line"],
@@ -475,13 +523,19 @@ def analyze(payload):
     for i, f in enumerate(findings):
         f["id"] = "finding-" + str(i+1)
     status = "empty" if not records else "failed" if len(errors)==len(records) else "partial" if errors else "complete"
+    language_counts = {}
+    for record in records:
+        language_counts[record["language"]] = language_counts.get(record["language"], 0) + 1
+    languages = [name for name in language_counts if name]
+    language_label = " / ".join(sorted(languages)) if languages else "未知"
     return {"schema_version":"1.0","engine_version":VERSION,"project":project,"status":status,
-            "config":{"language":"Python 3.11","excluded":sorted(EXCLUDED),"rules":RULES,
+            "config":{"language":language_label,"languages":sorted(languages),"excluded":sorted(EXCLUDED),"rules":RULES,
                       "thresholds":{"cc":10,"length":50,"nesting":4},
-                      "length_definition":"物理有效代码行，排除空行、纯注释及独立文档字符串；包含定义行与内层定义。",
-                      "cc_definition":"初始1；if/三元/assert +1；循环 +1（else再+1）；try按except数（else再+1）；布尔n项+n-1；推导式+1及if数；match非通配case+1。内层函数/类/lambda不计入外层。"},
+                      "length_definition":"物理有效代码行，排除空行、纯注释及独立文档字符串；包含定义行与内层定义。非 Python 文件排除空行与纯注释行。",
+                      "cc_definition":"Python：初始1；if/三元/assert +1；循环 +1（else再+1）；try按except数（else再+1）；布尔n项+n-1；推导式+1及if数；match非通配case+1。非 Python：初始1，按 if/for/while/case/catch/&&/||/?: 关键字计数。内层函数/类/lambda不计入外层。"},
             "summary":{"files":len(records),"parsed":len(records)-len(errors),"failed":len(errors),
                        "excluded":excluded_count,"functions":len(functions),"classes":len(classes),
+                       "languages":language_counts,
                        "code_lines":sum(r["code_lines"] for r in records if r["status"]=="ok"),
                        "findings":len(findings),"average_cc":round(sum(f["cc"] for f in functions)/len(functions),2) if functions else None,
                        "max_cc":max((f["cc"] for f in functions),default=None)},

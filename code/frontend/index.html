@@ -1,39 +1,22 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>CodeLens 代码分析</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%238b5e34'/%3E%3Cpath d='m13 9-7 7 7 7m6-14 7 7-7 7' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
-</head>
-<body>
-  <a class="skip" href="#main" aria-label="跳到主要内容">跳到主要内容</a>
-  <div id="app"><main class="import-page"><section class="import-card"><h1>CodeLens 代码分析</h1><p role="status">正在连接分析服务</p><div class="skeleton"></div></section></main></div>
-  <input id="folder-input" type="file" webkitdirectory multiple hidden aria-label="选择 Python 项目文件夹">
-  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
-  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title">重新导入项目</h2><p>新分析成功后替换当前结果。中止或失败时仍可查看上一次结果。</p><div class="actions"><button data-action="close-dialog" aria-label="取消重新导入">取消</button><button class="primary" data-action="confirm-import" aria-label="确定重新导入">确定</button></div></dialog>
-  <dialog id="detail-dialog" class="wide-dialog" aria-label="详细内容"></dialog>
-  <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
-    <form id="llm-settings-form">
-      <div class="heading"><h2 id="settings-title">设置</h2><button type="button" class="text" data-action="settings-close" aria-label="关闭设置">×</button></div>
-      <h3>大模型 API（可选）</h3>
-      <p class="muted">用于“逻辑说明”的 AI 自然语言解读。保存后，在逻辑说明中点击生成才会发送所选源码；配置留空时尝试使用服务端环境变量。</p>
-      <label for="llm-base-url">接口地址（Base URL）</label>
-      <input id="llm-base-url" aria-label="大模型接口地址" name="baseUrl" type="url" placeholder="https://your-provider.example/v1" autocomplete="off" spellcheck="false" aria-describedby="llm-url-help">
-      <small id="llm-url-help">用于兼容 OpenAI 格式的接口；填写服务商提供的基础地址。</small>
-      <label for="llm-model">模型名称</label>
-      <input id="llm-model" aria-label="模型名称" name="model" type="text" placeholder="填写服务商提供的模型 ID" autocomplete="off" spellcheck="false" maxlength="200">
-      <label for="llm-api-key">API Key</label>
-      <div class="key-field"><input id="llm-api-key" aria-label="API Key" name="apiKey" type="password" placeholder="可留空" autocomplete="off" spellcheck="false" aria-describedby="llm-key-help"><button type="button" data-action="settings-key-toggle" aria-label="显示 API Key" aria-pressed="false">显示</button></div>
-      <small id="llm-key-help">密钥仅保存在当前页面内存中，刷新后需重新填写，不写入报告或项目文件。</small>
-      <p class="footnote">接口地址和模型名称保存在本机浏览器；保存时不发送请求，生成解读时使用此配置。</p>
-      <p id="settings-error" class="critical" role="alert" hidden></p>
-      <div class="actions"><button type="button" class="text danger" data-action="settings-clear" aria-label="清空配置表单">清空</button><button type="button" data-action="settings-close" aria-label="取消设置">取消</button><button type="submit" class="primary" aria-label="保存设置">保存</button></div>
-    </form>
-  </dialog>
-  <noscript>请启用 JavaScript 后使用本地分析工作台。</noscript>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#edf3f3" />
+    <meta
+      name="description"
+      content="CodeLens 在本地读取 Python 项目，呈现结构、逻辑、复杂度与可验证的代码风险。"
+    />
+    <title>CodeLens · 本地代码洞察工作台</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230d6b67'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%23dff1ee' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='2.4' fill='%23f6a36f'/%3E%3Cpath d='M21 21l5 5' stroke='%23dff1ee' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <script type="module" src="/src/main.jsx"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>

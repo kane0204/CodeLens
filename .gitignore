@@ -58,5 +58,6 @@ data/*.sqlite3
 # ---- 临时文件 ----
 tmp/
 .tmp/
+.playwright-cli/
 *.bak
 *~

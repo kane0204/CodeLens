@@ -1,13 +1,28 @@
-(() => {
+export function mountLegacyWorkbench() {
   'use strict';
+  if (globalThis.__CODELENS_WORKBENCH_MOUNTED__) {
+    return () => {};
+  }
+  globalThis.__CODELENS_WORKBENCH_MOUNTED__ = true;
   const $ = (s, root = document) => root.querySelector(s);
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const val = value => value == null ? '—' : esc(value);
   const arr = value => Array.isArray(value) ? value : [];
-  const pages = {overview:'总览',structure:'项目结构',logic:'逻辑说明',graphs:'关系图谱',metrics:'质量体检',solid:'设计检查',risks:'风险清单',export:'导出报告'};
-  const ruleNames={'CC-01':'圈复杂度','LEN-01':'函数长度','DEPTH-01':'嵌套深度','A4':'硬编码密钥','A3-IO':'边界输入','CYCLE-01':'循环依赖','SRP-01':'单一职责','OCP-01':'开闭原则','LSP-01':'里氏替换','ISP-01':'接口隔离','DIP-01':'依赖倒置','A5-DEAD':'死代码','A8-DEFENSIVE':'过宽异常捕获','DUP-01':'结构重复'};
+  const pages = {overview:'总览',structure:'项目结构',logic:'逻辑说明',graphs:'关系图谱',metrics:'质量体检',solid:'设计检查',risks:'风险清单'};
+  const sourceExtensions=new Set(['.py','.c','.h','.cc','.cpp','.cxx','.hpp','.hh','.java','.cs','.kt','.kts','.js','.jsx','.ts','.tsx','.go','.rs','.rb','.php','.swift','.scala','.vue']);
+  const ruleNames={'CC-01':'圈复杂度','LEN-01':'函数长度','DEPTH-01':'嵌套深度','A4':'硬编码密钥','A3-IO':'边界输入','CYCLE-01':'循环依赖','SRP-01':'单一职责','OCP-01':'开闭原则','LSP-01':'里氏替换','ISP-01':'接口隔离','DIP-01':'依赖倒置','A5-DEAD':'死代码','A8-DEFENSIVE':'过度防御','DUP-01':'结构重复','LANG-CC':'复杂度热点','EXC-01':'未处理异常','VAL-01':'假设未校验','CMT-01':'注释与实现不一致','DEP-01':'可疑依赖调用'};
   const ruleLabel=id=>Object.hasOwn(ruleNames,id)?ruleNames[id]:id;
+  const specialRiskDefs=[
+    ['suspicious-dependency','可疑依赖调用','无法确认目标或属于高风险系统 API 的调用。'],
+    ['duplicate-implementation','重复实现','不同位置存在相同或高度相似的实现。'],
+    ['unhandled-exception','未处理异常','I/O、外部调用或空异常分支缺少可恢复处理。'],
+    ['hardcoded-secret','硬编码敏感信息','敏感字段直接使用字面量赋值。'],
+    ['dead-code','死代码','当前分析范围内没有发现其他引用。'],
+    ['unchecked-assumption','假设未校验','参数、下标或返回值被直接使用，但缺少显式校验。'],
+    ['comment-mismatch','注释与实现不一致','未完成、临时或占位注释可能与当前实现冲突。'],
+    ['excessive-defense','过度防御','异常被静默忽略，或防御代码没有提供有效恢复。']
+  ];
   const severity = {critical:'高',warning:'中',info:'低'};
   const weight = {critical:3,warning:2,info:1};
   const colors = {critical:'#b91c1c',warning:'#c2410c',info:'#a8a29e'};
@@ -31,11 +46,18 @@
   }
   function healthStat() {
     const h=state.result?.health;
-    return `<section class="card stat health-stat"><span class="muted">健康度总分</span><strong>${val(h?.score)}</strong><span class="muted">${val(h?.grade)}</span><div class="health-help"><button class="help-button" data-action="health-help" aria-label="查看健康度计算方式" aria-expanded="false" aria-controls="health-explanation" aria-describedby="health-explanation">?</button><div id="health-explanation" class="health-popover" role="tooltip" hidden><h3>健康度计算方式</h3><p><b>公式</b><br>${val(h?.formula)}</p><p><b>口径</b><br>${val(h?.basis)}</p><ul>${arr(h?.notes).map(note=>`<li>${esc(note)}</li>`).join('')}</ul></div></div></section>`;
+    return `<section class="card stat health-stat"><span class="muted">健康度总分</span><strong>${val(h?.score)}</strong><span class="muted">${val(h?.grade)}</span><div class="health-help"><button class="help-button" data-action="health-help" aria-label="显示健康度计算公式" aria-expanded="false" aria-controls="health-explanation">?</button><div id="health-explanation" class="health-popover" role="tooltip" hidden><code>${val(h?.formula)}</code></div></div></section>`;
   }
-  function showHealthHelp(open) {
-    const popup=$('#health-explanation');if(!popup)return;
-    popup.hidden=!open;$('[data-action="health-help"]').setAttribute('aria-expanded',String(open));
+  function showHealthHelp(open,event) {
+    const popup=$('#health-explanation'),button=$('[data-action="health-help"]');if(!popup||!button)return;
+    button.setAttribute('aria-expanded',String(open));
+    if(!open){popup.hidden=true;return;}
+    popup.hidden=false;
+    const anchor=button.getBoundingClientRect(),box=popup.getBoundingClientRect();
+    const pointerX=event?.clientX||anchor.right,pointerY=event?.clientY||anchor.bottom;
+    const x=Math.max(8,Math.min(pointerX+12,innerWidth-box.width-8));
+    const y=Math.max(8,Math.min(pointerY+12,innerHeight-box.height-8));
+    popup.style.left=`${x}px`;popup.style.top=`${y}px`;
   }
   const functions = () => arr(state.result?.functions);
   const classes = () => arr(state.result?.classes);
@@ -45,6 +67,7 @@
   const functionId = f => typeof f==='string'?f:f?.id;
   const fileFor = id => files().find(f=>arr(f.functions).some(fn=>functionId(fn)===id));
   const moduleName = path => String(path).replace(/\.py$/i,'').replace(/\/__init__$/,'').replaceAll('/','.');
+  const fileLanguage = file => file?.language || (/\.py$/i.test(file?.path||'')?'Python':'源码');
   const moduleFile = id => files().filter(f=>id===moduleName(f.path)||String(id).startsWith(moduleName(f.path)+'.')).sort((a,b)=>b.path.length-a.path.length)[0];
   function nodeFile(id) { return fileFor(id) || moduleFile(id); }
   function toast(message, type='info') {
@@ -67,7 +90,8 @@
   function reportAppendix(safe) {
     const r=state.result;
     const health=r.health;
-    return `\n\n## 健康度\n\n${health?`${safe(health.score)} · ${safe(health.grade)}\n\n${safe(health.formula)}`:'无'}\n\n## 类级指标\n\n${arr(r.class_metrics).map(c=>`- ${safe(c.id)}：WMC=${c.wmc} DIT=${c.dit??'未知'} CBO=${c.cbo} LCOM1=${c.lcom}`).join('\n')||'无'}\n\n## 结构重复\n\n${arr(r.duplicates).map(g=>'- '+g.occurrences.map(o=>`${safe(o.file)}:${o.line}`).join(' / ')).join('\n')||'无'}\n\n## 类关系\n\n${arr(r.graph?.class_relations).map(e=>`- ${safe(e.source)} → ${safe(e.target)}：${safe(e.kind)}（${safe(e.file)}:${e.line}）`).join('\n')||'无'}\n\n## AI 逻辑解读\n\n${state.exportAi?[...aiLogic.cache.values()].map(a=>`### ${safe(a.function||a.file)}\n\n模型：${safe(a.model)}；AI 生成内容，需人工复核。\n\n范围：${arr(a.context).map(c=>`${safe(c.file)}:${c.line}-${c.end_line}`).join('、')}\n\n${String(a.text).split('\n').map(safe).join('\n')}\n`).join('\n')||'本次尚未生成 AI 解读。':'用户选择不包含 AI 解读。'}\n`;
+    const special=arr(r.special_risks?.categories).map(category=>`### ${safe(category.label)}\n\n${safe(category.description)}\n\n${arr(category.items).map(item=>`- ${safe(item.file)}:${item.line??'—'} ${safe(item.message)}`).join('\n')||'未发现。'}`).join('\n\n')||'无';
+    return `\n\n## 代码专项评估\n\n${special}\n\n## 健康度\n\n${health?`${safe(health.score)} · ${safe(health.grade)}\n\n${safe(health.formula)}`:'无'}\n\n## 类级指标\n\n${arr(r.class_metrics).map(c=>`- ${safe(c.id)}：WMC=${c.wmc} DIT=${c.dit??'未知'} CBO=${c.cbo} LCOM1=${c.lcom}`).join('\n')||'无'}\n\n## 结构重复\n\n${arr(r.duplicates).map(g=>'- '+g.occurrences.map(o=>`${safe(o.file)}:${o.line}`).join(' / ')).join('\n')||'无'}\n\n## 类关系\n\n${arr(r.graph?.class_relations).map(e=>`- ${safe(e.source)} → ${safe(e.target)}：${safe(e.kind)}（${safe(e.file)}:${e.line}）`).join('\n')||'无'}\n\n## AI 逻辑解读\n\n${state.exportAi?[...aiLogic.cache.values()].map(a=>`### ${safe(a.function||a.file)}\n\n模型：${safe(a.model)}；AI 生成内容，需人工复核。\n\n范围：${arr(a.context).map(c=>`${safe(c.file)}:${c.line}-${c.end_line}`).join('、')}\n\n${String(a.text).split('\n').map(safe).join('\n')}\n`).join('\n')||'本次尚未生成 AI 解读。':'用户选择不包含 AI 解读。'}\n`;
   }
   function markdown() {
     const r=state.result,s=r.summary||{};
@@ -97,15 +121,16 @@
   function importView() {
     const errors=state.error.length?`<div class="error-box" role="alert"><ul>${state.error.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:'';
     const stats=Object.entries(state.ignored).map(([k,v])=>`${esc(k)}：${v}`).join('；');
-    return `<main id="main" tabindex="-1" aria-label="主要内容" class="import-page"><section class="import-card"><div class="import-settings">${settingsButton()}</div><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>CodeLens</span></div><h1>CodeLens 代码分析</h1><p class="muted">检查 Python 项目的结构、逻辑与代码风险，依据分析结果进行复核。</p>${state.connecting?'<p role="status">正在连接分析服务</p><div class="skeleton"></div>':!state.ready?`${errors}${button('重新连接','connect','', 'primary')}`:`<div id="dropzone" class="dropzone" aria-label="项目文件夹上传区">${state.busy?`<div class="progress-area" role="status"><p>${esc(state.phase)}</p><progress ${state.phase.startsWith('读取')?`value="${state.read}" max="200"`:''} aria-label="分析进度"></progress><p class="muted">${state.phase.startsWith('读取')?`已读 ${state.read}/200`:'分析中，最多等待 120 秒'}</p>${button('中止','abort','','danger')}</div>`:`<div class="drop-symbol" aria-hidden="true"></div><p>将项目文件夹拖到此处</p><small>读取 Python 源码，由本机服务完成静态分析</small>${button('选择文件夹','choose','','primary')}`}${errors}</div><small>最多 200 个 .py 文件，单文件 1MB，总量 8MB</small>${stats?`<p class="footnote">其他类型文件（未上传）：${stats}</p>`:''}`}${state.result?`<p style="margin-top:16px">${button('查看上一次结果','return-result','','text')}</p>`:''}<p class="footnote">静态分析在本机内存中完成；使用 AI 解读时，所选源码会发送到配置的模型服务。</p><div class="import-footer"><span>${state.ready?'<i class="status-dot"></i>本机服务已连接':'等待服务连接'}</span><span class="mono">${esc(state.version)}</span></div></section></main>`;
+    return `<main id="main" tabindex="-1" aria-label="主要内容" class="import-page"><section class="import-card"><div class="import-settings">${settingsButton()}</div><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>CodeLens</span></div><h1>CodeLens 代码分析</h1><p class="muted">读取 Python、C/C++、Java、JavaScript、TypeScript、C#、Go、Rust 等常用源码。</p>${state.connecting?'<p role="status">正在连接分析服务…</p><div class="skeleton"></div>':!state.ready?`${errors}${button('重新连接','connect','', 'primary')}`:`<div id="dropzone" class="dropzone" aria-label="项目文件夹上传区">${state.busy?`<div class="progress-area" role="status"><p>${esc(state.phase)}</p><progress ${state.phase.startsWith('读取')?`value="${state.read}" max="200"`:''} aria-label="分析进度"></progress><p class="muted">${state.phase.startsWith('读取')?`已读 ${state.read}/200`:'分析中，最多等待 120 秒'}</p>${button('中止','abort','','danger')}</div>`:`<div class="drop-symbol" aria-hidden="true"></div><p>将项目文件夹拖到此处</p><small>源码只在本机服务内读取，不执行</small>${button('选择文件夹','choose','','primary')}`}${errors}</div><small>最多 200 个源码文件，单文件 1MB，总量 8MB</small>${stats?`<p class="footnote">未分析文件：${stats}</p>`:''}`}${state.result?`<p style="margin-top:16px">${button('查看上一次结果','return-result','','text')}</p>`:''}<div class="import-footer"><span>${state.ready?'<i class="status-dot"></i>本机服务已连接':'等待服务连接'}</span><span class="mono">${esc(state.version)}</span></div></section></main>`;
   }
   function render() {
     const focused=document.activeElement;
     if(state.importing||!state.result){app.className='';app.innerHTML=importView();return;}
     app.className='';
     const navLinks=Object.entries(pages).map(([key,label],index)=>`<a class="workspace-link nav-item-${index} ${state.route===key?'active':''}" href="#${key}" aria-label="${label}" ${state.route===key?'aria-current="page"':''}>${label}</a>`).join('');
-    const views={overview:overviewView,structure:structureView,logic:logicView,graphs:graphsView,metrics:metricsView,solid:solidView,risks:risksView,export:exportView};
-    app.innerHTML=`<div class="workspace-shell"><header class="topbar"><div class="workspace-brand"><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>CodeLens</span></div><h1>${pages[state.route]}</h1></div><div class="actions">${settingsButton()}<span class="project-name mono" title="${esc(state.result.project)}">${esc(state.result.project)}</span>${button('重新导入','reimport')}<details class="dropdown"><summary aria-label="导出报告">导出报告</summary><div class="dropdown-menu">${['md','json','csv'].map(f=>button(f==='md'?'Markdown':f.toUpperCase(),'export',`data-format="${f}"`,'text')).join('')}<a href="#export" aria-label="查看报告预览">查看报告预览</a></div></details></div></header><nav class="workspace-nav" aria-label="主导航"><div class="nav-visible">${navLinks}</div><details class="nav-more dropdown"><summary aria-label="更多导航页面">更多</summary><div class="dropdown-menu">${navLinks}</div></details></nav><main id="main" tabindex="-1" aria-label="主要内容" class="content">${views[state.route]()}</main></div>${state.drawer?drawerView():''}`;
+    const views={overview:overviewView,structure:structureView,logic:logicView,graphs:graphsView,metrics:metricsView,solid:solidView,risks:risksView};
+    const exportMenu=`<details class="dropdown export-dropdown"><summary aria-label="导出报告">导出报告</summary><div class="dropdown-menu"><label><input type="checkbox" data-change="export-ai" ${state.exportAi?'checked':''}> 包含 AI 解读</label><label><input type="checkbox" data-change="export-source" ${state.exportSource?'checked':''}> JSON 包含源码</label>${['md','json','csv'].map(f=>button(f==='md'?'Markdown':f.toUpperCase(),'export',`data-format="${f}"`,'text')).join('')}</div></details>`;
+    app.innerHTML=`<div class="workspace-shell"><header class="topbar"><div class="workspace-brand"><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>CodeLens</span></div><h1>${pages[state.route]}</h1></div><div class="actions">${settingsButton()}<span class="project-name mono" title="${esc(state.result.project)}">${esc(state.result.project)}</span>${button('重新导入','reimport')}${exportMenu}</div></header><nav class="workspace-nav" aria-label="主导航"><div class="nav-visible">${navLinks}</div><details class="nav-more dropdown"><summary aria-label="更多导航页面">更多</summary><div class="dropdown-menu">${navLinks}</div></details></nav><main id="main" tabindex="-1" aria-label="主要内容" class="content" data-route="${state.route}">${views[state.route]()}</main></div>${state.drawer?drawerView():''}`;
     if(state.route==='graphs')drawGraph();
     if(state.route==='logic')highlightSource();
     if(focused && focused!==document.body){const keys=['id','data-action','data-id','data-path','data-tab','data-key','data-change'];const identity=keys.filter(k=>focused.hasAttribute(k));if(identity.length){const replacement=$$('button,input,select,a,[role=tab]').find(el=>el.tagName===focused.tagName&&identity.every(k=>el.getAttribute(k)===focused.getAttribute(k)));replacement?.focus({preventScroll:true});}}
@@ -132,16 +157,16 @@
       else selected=input.map(file=>({file,path:file.webkitRelativePath||file.name}));
       if(controller.signal.aborted)throw new DOMException('Aborted','AbortError');
       const excluded=new Set(['.git','.venv','venv','__pycache__','node_modules','build','dist','tests']);selected=selected.filter(x=>!x.path.replaceAll('\\','/').split('/').slice(0,-1).some(part=>excluded.has(part)));
-      const py=[];for(const item of selected){if(/\.py$/i.test(item.path))py.push(item);else {const ext=item.file.name.includes('.')?'.'+item.file.name.split('.').pop().toLowerCase():'无扩展名';state.ignored[ext]=(state.ignored[ext]||0)+1;}}
+      const sources=[];for(const item of selected){const match=item.file.name.match(/(\.[^.]+)$/);const ext=match?match[1].toLowerCase():'无扩展名';if(sourceExtensions.has(ext))sources.push(item);else state.ignored[ext]=(state.ignored[ext]||0)+1;}
       const errors=[];
-      if(!py.length)errors.push('所选目录没有未被排除的 .py 文件');
-      if(py.length>200)errors.push(`共 ${py.length} 个 .py 文件，超过 200 个限制。超出文件：${py.slice(200).map(x=>x.path).join('、')}`);
-      for(const x of py)if(x.file.size>1024*1024)errors.push(`${x.path}：单文件 ${(x.file.size/1024/1024).toFixed(2)}MB，超过 1MB`);
-      const total=py.reduce((n,x)=>n+x.file.size,0);if(total>8*1024*1024)errors.push(`Python 文件总量 ${(total/1024/1024).toFixed(2)}MB，超过 8MB；请缩小目录范围。`);
+      if(!sources.length)errors.push('所选目录没有可分析的源码文件');
+      if(sources.length>200)errors.push(`共 ${sources.length} 个源码文件，超过 200 个限制。超出文件：${sources.slice(200).map(x=>x.path).join('、')}`);
+      for(const x of sources)if(x.file.size>1024*1024)errors.push(`${x.path}：单文件 ${(x.file.size/1024/1024).toFixed(2)}MB，超过 1MB`);
+      const total=sources.reduce((n,x)=>n+x.file.size,0);if(total>8*1024*1024)errors.push(`源码总量 ${(total/1024/1024).toFixed(2)}MB，超过 8MB；请缩小目录范围。`);
       if(errors.length){state.error=errors;return;}
-      const roots=new Set(py.map(x=>x.path.includes('/')?x.path.split('/')[0]:''));const root=roots.size===1?[...roots][0]:'';
+      const roots=new Set(sources.map(x=>x.path.includes('/')?x.path.split('/')[0]:''));const root=roots.size===1?[...roots][0]:'';
       const payload={project:root||'所选项目',files:[]};
-      for(const x of py){if(controller.signal.aborted)throw new DOMException('Aborted','AbortError');const bytes=new Uint8Array(await x.file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));payload.files.push({path:root?x.path.slice(root.length+1):x.path,content_base64:btoa(binary)});state.read++;render();}
+      for(const x of sources){if(controller.signal.aborted)throw new DOMException('Aborted','AbortError');const bytes=new Uint8Array(await x.file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));payload.files.push({path:root?x.path.slice(root.length+1):x.path,content_base64:btoa(binary)});state.read++;render();}
       if(controller.signal.aborted)throw new DOMException('Aborted','AbortError');state.phase='正在分析项目';render();
       timer=setTimeout(()=>{timedOut=true;controller.abort();},120000);
       const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json','X-CodeLens-Token':state.token},body:JSON.stringify(payload),signal:controller.signal});
@@ -202,18 +227,24 @@
     const stat=(label,value,desc,route,cls='')=>`<button class="card stat" data-action="go" data-route="${route}" aria-label="${label}，查看${pages[route]}"><span class="muted">${label}</span><strong class="${cls}">${value}</strong><span class="muted">${desc} ▸</span></button>`;
     const stats=`<div class="stats overview-stats">${healthStat()}${stat('已解析文件',val(s.parsed),'查看项目结构','structure')}${stat('函数 / 类总数',s.functions==null||s.classes==null?'—':val(s.functions+s.classes),`${val(s.functions)} 个函数 · ${val(s.classes)} 个类`,'metrics')}${stat('风险条目',val(s.findings),'查看风险证据','risks',highest)}${stat('圈复杂度 · 平均 / 最大',`${val(s.average_cc)} <span class="muted">/</span> ${val(s.max_cc)}`,'查看函数指标','metrics',ccClass(s.max_cc))}</div>`;
     const ratio=Math.min(1,Math.max(0,Number(s.max_cc)/20));const arc=2*Math.PI*72*.75;
-    const gauge=s.max_cc==null?placeholder('最大圈复杂度'):`<div class="chart-body"><svg viewBox="0 0 240 200" role="img" aria-label="最大圈复杂度 ${esc(s.max_cc)}，参考阈值 20"><circle cx="120" cy="96" r="72" fill="none" stroke="#eee7db" stroke-width="14" stroke-dasharray="${arc} ${2*Math.PI*72}" transform="rotate(135 120 96)"/><circle cx="120" cy="96" r="72" fill="none" stroke="${s.max_cc>20?colors.critical:s.max_cc>10?colors.warning:'#8b5e34'}" stroke-width="14" stroke-dasharray="${arc*ratio} ${2*Math.PI*72}" transform="rotate(135 120 96)"/><text x="120" y="103" text-anchor="middle" font-size="34" font-family="Consolas,monospace" fill="#292524">${val(s.max_cc)}</text><text x="120" y="128" text-anchor="middle" font-size="11" fill="#78716c">最大圈复杂度</text><text x="120" y="184" text-anchor="middle" font-size="12" fill="#78716c">参考阈值 20 · 超出部分不延长圆弧</text></svg><div><h3>${s.max_cc>20?'超过参考阈值':s.max_cc>10?'超过默认阈值 10':'未超过默认阈值 10'}</h3><p class="muted">基于函数圈复杂度的最大值。<br>此图不代表项目健康度评分。</p>${button('查看函数指标','go','data-route="metrics"','text')}</div></div>`;
+    const gauge=s.max_cc==null?placeholder('最大圈复杂度'):`<div class="chart-body"><svg viewBox="0 0 240 200" role="img" aria-label="最大圈复杂度 ${esc(s.max_cc)}，参考阈值 20"><circle cx="120" cy="96" r="72" fill="none" stroke="#eee7db" stroke-width="14" stroke-dasharray="${arc} ${2*Math.PI*72}" transform="rotate(135 120 96)"/><circle cx="120" cy="96" r="72" fill="none" stroke="${s.max_cc>20?colors.critical:s.max_cc>10?colors.warning:'#8b5e34'}" stroke-width="14" stroke-dasharray="${arc*ratio} ${2*Math.PI*72}" transform="rotate(135 120 96)"/><text x="120" y="103" text-anchor="middle" font-size="34" font-family="Consolas,monospace" fill="#292524">${val(s.max_cc)}</text><text x="120" y="128" text-anchor="middle" font-size="11" fill="#78716c">最大圈复杂度</text><text x="120" y="184" text-anchor="middle" font-size="12" fill="#78716c">参考阈值 20 · 超出部分不延长圆弧</text></svg><div><h3>${s.max_cc>20?'超过参考阈值':s.max_cc>10?'超过默认阈值 10':'未超过默认阈值 10'}</h3>${button('查看函数指标','go','data-route="metrics"','text')}</div></div>`;
     const total=Object.values(counts).reduce((a,b)=>a+b,0);let start=-Math.PI/2;
     const pie=Object.entries(counts).filter(([,n])=>n).map(([key,n])=>{const angle=n/total*Math.PI*2;const end=start+angle;const path=angle>=Math.PI*2-.0001?`<circle cx="100" cy="100" r="76" fill="${colors[key]}"/>`:`<path d="M100 100 L${100+76*Math.cos(start)} ${100+76*Math.sin(start)} A76 76 0 ${angle>Math.PI?1:0} 1 ${100+76*Math.cos(end)} ${100+76*Math.sin(end)} Z" fill="${colors[key]}"/>`;start=end;return path;}).join('');
     const dist=total?`<div class="chart-body"><svg viewBox="0 0 200 200" role="img" aria-label="风险严重度分布">${pie}</svg><div class="legend">${Object.keys(severity).map(k=>`<span><i class="swatch" style="background:${colors[k]}"></i>${severity[k]} <b class="number">${counts[k]}</b></span>`).join('')}</div></div>`:empty('当前分析没有风险条目','go','查看项目结构').replace('data-action="go"','data-action="go" data-route="structure"');
     const top=[...functions()].sort((a,b)=>b.cc-a.cc).slice(0,10);
-    return `<p class="page-intro">从结构与复杂度开始，逐项核对分析证据。</p>${stats}<div class="split">${card('复杂度参考',gauge)}${card('风险分布',dist)}</div>${card('Top 10 圈复杂度最高函数',top.length?table(['排名','函数 ID','文件位置','圈复杂度','操作'],top.map((f,i)=>`<tr><td class="number">${i+1}</td><td class="mono">${esc(f.id)}</td><td class="mono">${esc(fileFor(f.id)?.path||'—')}</td><td class="number ${ccClass(f.cc)}">${val(f.cc)}</td><td>${button('查看详情','function',`data-id="${esc(f.id)}"`,'text')}</td></tr>`).join('')):empty('当前结果没有函数数据'),'<a href="#risks" aria-label="查看全部风险">查看全部 ▸</a>')}${arr(state.result.warnings).length?card('分析警告',`<ul class="raw-list">${state.result.warnings.map(w=>`<li><span class="mono">${esc(w.file)}:${val(w.line)}</span> ${esc(w.message)}</li>`).join('')}</ul>`):''}`;
+    return `${stats}<div class="split">${card('复杂度参考',gauge)}${card('风险分布',dist)}</div>${card('Top 10 圈复杂度最高函数',top.length?table(['排名','函数 ID','文件位置','圈复杂度','操作'],top.map((f,i)=>`<tr><td class="number">${i+1}</td><td class="mono">${esc(f.id)}</td><td class="mono">${esc(fileFor(f.id)?.path||'—')}</td><td class="number ${ccClass(f.cc)}">${val(f.cc)}</td><td>${button('查看详情','function',`data-id="${esc(f.id)}"`,'text')}</td></tr>`).join('')):empty('当前结果没有函数数据'),'<a href="#risks" aria-label="查看全部风险">查看全部 ▸</a>')}`;
   }
   function treeView() {
-    const root={dirs:new Map(),files:[]};
-    for(const file of files().filter(f=>f.path.toLowerCase().includes(state.treeSearch.toLowerCase()))){const parts=file.path.split('/');let node=root;for(const part of parts.slice(0,-1)){if(!node.dirs.has(part))node.dirs.set(part,{dirs:new Map(),files:[]});node=node.dirs.get(part);}node.files.push(file);}
-    const walk=node=>[...node.dirs.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([name,child])=>`<details open><summary aria-label="展开或折叠 ${esc(name)}"><span class="mono">${esc(name)}</span></summary>${walk(child)}</details>`).join('')+node.files.map(f=>`<button class="tree-file ${state.file===f.path?'selected':''}" data-action="file" data-path="${esc(f.path)}" aria-label="${esc(f.path)}，${f.status==='error'?'解析失败':'已解析'}" title="${esc(f.path)}"><span class="file-name mono ${f.status==='error'?'critical':''}">${f.status==='error'?'! ':''}${esc(f.path.split('/').pop())}</span><small class="number">${arr(f.functions).length} 函数 / ${classes().filter(c=>c.file===f.path).length} 类</small></button>`).join('');
-    return `<div class="tree"><label class="muted" for="tree-search">文件筛选</label><input id="tree-search" type="search" placeholder="搜索文件名，回车生效" value="${esc(state.treeSearch)}" aria-label="搜索文件名">${walk(root)||'<p class="muted">没有匹配的文件</p>'}<p class="footnote">类数量：${classes().length}</p></div>`;
+    const groups=new Map();
+    const query=state.treeSearch.toLowerCase();
+    for(const file of files().filter(f=>f.path.toLowerCase().includes(query))){
+      const parts=file.path.split('/');
+      const group=parts.length>1?parts.slice(0,-1).join('/'):'/';
+      if(!groups.has(group))groups.set(group,[]);
+      groups.get(group).push(file);
+    }
+    const rows=[...groups.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([group,items])=>`<section class="tree-group"><div class="tree-dir"><span class="mono">${esc(group)}</span><small>${items.length} 个文件</small></div><div class="tree-files">${items.map(f=>`<button class="tree-file ${state.file===f.path?'selected':''}" data-action="file" data-path="${esc(f.path)}" aria-label="${esc(f.path)}，${f.status==='error'?'解析失败':'已解析'}" title="${esc(f.path)}"><span class="file-name mono ${f.status==='error'?'critical':''}">${f.status==='error'?'! ':''}${esc(f.path.split('/').pop())}</span><small>${esc(fileLanguage(f))} · ${arr(f.functions).length} 函数 / ${classes().filter(c=>c.file===f.path).length} 类</small></button>`).join('')}</div></section>`).join('');
+    return `<div class="tree tree--flat"><label class="visually-hidden" for="tree-search">文件筛选</label><input id="tree-search" type="search" placeholder="搜索文件…" value="${esc(state.treeSearch)}" aria-label="搜索文件名">${rows||'<p class="muted">没有匹配的文件</p>'}</div>`;
   }
   function classList(path) {
     const list=classes().filter(c=>c.file===path);
@@ -224,9 +255,11 @@
     for(const file of files()){const name=file.path.includes('/')?file.path.slice(0,file.path.lastIndexOf('/')):'（根目录）';if(!packages.has(name))packages.set(name,{name,files:0,symbols:0,dependencies:0});const row=packages.get(name);row.files++;row.symbols+=arr(file.functions).length+classes().filter(c=>c.file===file.path).length;}
     for(const edge of arr(state.result.graph?.dependencies)){const target=moduleFile(edge.target);if(target){const name=target.path.includes('/')?target.path.slice(0,target.path.lastIndexOf('/')):'（根目录）';if(packages.has(name))packages.get(name).dependencies++;}}
     const rows=[...packages.values()].sort((a,b)=>state.packageSort?b.dependencies-a.dependencies:a.name.localeCompare(b.name));
-    const selected=files().find(f=>f.path===state.file);const symbols=selected?card(`文件符号 <span class="mono">${esc(selected.path)}</span>`,`${table(['函数 ID','操作'],arr(selected.functions).map(f=>`<tr><td class="mono">${esc(functionId(f))}</td><td>${button('查看逻辑','function',`data-id="${esc(functionId(f))}"`,'text')}</td></tr>`).join(''))}${arr(selected.functions).length?'':'<p class="muted">此文件没有函数定义</p>'}<h3 style="margin-top:16px">类名列表</h3>${classList(selected.path)}`,button('查看文件逻辑','file-logic',`data-path="${esc(selected.path)}"`,'text')):'';
+    const selected=files().find(f=>f.path===state.file);
+    const selectedStrip=selected?`<div class="selected-file"><span class="mono">${esc(selected.path)}</span><span>${esc(fileLanguage(selected))} · ${arr(selected.functions).length} 函数 · ${classes().filter(c=>c.file===selected.path).length} 类</span>${button('查看逻辑','file-logic',`data-path="${esc(selected.path)}"`,'text')}</div>`:'';
     const errors=[...arr(state.result.errors)];for(const f of files().filter(f=>f.status==='error'))if(!errors.some(e=>e.file===f.path))errors.push({file:f.path,line:typeof f.error==='object'?f.error?.line:null,type:typeof f.error==='object'?f.error?.type:null,message:typeof f.error==='object'?f.error?.message:f.error});
-    return `<p class="page-intro">按文件检查分析范围、模块依赖与解析异常。</p><div class="structure-grid">${card('项目文件',treeView())}<div>${card('模块 / 包结构',table(['包路径','文件数','符号数（函数 / 类）',button('被依赖次数','package-sort','','text')],rows.map(x=>`<tr><td class="mono">${esc(x.name)}</td><td class="number">${x.files}</td><td class="number">${x.symbols}</td><td class="number">${x.dependencies}</td></tr>`).join(''))+'<p class="footnote">被依赖次数按依赖目标所属包聚合；符号数包含函数与类。</p>')}${symbols}${card('解析异常',errors.length?table(['文件路径','错误行号','错误类型','证据等级','说明'],errors.map(e=>`<tr><td class="mono">${esc(e.file)}</td><td class="number">${val(e.line)}</td><td>${val(e.type)}</td><td>${evidence('fact')}</td><td>${val(e.message)}</td></tr>`).join('')):files().length?'<p class="success">全部文件解析成功</p>':empty('当前结果没有文件'))}</div></div>`;
+    const errorNote=errors.length?`<div class="parse-note" role="status">${errors.length} 个文件未能解析：${errors.slice(0,2).map(e=>`${esc(e.file)}${e.line?`:${e.line}`:''}`).join('、')}${errors.length>2?' 等':''}</div>`:'';
+    return `<div class="structure-grid">${card('项目文件',treeView())}<section class="card structure-overview"><div class="heading"><h2>模块概览</h2><span class="muted">${files().length} 文件</span></div>${selectedStrip}${table(['包路径','文件数','符号数',button('被依赖','package-sort','','text')],rows.map(x=>`<tr><td class="mono">${esc(x.name)}</td><td class="number">${x.files}</td><td class="number">${x.symbols}</td><td class="number">${x.dependencies}</td></tr>`).join(''))}${errorNote}</section></div>`;
   }
   function tabs(items, active, action) { return `<div class="tabs" role="tablist" aria-label="视图切换">${items.map(([key,label])=>`<button role="tab" aria-selected="${active===key}" aria-label="${label}" data-action="${action}" data-tab="${key}">${label}</button>`).join('')}</div>`; }
   const aiLogic = {cache:new Map(), busy:false, key:'', error:'', controller:null};
@@ -273,10 +306,10 @@
     const key=logicKey(),result=aiLogic.cache.get(key),pending=aiLogic.busy&&aiLogic.key===key;
     const selector=`<label for="ai-logic-target">解读范围</label><select id="ai-logic-target" data-change="ai-logic-target" aria-label="解读范围"><option value="">整个文件</option>${list.map(f=>`<option value="${esc(f.id)}" ${state.fn===f.id?'selected':''}>${esc(f.id)}</option>`).join('')}</select>`;
     const controls=`<div class="ai-logic-toolbar">${selector}<button class="primary" data-action="ai-explain" ${aiLogic.busy||file?.status!=='ok'||state.aiCompatible===false?'disabled':''}>${result?'重新生成解读':'生成 AI 解读'}</button>${aiLogic.busy?button('取消解读','ai-explain-cancel','','text'):''}${result?button('复制解读','ai-explain-copy','','text'):''}</div>`;
-    const body=pending?'<div class="ai-reading-state" role="status"><div class="skeleton"></div><p>AI 正在阅读源码并梳理实现逻辑…</p><small>最多等待 60 秒，可取消本次请求。</small></div>':result?`<div class="ai-explanation">${renderExplanation(result)}</div><p class="footnote">模型：${esc(result.model)} · ${esc(result.file)}:${val(result.line)}–${val(result.end_line)}</p>${arr(result.context).length?`<details class="ai-context"><summary>本次发送的源码范围（${result.context.length} 段）</summary><ul>${result.context.map(c=>`<li class="mono">${esc(c.file)}:${c.line}–${c.end_line}</li>`).join('')}</ul></details>`:''}${result.omitted_context?'<p class="notice">部分依赖超过上下文上限，未发送。</p>':''}${result.truncated?'<p class="notice">模型输出达到长度限制，解读可能不完整。请缩小范围后重新生成。</p>':''}`:'<div class="ai-reading-state"><h3>用自然语言读懂这段实现</h3><p>选择文件或函数，点击生成后，AI 将说明它的用途、输入输出、关键步骤、分支与异常，以及依赖和边界。</p><p class="muted">请先在设置中配置模型，或使用服务端模型配置。</p></div>';
+    const body=pending?'<div class="ai-reading-state" role="status"><div class="skeleton"></div><p>AI 正在阅读源码…</p><small>最多等待 60 秒，可取消本次请求。</small></div>':result?`<div class="ai-explanation">${renderExplanation(result)}</div><p class="footnote">模型：${esc(result.model)} · ${esc(result.file)}:${val(result.line)}–${val(result.end_line)}</p>${arr(result.context).length?`<details class="ai-context"><summary>源码范围（${result.context.length} 段）</summary><ul>${result.context.map(c=>`<li class="mono">${esc(c.file)}:${c.line}–${c.end_line}</li>`).join('')}</ul></details>`:''}${result.omitted_context?'<p class="notice">部分依赖超过上下文上限，未发送。</p>':''}${result.truncated?'<p class="notice">模型输出达到长度限制，解读可能不完整。</p>':''}`:'<div class="ai-reading-state"><h3>尚未生成解读</h3><p>选择文件或函数后生成解读。</p></div>';
     const error=aiLogic.key===key&&aiLogic.error?`<div class="error-box" role="alert">${esc(aiLogic.error)}</div>`:'';
     const source=file?.source!=null?`<details class="ai-source" ${state.line?'open':''}><summary>查看原始源码 · ${esc(file.path)}</summary><div class="source" tabindex="0" aria-label="${esc(file.path)} 源码">${file.source.split('\n').map((line,i)=>`<div class="source-line" data-line="${i+1}"><span class="line-number">${i+1}</span><code>${esc(line)||' '}</code></div>`).join('')}</div></details>`:'';
-    return `<p class="page-intro">让 AI 解释代码如何实现功能，并结合行号回到源码核对。</p><div class="ai-logic-grid">${card('项目文件',treeView())}<section class="card ai-logic-reader"><div class="heading"><div><h2>AI 逻辑解读</h2><p class="mono muted">${esc(file?.path||'未选择文件')}</p></div>${button('配置模型','settings-open','','text')}</div>${controls}<p class="footnote">点击生成后，所选源码及最多两层已解析调用的相关函数将发送到你配置的模型服务。AI 解读需结合源码复核；不会自动调用或用模板代替模型结果。</p>${state.aiCompatible===false?'<div class="error-box" role="alert">后台版本不兼容，请停止旧服务，重新运行 python -B code/backend/server.py 后刷新页面。</div>':''}${error}${body}${aiLogic.busy&&!pending?'<p role="status">其他范围正在解读，请等待或取消后再生成。</p>':''}${source}</section></div>`;
+    return `<div class="ai-logic-grid">${card('项目文件',treeView())}<section class="card ai-logic-reader"><div class="heading"><div><h2>AI 逻辑解读</h2><p class="mono muted">${esc(file?.path||'未选择文件')}</p></div>${button('配置模型','settings-open','','text')}</div>${controls}${state.aiCompatible===false?'<div class="error-box" role="alert">后台版本不兼容，请重启服务后刷新页面。</div>':''}${error}${body}${aiLogic.busy&&!pending?'<p role="status">其他范围正在解读，请等待或取消。</p>':''}${source}</section></div>`;
   }
   function highlightSource() {
     if(!state.line)return;
@@ -285,45 +318,31 @@
   }
   function groupedFindings() {const map=new Map();for(const f of findings()){if(!map.has(f.rule_id))map.set(f.rule_id,[]);map.get(f.rule_id).push(f);}return [...map.entries()];}
   function metricsView() {
-    let fs=functions();if(state.overOnly)fs=fs.filter(f=>f.cc>10||f.length>50||f.nesting>4);
-    const overFiles=new Set(fs.map(f=>fileFor(f.id)?.path));
-    const listed=files().filter(f=>f.status==='ok'&&(!state.overOnly||overFiles.has(f.path)));
-    const max=Math.max(1,...listed.map(f=>Number(f.code_lines)||0));
-    const shown=state.barsExpanded?listed:listed.slice(0,8);
-    const bars=shown.map(f=>`<div class="bar-row"><span class="mono bar-label" title="${esc(f.path)}">${esc(f.path)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(0,Number(f.code_lines)||0)/max*100}%"></div><span class="bar-value">${val(f.code_lines)}</span></div></div>`).join('')||empty('当前条件下没有文件','metrics-reset','显示全部');
-    fs=[...fs].sort((a,b)=>(Number(a[state.metricSort])-Number(b[state.metricSort]))*(state.metricAsc?1:-1));
-    const header=(key,label)=>`<button class="text" data-action="metric-sort" data-key="${key}" aria-label="按${label}排序">${label}${state.metricSort===key?(state.metricAsc?' ▴':' ▾'):''}</button>`;
-    const metrics=table(['函数 ID','文件',header('cc','圈复杂度'),header('length','函数长度'),header('nesting','最大 nesting')],fs.map(f=>`<tr><td class="mono">${button(f.id,'function',`data-id="${esc(f.id)}"`,'text mono')}</td><td class="mono">${esc(fileFor(f.id)?.path||'—')}</td><td class="number ${f.cc>10?'over':''}">${val(f.cc)}</td><td class="number ${f.length>50?'over':''}">${val(f.length)}</td><td class="number ${f.nesting>4?'over':''}">${val(f.nesting)}</td></tr>`).join(''));
     const groups=groupedFindings().map(([key,hits])=>[key,state.overOnly?hits.filter(f=>typeof f.actual==='number'&&typeof f.threshold==='number'&&f.actual>f.threshold):hits]).filter(([,hits])=>hits.length);
-    const summary=table(['规则 ID','命中次数','涉及文件数','最高严重度','位置'],groups.map(([key,hits])=>`<tr><td class="mono">${esc(key)}</td><td class="number">${hits.length}</td><td class="number">${new Set(hits.map(f=>f.file)).size}</td><td>${tag([...hits].sort((a,b)=>weight[b.severity]-weight[a.severity])[0].severity)}</td><td><details><summary aria-label="展开规则 ${esc(key)} 命中位置">展开位置</summary><ul>${hits.map(f=>`<li class="mono">${esc(f.file)}:${val(f.line)}</li>`).join('')}</ul></details></td></tr>`).join(''));
-    return `<div class="heading"><p class="muted">依据有效代码行数和函数指标检查复杂区域。</p><label><input type="checkbox" aria-label="只看超阈值" data-change="over-only" ${state.overOnly?'checked':''}> 只看超阈值</label></div>${healthCard()}${card('文件有效代码行数',`<div class="file-bars">${bars}</div>${listed.length>8?button(state.barsExpanded?'收起':'展开全部','bars-toggle',`aria-expanded="${state.barsExpanded}"`,'text'):''}<p class="footnote">超阈值筛选显示含 cc &gt; 10、length &gt; 50 或 nesting &gt; 4 函数的文件；文件行数未设阈值。</p>`)}<details class="card rule-summary" ${groups.length?'open':''}><summary aria-label="展开或折叠规则命中汇总">规则命中汇总</summary>${groups.length?summary:'<p class="muted">当前条件下没有规则命中</p>'}</details>${card('函数级指标',fs.length?metrics:empty('当前条件下没有函数','metrics-reset','显示全部'))}<p class="footnote">红色数值 = 超出默认阈值，阈值可在配置中调整</p>${card('类级指标',table(['类','WMC','DIT','CBO','LCOM1'],arr(state.result.class_metrics).map(c=>`<tr><td class="mono">${esc(c.id)}</td><td>${c.wmc}</td><td>${c.dit??'未知'}</td><td>${c.cbo}</td><td>${c.lcom}</td></tr>`).join('')))}${card('结构重复',arr(state.result.duplicates).length?`<ul>${state.result.duplicates.map(g=>`<li>${g.occurrences.map(o=>`${esc(o.file)}:${o.line}`).join(' / ')}</li>`).join('')}</ul>`:'<p>未发现符合检测口径的重复函数体。</p>')}<details><summary>指标与重复检测口径</summary><ul>${arr(state.result.quality_notes).map(n=>`<li>${esc(n)}</li>`).join('')}</ul></details>`;
+    const riskGroups=groups.length?`<div class="rule-groups">${groups.map(([key,hits])=>{const strongest=[...hits].sort((a,b)=>weight[b.severity]-weight[a.severity])[0];return `<details class="rule-group"><summary><span class="rule-group__title"><strong>${esc(ruleLabel(key))}</strong><small class="mono">${esc(key)}</small></span><span class="rule-group__meta">${tag(strongest.severity)} <b>${hits.length}</b> 条</span></summary><div class="rule-group__body">${table(['位置','描述','证据','操作'],hits.map(f=>`<tr><td class="mono">${esc(f.file)}:${val(f.line)}</td><td>${esc(f.message)}</td><td>${evidence(f.evidence_type)}</td><td>${button('定位','locate-code',`data-id="${esc(f.id)}"`,'text')}</td></tr>`).join(''))}</div></details>`;}).join('')}</div>`:'<p class="muted">当前条件下没有规则命中</p>';
+    return `<div class="heading"><label><input type="checkbox" aria-label="只看超阈值" data-change="over-only" ${state.overOnly?'checked':''}> 只看超阈值</label></div>${healthCard()}<section class="card"><div class="heading"><h2>规则命中汇总</h2><span class="muted">${groups.length} 类</span></div>${riskGroups}</section>`;
   }
   function findingDetail(f,solid=false) {
     return `<div class="detail-grid"><div><h3>实际值 vs 阈值</h3><dl><dt>实际值</dt><dd class="mono">${val(f.actual)}</dd><dt>阈值</dt><dd class="mono">${val(f.threshold)}</dd><dt>置信度</dt><dd class="mono">${f.confidence==null?'—':val(f.confidence)}</dd></dl></div><div><h3>详细信息</h3><p>${esc(f.message)}</p><h3>人工复核建议</h3><p>${val(f.suggestion)}</p>${solid?button('定位风险','finding-risk',`data-id="${esc(f.id)}"`,'text'):button('定位代码','locate-code',`data-id="${esc(f.id)}"`,'text')}</div></div>`;
   }
   function solidView() {
     const executed=rules().filter(r=>/(?:SRP|OCP|LSP|ISP|DIP)/i.test(r));const hits=findings().filter(f=>executed.includes(f.rule_id));
-    if(!executed.length)return '<div class="notice">SOLID 判定基于启发式规则，结论为推断，需人工确认</div>'+card('设计检查','<div class="empty">未执行 SOLID 检查</div>');
+    if(!executed.length)return card('设计检查','<div class="empty">未执行 SOLID 检查</div>');
     const cards=executed.map(id=>{const n=hits.filter(f=>f.rule_id===id).length;return `<section class="card"><h3 class="mono">${esc(id)}</h3>${n?`<span class="tag warning">命中 ${n}</span>`:'<span class="success">未发现静态风险</span>'}</section>`;}).join('');
     const missing=['SRP','OCP','LSP','ISP','DIP'].filter(p=>!executed.some(r=>r.toUpperCase().includes(p)));
-    return `<div class="notice">SOLID 判定基于启发式规则，结论为推断，需人工确认</div><div class="rule-cards">${cards}</div>${missing.length?`<p class="muted">${missing.map(x=>`${x}：未执行`).join(' · ')}</p>`:''}${card('分析覆盖范围',`<p>已检查 ${val(state.result.solid?.checked_overrides)} 个覆盖方法</p><ul>${arr(state.result.solid?.limitations).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>${arr(state.result.solid?.coverage_gaps).length?table(['类','位置','未检查原因'],state.result.solid.coverage_gaps.map(x=>`<tr><td>${esc(x.class)}</td><td>${esc(x.file)}:${val(x.line)}</td><td>${esc(x.reason)}</td></tr>`).join('')):''}${state.result.solid?.truncated?'<p class="warning">规则条目达到上限，部分发现未展示。</p>':''}`)}${card('设计规则命中',hits.length?table(['规则 ID','位置','严重度','证据等级','描述','操作'],hits.map(f=>`<tr><td class="mono">${esc(f.rule_id)}</td><td class="mono">${esc(f.file)}:${val(f.line)}</td><td>${tag(f.severity)}</td><td>${evidence(f.evidence_type)}</td><td>${esc(f.message)}</td><td>${button(state.expanded.has(f.id)?'收起':'详情','expand-finding',`data-id="${esc(f.id)}" aria-expanded="${state.expanded.has(f.id)}"`,'text')}</td></tr>${state.expanded.has(f.id)?`<tr class="detail-row"><td colspan="6">${findingDetail(f,true)}</td></tr>`:''}`).join('')):'<p class="success">已执行的设计规则没有命中条目</p>')}`;
-  }
-  function filteredRisks() {
-    const r=state.risk;return findings().filter(f=>(!r.severities.length||r.severities.includes(f.severity))&&(!r.evidence||f.evidence_type===r.evidence)&&(!r.rule||f.rule_id===r.rule)&&(!r.file||f.file===r.file)&&(!r.query||`${f.message} ${f.file}`.toLowerCase().includes(r.query.toLowerCase()))).sort((a,b)=>(weight[b.severity]||0)-(weight[a.severity]||0));
+    const gaps=arr(state.result.solid?.coverage_gaps);const coverage=gaps.length?`<div class="notice notice--warning" role="status">部分代码因外部基类、多继承、动态装饰器或无法静态推导的签名而未检查${gaps.length>1?`，共 ${gaps.length} 处`:''}。</div>`:'';
+    return `${coverage}<div class="rule-cards">${cards}</div>${missing.length?`<p class="muted">${missing.map(x=>`${x}：未执行`).join(' · ')}</p>`:''}${card('设计规则命中',hits.length?table(['规则','位置','严重度','证据','描述','操作'],hits.map(f=>`<tr><td>${esc(ruleLabel(f.rule_id))}</td><td class="mono">${esc(f.file)}:${val(f.line)}</td><td>${tag(f.severity)}</td><td>${evidence(f.evidence_type)}</td><td>${esc(f.message)}</td><td>${button(state.expanded.has(f.id)?'收起':'详情','expand-finding',`data-id="${esc(f.id)}" aria-expanded="${state.expanded.has(f.id)}"`,'text')}</td></tr>${state.expanded.has(f.id)?`<tr class="detail-row"><td colspan="6">${findingDetail(f,true)}</td></tr>`:''}`).join('')):'<p class="success">已执行的设计规则没有命中条目</p>')}`;
   }
   function risksView() {
-    const r=state.risk;const list=filteredRisks();const pagesCount=Math.max(1,Math.ceil(list.length/10));r.page=Math.min(r.page,pagesCount);const visible=list.slice((r.page-1)*10,r.page*10);
-    const options=(items,selected)=>'<option value="">全部</option>'+items.map(([value,label])=>`<option value="${esc(value)}" ${selected===value?'selected':''}>${esc(label)}</option>`).join('');
-    const filters=`<div class="filters"><details class="dropdown"><summary aria-label="严重度多选">严重度${r.severities.length?' · '+r.severities.map(x=>severity[x]).join('/'):' · 全部'}</summary><div class="dropdown-menu">${Object.keys(severity).map(k=>`<label><input type="checkbox" data-change="risk-severity" aria-label="筛选${severity[k]}严重度" value="${k}" ${r.severities.includes(k)?'checked':''}> ${severity[k]}</label>`).join('')}</div></details><label>证据等级<select data-change="risk-evidence" aria-label="筛选证据等级">${options([['fact','事实'],['inference','推断']],r.evidence)}</select></label><label>规则类型<select data-change="risk-rule" aria-label="筛选规则类型">${options(rules().map(x=>[x,ruleLabel(x)]),r.rule)}</select></label><label>文件<select data-change="risk-file" aria-label="筛选文件">${options(files().map(x=>[x.path,x.path]),r.file)}</select></label><label>关键字<input id="risk-query" type="search" placeholder="搜索描述或文件路径" value="${esc(r.query)}" aria-label="搜索描述或文件路径"></label>${button('重置','risk-reset','','text')}<div class="filter-stats">${Object.keys(severity).map(k=>`<span class="tag ${k}">${severity[k]} ${list.filter(f=>f.severity===k).length}</span>`).join('')}</div></div>`;
-    const body=visible.map(f=>`<tr id="finding-${findings().indexOf(f)}"><td><span class="tag mono">${esc(ruleLabel(f.rule_id))}</span></td><td>${tag(f.severity)}</td><td>${evidence(f.evidence_type)}</td><td class="mono truncate" title="${esc(f.file)}:${val(f.line)}">${esc(f.file)}:${val(f.line)}</td><td>${esc(f.message)}</td><td class="number">${f.evidence_type==='inference'&&f.confidence!=null?(Number.isFinite(Number(f.confidence))?`${Math.round(Number(f.confidence)*100)}%`:esc(({high:'高',medium:'中',low:'低'})[f.confidence]||f.confidence)):'—'}</td><td>${button(state.expanded.has(f.id)?'收起':'详情','expand-finding',`data-id="${esc(f.id)}" aria-expanded="${state.expanded.has(f.id)}"`,'text')}</td></tr>${state.expanded.has(f.id)?`<tr class="detail-row"><td colspan="7">${findingDetail(f)}</td></tr>`:''}`).join('');
-    return `<div class="heading"><p class="muted">按证据复核风险，推断条目需要人工确认。</p><div class="actions">${button('导出 JSON','export','data-format="json"')}${button('导出 CSV','export','data-format="csv"')}</div></div><section class="card">${filters}${visible.length?table(['规则类型','严重度','证据等级','位置','描述','置信度','操作'],body):empty('当前筛选条件下没有命中的风险条目','risk-reset','重置筛选')}<div class="pagination"><span class="muted">共 <span class="number">${list.length}</span> 条 · 每页 10 条</span>${button('上一页','risk-page',`data-page="${r.page-1}" ${r.page<=1?'disabled':''}`)}<span class="number">${r.page} / ${pagesCount}</span>${button('下一页','risk-page',`data-page="${r.page+1}" ${r.page>=pagesCount?'disabled':''}`)}</div></section>`;
-  }
-  function exportView() {
-    const limits=arr(state.result.limitations);
-    const preview=card('Markdown 报告预览',`<pre class="report" tabindex="0" aria-label="Markdown 报告预览">${esc(markdown())}</pre>`);
-    const limitations=card('分析限制',limits.length?`<ul class="raw-list">${limits.map(note=>`<li>${esc(note)}</li>`).join('')}</ul>`:'<p class="muted">引擎未提供分析限制说明。</p>');
-    const downloads=card('下载报告',`<label><input type="checkbox" data-change="export-ai" ${state.exportAi?'checked':''}> 包含已生成的 AI 解读</label><br><label><input type="checkbox" data-change="export-source" ${state.exportSource?'checked':''}> JSON 包含源码</label>`+[['md','Markdown','项目概览、全部风险、解析错误与分析边界。'],['json','JSON','完整指标、关系、风险与可选 AI 解读；源码默认不导出。'],['csv','CSV','全部风险条目，包含位置、证据等级与复核建议。']].map(([format,label,description])=>`<div class="export-option">${button('导出 '+label,'export',`data-format="${format}"`,format==='md'?'primary':'')}<p>${description}</p></div>`).join(''));
-    return `<div class="notice">报告由当前分析结果生成，未包含引擎未产出的项目</div><div class="split"><div>${preview}${limitations}</div><div>${downloads}</div></div>`;
+    const report=state.result.special_risks;
+    const categories=arr(report?.categories).length?report.categories:specialRiskDefs.map(([id,label,description])=>({id,label,description,severity:'info',count:0,items:[]}));
+    const flagged=categories.filter(c=>c.count).length;
+    const rows=categories.map(category=>{
+      const label=`<span class="risk-row__label"><strong>${esc(category.label)}</strong><small>${category.count?`${category.count} 项`:'未发现'}</small></span>`;
+      if(!category.count)return `<div class="risk-row risk-row--clear">${label}<span class="risk-row__state">无问题</span></div>`;
+      return `<details class="risk-row"><summary>${label}<span class="risk-row__meta">${tag(category.severity)}<span>展开</span></span></summary><div class="risk-row__body"><ul>${category.items.map(item=>`<li><button class="risk-location" data-action="source-location" data-path="${esc(item.file||'')}" data-line="${Number(item.line)||1}"><span class="mono">${esc(item.file||'')}:${val(item.line)}</span><span>${esc(item.message||'')}</span></button></li>`).join('')}</ul>${category.truncated?'<p class="footnote">仅展示前 30 条</p>':''}</div></details>`;
+    }).join('');
+    return `<div class="special-risk-summary"><strong>${flagged}</strong><span>/ ${categories.length} 类发现证据</span></div><section class="card risk-report-list">${rows}</section>`;
   }
   const compareText=(a,b)=>String(a??'')<String(b??'')?-1:String(a??'')>String(b??'')?1:0;
   const compareEdges=(a,b)=>compareText(a.file,b.file)||(Number(a.line)||0)-(Number(b.line)||0)||compareText(a.source,b.source)||compareText(a.target,b.target)||compareText(a.expression,b.expression);
@@ -362,7 +381,7 @@
   }
   function callChainView() {
     const steps=callChain();
-    return `<div class="graph-controls">${entrySelector('chainEntry','入口函数')}</div><p class="footnote">从入口函数所在模块开始，仅遍历已解析边，最多 6 层；同一模块不重复展开。位置为调用发生的文件与行号。</p>${steps.length?`<ol class="call-chain">${steps.map(step=>`<li><span class="tag">第 ${step.depth} 层</span><button class="text chain-location" data-action="source-location" data-path="${esc(step.file)}" data-line="${Number(step.line)||1}" aria-label="查看 ${esc(step.target)} 在 ${esc(step.file)} 第 ${val(step.line)} 行的调用"><span class="mono">${esc(step.target)}</span><span class="mono muted">${esc(step.file)}:${val(step.line)}</span></button></li>`).join('')}</ol>`:empty('当前入口所在模块没有可达的已解析调用边。','graph-raw','查看原始调用数据')}`;
+    return `<div class="graph-controls">${entrySelector('chainEntry','入口函数')}</div>${steps.length?`<ol class="call-chain">${steps.map(step=>`<li><span class="tag">第 ${step.depth} 层</span><button class="text chain-location" data-action="source-location" data-path="${esc(step.file)}" data-line="${Number(step.line)||1}" aria-label="查看 ${esc(step.target)} 在 ${esc(step.file)} 第 ${val(step.line)} 行的调用"><span class="mono">${esc(step.target)}</span><span class="mono muted">${esc(step.file)}:${val(step.line)}</span></button></li>`).join('')}</ol>`:empty('当前入口所在模块没有可达的已解析调用边。','graph-raw','查看原始调用数据')}`;
   }
   function graphModel() {
     const type=state.graphTab;const nodes=new Map();const edges=[];
@@ -434,7 +453,7 @@
   }
   function graphsView() {
     const isCall=state.graphTab==='calls';const select=(action,label,options,current,disabled=false)=>`<label>${label}<select data-change="${action}" aria-label="${label}" ${disabled?'disabled':''}>${options.map(([key,text])=>`<option value="${key}" ${key===current?'selected':''}>${text}</option>`).join('')}</select></label>`;
-    return `<div class="notice">静态调用链表示可能的调用顺序，非实际执行顺序。</div><section class="card">${tabs([['calls','函数调用图'],['dependencies','模块依赖图'],['inheritance','类与继承图'],['chain','调用链']],state.graphTab,'graph-tab')}${state.graphTab==='chain'?callChainView():`<div class="graph-controls">${isCall?entrySelector('graphEntry','图谱入口函数'):''}<label>节点搜索<input id="graph-search" type="search" value="${esc(state.graphQuery)}" placeholder="输入节点名" aria-label="搜索图谱节点"></label>${select('graph-layout','布局',isCall?[['layered','分层'],['radial','放射']]:[['layered','分层']],isCall?state.graphLayoutMode:'layered')}${isCall?select('graph-granularity','粒度',[['function','函数级'],['file','文件级']],state.graphGranularity):''}${select('graph-direction','方向',[['TD','TD（从上到下）'],['LR','LR（从左到右）']],state.graphDirection,isCall&&state.graphLayoutMode==='radial')}</div><div class="heading"><span class="muted">${isCall?'入口展开：默认显示上下游各 2 层；点击 +N 展开下一层。':'拖动节点调整位置；聚焦节点后可用方向键移动。'}</span><div class="actions">${button('导出 SVG','graph-export')}${button('复制图数据','graph-copy')}${button('全屏','graph-fullscreen')}${button('重置布局','graph-reset')}</div></div><p id="graph-search-status" class="footnote" role="status" aria-live="polite"></p><div id="graph-host"></div><details class="graph-legend"><summary aria-label="展开图例说明">图例说明</summary><p class="footnote">import：棕色；call：灰色；inherit：绿色。循环边优先显示红色。虚线表示跨文件调用。悬停或聚焦连线可查看调用表达式；未解析调用不绘制目标节点。</p></details>`}</section><p class="footnote">类关系覆盖可解析的继承、组合、注解关联与依赖；悬停连线查看关系类型。静态调用链不代表运行时执行顺序。</p>`;
+    return `<section class="card graph-page">${tabs([['calls','函数调用图'],['dependencies','模块依赖图'],['inheritance','类与继承图'],['chain','调用链']],state.graphTab,'graph-tab')}${state.graphTab==='chain'?callChainView():`<div class="graph-controls">${isCall?entrySelector('graphEntry','图谱入口函数'):''}<label>节点搜索<input id="graph-search" type="search" value="${esc(state.graphQuery)}" placeholder="输入节点名…" aria-label="搜索图谱节点"></label>${select('graph-layout','布局',isCall?[['layered','分层'],['radial','放射']]:[['layered','分层']],isCall?state.graphLayoutMode:'layered')}${isCall?select('graph-granularity','粒度',[['function','函数级'],['file','文件级']],state.graphGranularity):''}${select('graph-direction','方向',[['TD','TD（从上到下）'],['LR','LR（从左到右）']],state.graphDirection,isCall&&state.graphLayoutMode==='radial')}</div><div class="actions graph-actions">${button('导出 SVG','graph-export')}${button('复制图数据','graph-copy')}${button('全屏','graph-fullscreen')}${button('重置布局','graph-reset')}</div><p id="graph-search-status" class="footnote" role="status" aria-live="polite"></p><div id="graph-host"></div><details class="graph-legend"><summary aria-label="展开图例说明">图例说明</summary><p class="footnote">import：棕色；call：灰色；inherit：绿色。循环边为红色，跨文件调用为虚线。</p></details>`}</section>`;
   }
   function edgeInCycle(edge,cycles) {
     return cycles.some(group=>{
@@ -466,7 +485,7 @@
       return `<path class="graph-edge ${cycle?'cycle':''} ${cross?'cross':''}" d="${path}" stroke="${cycle?'#b91c1c':base}" marker-end="url(#${prefix}${cycle?'-red':''})" tabindex="0" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title></path>`;
     }).join('');
     const name=state.graphTab==='calls'?'函数调用图':state.graphTab==='inheritance'?'类与继承图':'模块依赖图';
-    return `<svg class="graph-canvas" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${model.width+80} ${model.height}" width="${model.width+80}" height="${model.height}" role="group" aria-label="${name}"><style>.graph-edge{fill:none;stroke-width:1.5}.graph-edge.cross{stroke-dasharray:5 4}.graph-edge:hover,.graph-edge:focus{stroke-width:3}.graph-node rect{fill:#faf7f2;stroke:#cbbba5}.graph-node.cycle rect{fill:#fef2f2;stroke:#b91c1c}.graph-node.matched rect{fill:#f3ead9;stroke:#8b5e34;stroke-width:3}.graph-node text{font:11px Consolas,monospace;fill:#292524}.graph-node:focus rect{stroke:#8b5e34;stroke-width:3}.graph-expand rect{fill:#8b5e34}.graph-expand text{fill:white;font:11px Consolas,monospace}.graph-expand:focus rect{stroke:#292524;stroke-width:2}</style><defs>${[[prefix,base],[prefix+'-red','#b91c1c']].map(([id,color])=>`<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="${color}"/></marker>`).join('')}</defs>${paths}${model.nodes.map(n=>`<g class="graph-node ${cycleNodes.has(n.id)?'cycle':''} ${n.matched?'matched':''}" transform="translate(${n.x} ${n.y})" tabindex="0" role="button" aria-label="查看节点 ${esc(n.id)}" data-action="graph-node" data-node="${n.index}"><title>${esc(n.id)} · ${esc(n.kind)}</title><rect width="150" height="36" rx="4"/><text x="75" y="23" text-anchor="middle">${esc(n.id.length>19?n.id.slice(0,18)+'…':n.id)}</text></g>${n.hiddenChildren.length?`<g class="graph-expand" transform="translate(${n.x+152} ${n.y+7})" tabindex="0" role="button" data-action="graph-expand" data-node="${n.index}" aria-label="展开 ${esc(n.id)} 的 ${n.hiddenChildren.length} 个子节点"><rect width="36" height="22" rx="4"/><text x="18" y="15" text-anchor="middle">+${n.hiddenChildren.length}</text></g>`:''}`).join('')}</svg>`;
+    return `<svg class="graph-canvas" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${model.width+80} ${model.height}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" role="group" aria-label="${name}"><style>.graph-edge{fill:none;stroke-width:1.5}.graph-edge.cross{stroke-dasharray:5 4}.graph-edge:hover,.graph-edge:focus{stroke-width:3}.graph-node rect{fill:#faf7f2;stroke:#cbbba5}.graph-node.cycle rect{fill:#fef2f2;stroke:#b91c1c}.graph-node.matched rect{fill:#f3ead9;stroke:#8b5e34;stroke-width:3}.graph-node text{font:11px Consolas,monospace;fill:#292524}.graph-node:focus rect{stroke:#8b5e34;stroke-width:3}.graph-expand rect{fill:#8b5e34}.graph-expand text{fill:white;font:11px Consolas,monospace}.graph-expand:focus rect{stroke:#292524;stroke-width:2}</style><defs>${[[prefix,base],[prefix+'-red','#b91c1c']].map(([id,color])=>`<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="${color}"/></marker>`).join('')}</defs>${paths}${model.nodes.map(n=>`<g class="graph-node ${cycleNodes.has(n.id)?'cycle':''} ${n.matched?'matched':''}" transform="translate(${n.x} ${n.y})" tabindex="0" role="button" aria-label="查看节点 ${esc(n.id)}" data-action="graph-node" data-node="${n.index}"><title>${esc(n.id)} · ${esc(n.kind)}</title><rect width="150" height="36" rx="4"/><text x="75" y="23" text-anchor="middle">${esc(n.id.length>19?n.id.slice(0,18)+'…':n.id)}</text></g>${n.hiddenChildren.length?`<g class="graph-expand" transform="translate(${n.x+152} ${n.y+7})" tabindex="0" role="button" data-action="graph-expand" data-node="${n.index}" aria-label="展开 ${esc(n.id)} 的 ${n.hiddenChildren.length} 个子节点"><rect width="36" height="22" rx="4"/><text x="18" y="15" text-anchor="middle">+${n.hiddenChildren.length}</text></g>`:''}`).join('')}</svg>`;
   }
   function updateGraphSearch(center=true) {
     const matches=state.graph?.nodes.filter(n=>n.matched)||[];const status=$('#graph-search-status');
@@ -512,8 +531,7 @@
       case 'settings-close': closeSettings();break;
       case 'settings-clear': $('#llm-settings-form').reset();$('#settings-error').hidden=true;$('#llm-base-url').focus();break;
       case 'settings-key-toggle': {const input=$('#llm-api-key');const show=input.type==='password';input.type=show?'text':'password';target.textContent=show?'隐藏':'显示';target.setAttribute('aria-label',show?'隐藏 API Key':'显示 API Key');target.setAttribute('aria-pressed',String(show));break;}
-      case 'health-help': showHealthHelp(true);break;
-      case 'bars-toggle': state.barsExpanded=!state.barsExpanded;render();break;
+      case 'health-help': showHealthHelp(true,event);break;
       case 'source-location': if(!files().some(f=>f.path===target.dataset.path)){toast('分析结果中没有该文件，无法定位源码','warning');break;}state.file=target.dataset.path;state.fn=enclosingFunction(state.file,Number(target.dataset.line))?.id||'';state.line={start:Number(target.dataset.line),end:Number(target.dataset.line),index:-1};state.logicTab='trace';go('logic');break;
       case 'choose': $('#folder-input').value='';$('#folder-input').click();break;
       case 'connect': connect();break;
@@ -532,14 +550,10 @@
       case 'logic-tab': state.logicTab=target.dataset.tab;render();break;
       case 'copy-id': copy(state.fn);break;
       case 'statement': {const f=functions().find(x=>x.id===state.fn);const s=arr(f?.statements)[Number(target.dataset.index)];if(s){state.line={start:s.line,end:s.end_line??s.line,index:Number(target.dataset.index)};$$('.statement').forEach(el=>el.classList.toggle('selected',el===target));highlightSource();}break;}
-      case 'file-risks': state.risk={severities:[],evidence:'',rule:'',file:target.dataset.path,query:'',page:1};go('risks');break;
+      case 'file-risks': go('risks');break;
       case 'expand-finding': state.expanded.has(target.dataset.id)?state.expanded.delete(target.dataset.id):state.expanded.add(target.dataset.id);render();break;
-      case 'finding-risk': {state.risk={severities:[],evidence:'',rule:'',file:'',query:'',page:1};const index=filteredRisks().findIndex(f=>f.id===target.dataset.id);state.risk.page=Math.floor(Math.max(0,index)/10)+1;state.expanded.add(target.dataset.id);go('risks');break;}
+      case 'finding-risk': go('risks');break;
       case 'locate-code': locateFinding(target.dataset.id);break;
-      case 'risk-reset': state.risk={severities:[],evidence:'',rule:'',file:'',query:'',page:1};render();break;
-      case 'risk-page': state.risk.page=Number(target.dataset.page);render();break;
-      case 'metric-sort': state.metricAsc=state.metricSort===target.dataset.key?!state.metricAsc:false;state.metricSort=target.dataset.key;render();break;
-      case 'metrics-reset': state.overOnly=false;render();break;
       case 'graph-tab': state.graphTab=target.dataset.tab;state.graph=null;state.graphVisible=null;state.drawer=null;state.graphQuery='';render();break;
       case 'graph-expand': {const node=state.graph?.nodes[Number(target.dataset.node)];if(node){for(const id of node.hiddenChildren)state.graphVisible.add(id);state.graph=null;render();redrawGraphs();const current=state.graph.nodes.find(n=>n.id===node.id);const scope=$('#detail-dialog').open?'#detail-dialog':'#graph-host';$(scope+' .graph-node[data-node="'+current.index+'"]')?.focus({preventScroll:true});}break;}
       case 'graph-reset': state.graphVisible=null;state.graphQuery='';state.graph=null;state.drawer=null;render();break;
@@ -555,21 +569,21 @@
   document.addEventListener('change',event=>{
     const el=event.target;if(el.id==='folder-input'){analyze([...el.files]);return;}
     const key=el.dataset.change;if(!key)return;
-    if(key==='export-ai'){state.exportAi=el.checked;}
-    else if(key==='export-source'){state.exportSource=el.checked;}
+    if(key==='export-ai'){state.exportAi=el.checked;return;}
+    else if(key==='export-source'){state.exportSource=el.checked;return;}
     else if(key==='logic-sort')state.logicSort=el.value;
     else if(key==='over-only')state.overOnly=el.checked;
     else if(key==='chain-entry')state.chainEntry=el.value;
     else if(key.startsWith('graph-')){const keys={'graph-entry':'graphEntry','graph-layout':'graphLayoutMode','graph-granularity':'graphGranularity','graph-direction':'graphDirection'};if(keys[key])state[keys[key]]=el.value;state.graph=null;state.drawer=null;if(key==='graph-entry'||key==='graph-granularity')state.graphVisible=null;}
-    else if(key==='risk-severity'){state.risk.severities=el.checked?[...state.risk.severities,el.value]:state.risk.severities.filter(x=>x!==el.value);state.risk.page=1;}
     else if(key==='ai-logic-target'){state.fn=el.value;state.line=null;}
-    else if(key.startsWith('risk-')){state.risk[key.slice(5)]=el.value;state.risk.page=1;}
     render();
-    if(key==='risk-severity'){const details=$('.filters details');if(details){details.open=true;$(`input[value="${el.value}"]`,details)?.focus();}}
   });
-  document.addEventListener('input',event=>{if(event.target.id==='graph-search'){state.graphQuery=event.target.value;state.graph=null;drawGraph();return;}if(event.target.id==='risk-query'){const el=event.target;const start=el.selectionStart;state.risk.query=el.value;state.risk.page=1;render();const next=$('#risk-query');next.focus();next.setSelectionRange(start,start);}});
-  document.addEventListener('pointerover',event=>{if(event.target.closest('[data-action="health-help"]'))showHealthHelp(true);});
-  document.addEventListener('focusin',event=>{if(event.target.closest('[data-action="health-help"]'))showHealthHelp(true);});
+  document.addEventListener('input',event=>{if(event.target.id==='graph-search'){state.graphQuery=event.target.value;state.graph=null;drawGraph();}});
+  document.addEventListener('pointerover',event=>{if(event.target.closest('[data-action="health-help"]'))showHealthHelp(true,event);});
+  document.addEventListener('pointermove',event=>{if(event.target.closest('[data-action="health-help"]'))showHealthHelp(true,event);});
+  document.addEventListener('pointerout',event=>{const help=event.target.closest('.health-help');if(help&&!help.contains(event.relatedTarget))showHealthHelp(false);});
+  document.addEventListener('focusin',event=>{if(event.target.closest('[data-action="health-help"]'))showHealthHelp(true,event);});
+  document.addEventListener('focusout',event=>{const help=event.target.closest('.health-help');if(help&&!help.contains(event.relatedTarget))showHealthHelp(false);});
   document.addEventListener('keydown',event=>{
     if(event.key==='Escape')showHealthHelp(false);
     if(event.target.id==='tree-search'&&(event.key==='Enter'||event.key==='Escape')){event.preventDefault();state.treeSearch=event.key==='Escape'?'':event.target.value;render();$('#tree-search')?.focus();return;}
@@ -595,5 +609,6 @@
   });
   window.addEventListener('hashchange',route);
   route();connect();
-})();
+  return () => {};
+}
 

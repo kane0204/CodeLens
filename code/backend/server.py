@@ -16,6 +16,7 @@ from core_engine import health
 from core_engine import rules as extra_rules
 from core_engine import sequence
 from core_engine import quality
+from core_engine import special_risks
 from core_engine.ir import build_index
 from ai import contract as ai_contract
 from ai import provider as ai_provider
@@ -24,16 +25,20 @@ from ai import skills as ai_skills
 from ai import explanation
 
 ROOT = CODE_ROOT / "frontend"
+DIST_ROOT = ROOT / "dist"
 TOKEN = secrets.token_urlsafe(32)
-API_REVISION = 2
-CAPABILITIES = ["analyze", "explain", "explain-context", "class-metrics", "duplicates", "class-relations"]
+API_REVISION = 3
+CAPABILITIES = ["analyze", "explain", "explain-context", "class-metrics", "duplicates",
+                "class-relations", "multi-language", "special-risks"]
 MAX_BODY = 12 * 1024 * 1024
 MAX_AI_TARGETS = ai_runner.MAX_TARGETS
-STATIC = {"/":("index.html","text/html"),"/index.html":("index.html","text/html"),
-          "/app.js":("app.js","text/javascript"),"/styles.css":("styles.css","text/css")}
+STATIC = {"/":(DIST_ROOT / "index.html","text/html"),
+          "/index.html":(DIST_ROOT / "index.html","text/html")}
 # 前端按模块拆成多份静态资源，这里只放行 ROOT 下这几个目录与这几种扩展名。
-ASSET_DIRS = ("lib", "views", "features", "assets")
-ASSET_TYPES = {".js":"text/javascript", ".css":"text/css", ".svg":"image/svg+xml", ".woff2":"font/woff2"}
+ASSET_DIRS = {"assets": DIST_ROOT, "lib": ROOT, "views": ROOT, "features": ROOT}
+ASSET_TYPES = {".js":"text/javascript", ".css":"text/css", ".svg":"image/svg+xml",
+               ".woff":"font/woff", ".woff2":"font/woff2",
+               ".png":"image/png", ".jpg":"image/jpeg", ".jpeg":"image/jpeg"}
 
 
 def ai_error(code, message):
@@ -82,6 +87,7 @@ def enrich(result):
     merged["limitations"] = ["静态分析不执行源码；动态调用与运行时行为无法完整还原。", *extra_rules.NOTES, *quality.NOTES]
     merged = health.apply(merged)
     merged["sequence"] = sequence.build(merged)
+    merged["special_risks"] = special_risks.build(merged)
     return merged
 
 
@@ -175,8 +181,8 @@ def ai_analyze(payload):
 def resolve_asset(path):
     """把请求路径映射到 ROOT 内的真实文件；不在白名单内一律返回 None（含目录穿越）。"""
     if path in STATIC:
-        name, mime = STATIC[path]
-        return ROOT / name, mime
+        candidate, mime = STATIC[path]
+        return candidate, mime
     if ".." in path or "\\" in path or "//" in path:
         return None
     parts = [seg for seg in path.split("/") if seg]
@@ -194,7 +200,7 @@ def resolve_asset(path):
     for seg in parts[:-1]:
         if seg.startswith(".") or not all(ch.isalnum() or ch in "-_" for ch in seg):
             return None
-    root = ROOT.resolve()
+    root = ASSET_DIRS[parts[0]].resolve()
     candidate = root.joinpath(*parts).resolve()
     if candidate != root and root not in candidate.parents:
         return None
@@ -215,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'")
         self.end_headers()
         try:
             self.wfile.write(data)

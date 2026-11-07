@@ -4,9 +4,9 @@ Python 3.11+，运行服务只使用标准库。在项目根目录执行 `python
 
 ## 架构与数据流
 
-`engine.analyze` 负责 Python AST 基础事实；`rules` 补充 SOLID 五项及风险规则；`quality` 补充类指标、重复和类关系；`health` 与 `sequence` 补充评分及静态调用序列。`server.enrich` 组装工作台结果。
+`engine.analyze` 混合调度 Python AST 分析与 `multilang` 启发式分析；`rules` 补充 SOLID 五项及风险规则；`quality` 补充类指标、重复和类关系；`health`、`sequence` 与 `special_risks` 补充评分、静态调用序列和八类专项风险。`server.enrich` 组装工作台结果。
 
-页面仅加载 app.js 与 styles.css，无 npm/CDN 运行依赖。lib/layout.js 的确定性布局仍有独立回归测试；其他 lib/views/features 文件是旧版实现，不是当前页面的加载依赖。当前页面路由、导入、展示和导出在 app.js 中。
+页面由 Vite 构建、React 挂载；`src/App.jsx` 管理全局骨架和运行时生命周期，现有分析渲染器通过 `app.js` 的 `mountLegacyWorkbench()` 接入。字体随构建本地打包，不依赖 CDN。
 
 ## 当前页面
 
@@ -14,10 +14,10 @@ Python 3.11+，运行服务只使用标准库。在项目根目录执行 `python
 - 项目结构：文件树、包依赖、符号与解析错误。
 - 逻辑说明：按文件或函数调用模型，自然语言解释实现，补充两层已解析调用上下文；引用按实际发送范围验证，支持点击查看高亮源码。
 - 关系图谱：函数调用、模块依赖、类关系（继承/组合/关联/依赖）和静态调用链；支持搜索、布局切换、SVG 导出。调用链是可能的源码调用顺序，不是运行时追踪。
-- 质量体检：函数复杂度、长度、嵌套、健康度；类级 WMC/DIT/CBO/LCOM1；结构重复组。
-- 设计检查：S/O/L/I/D 五项静态规则、覆盖方法数、覆盖缺口，未命中不表示符合原则。
-- 风险清单：严重度/规则/证据/文件筛选、源码定位、CSV/JSON。
-- 导出报告：Markdown/JSON/CSV。Markdown 包括健康度、类指标、重复、类关系、风险、边界和可选 AI 解读。JSON 默认剔除源码，可显式包含；不包含模型密钥。
+- 质量体检：健康度、类级 WMC/DIT/CBO/LCOM1、结构重复，以及按规则分类并默认收起的命中明细。
+- 设计检查：S/O/L/I/D 五项静态规则；无法完整推导的覆盖缺口合并为风险提示。
+- 风险清单：可疑依赖调用、重复实现、未处理异常、硬编码敏感信息、死代码、假设未校验、注释与实现不一致、过度防御八类专项评估。
+- 导出：顶部“导出报告”菜单直接生成 Markdown/JSON/CSV，不提供独立预览页。JSON 默认剔除源码，可显式包含；不包含模型密钥。
 
 ## 接口
 
@@ -29,7 +29,7 @@ Python 3.11+，运行服务只使用标准库。在项目根目录执行 `python
 | POST /api/ai | 规则表达层，支持模板基线 |
 | POST /api/explain | 新版自然语言源码解读，仅使用真实模型，不回退模板 |
 
-POST 使用本机 Host、Origin 和 X-CodeLens-Token 校验。请求体上限 12 MB。最多 200 个 Python 文件、单文件 1 MB、总计 8 MB。默认排除 tests、虚拟环境、构建及依赖目录；导入不会执行或导入目标代码。
+POST 使用本机 Host、Origin 和 X-CodeLens-Token 校验。请求体上限 12 MB。最多 200 个源码文件、单文件 1 MB、总计 8 MB。默认排除 tests、虚拟环境、构建及依赖目录；导入不会执行或导入目标代码。Python 使用 AST；C/C++、Java、JavaScript、TypeScript、C#、Go、Rust 等使用启发式结构分析。
 
 静态分析不连接模型。点击生成解读后，所选源码和有界的相关调用片段发往用户配置的模型服务。地址/模型名称可持久化到本机浏览器，密钥仅存当前页面内存。
 

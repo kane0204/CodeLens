@@ -59,21 +59,23 @@ CodeLens 的目标是**把 AI 生成的代码从黑盒变成可审查对象**：
 
 ## 快速开始
 
-已实现本地工作台与基础 Python AST 分析引擎。需要 Python 3.11+；运行服务仅使用标准库，无需安装依赖。
+已实现本地工作台、Python AST 分析引擎和常用语言启发式分析。Python 使用深度 AST 分析；C/C++、Java、JavaScript、TypeScript、C#、Go、Rust 等使用确定性的结构化扫描。需要 Python 3.11+，运行服务本身只使用标准库。
 
 ```bash
 git clone https://github.com/kane0204/CodeLens.git
 cd CodeLens
+npm ci
+npm run build
 python -B code/backend/server.py
 ```
 
-打开 [本机工作台](http://127.0.0.1:18766)，选择 Python 项目文件夹并开始分析。Windows 可双击 `start-codelens.cmd`；macOS/Linux 可运行 `sh start-codelens.sh`。端口被占用时使用 `--port 18767` 并访问对应地址。
+打开 [本机工作台](http://127.0.0.1:18766)，选择项目文件夹并开始分析。Windows 可双击 `start-codelens.cmd`；macOS/Linux 可运行 `sh start-codelens.sh`。端口被占用时使用 `--port 18767` 并访问对应地址。
 
 SOLID 检查覆盖 S（方法数线索）、O（类型分派线索）、L（覆盖方法签名/绑定/同步异步/显式拒绝）、I（多方法继承契约中显式拒绝成员）、D（已解析的具体类构造依赖）。未命中不等于符合原则；外部父类、多继承、自定义装饰器等覆盖缺口会单独展示。详细规则见 [SOLID 分析说明](docs/software/solid-analysis.md)。
 
-当前已提供文件/符号统计、函数复杂度与健康度、WMC/DIT/CBO/LCOM1 类指标、SOLID 五项静态检查、结构重复检测、模块依赖与循环、调用图和类关系图（继承/组合/关联/依赖）。逻辑说明支持跨文件 AI 解读及已校验行号跳转；报告支持 Markdown/JSON/CSV，图支持 SVG。没有预置项目或模拟结果。静态分析不能证明完整运行时行为契约，也不覆盖所有语义等价重复。
+当前已提供文件/符号统计、函数复杂度与健康度、WMC/DIT/CBO/LCOM1 类指标、SOLID 五项静态检查、结构重复检测、模块依赖与循环、调用图和类关系图（继承/组合/关联/依赖）。风险清单按八类专项风险组织：可疑依赖调用、重复实现、未处理异常、硬编码敏感信息、死代码、假设未校验、注释与实现不一致、过度防御。逻辑说明支持跨文件 AI 解读及已校验行号跳转；导出菜单直接生成 Markdown/JSON/CSV，图支持 SVG。
 
-静态分析仅在本机服务内存中完成，不执行或导入目标项目。使用“逻辑说明 → 生成 AI 解读”时，所选文件或函数源码及最多两层已解析调用的相关上下文会发送到配置的模型服务；模型解读按需触发，不使用模板替代失败结果。最多 200 个 Python 文件、单文件 1 MB、总计 8 MB；默认排除测试、虚拟环境和构建目录。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
+静态分析仅在本机服务内存中完成，不执行或导入目标项目。使用“逻辑说明 → 生成 AI 解读”时，所选文件或函数源码及最多两层已解析调用的相关上下文会发送到配置的模型服务；模型解读按需触发，不使用模板替代失败结果。最多 200 个源码文件、单文件 1 MB、总计 8 MB；默认排除测试、虚拟环境和构建目录。多语言结果为启发式证据，需结合源码复核。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
 
 AI 逻辑解读：打开右上角设置，填写兼容 chat/completions 的 Base URL、模型名称和 API Key；进入“逻辑说明”选择整个文件或函数，点击“生成 AI 解读”。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。详细范围见 [AI 逻辑解读说明](docs/software/ai-logic-explanation.md)。
 
@@ -87,6 +89,21 @@ node tests/integration/test_solid_frontend.cjs
 node tests/integration/test_frontend.cjs
 python -B tests/evaluate_solid.py
 ```
+
+## 前端开发
+
+前端使用 Vite + React，字体和页面资源随构建产物本地打包。开发时先运行
+Python 分析服务，再启动 Vite：
+
+```bash
+python -B code/backend/server.py
+npm install
+npm run dev
+```
+
+打开 `http://127.0.0.1:5173`。需要单端口运行时，执行
+`npm run build` 后重新启动 Python 服务，它会直接托管
+`code/frontend/dist`。
 
 ## 项目结构
 

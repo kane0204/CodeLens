@@ -149,9 +149,14 @@ def apply(result):
             continue
         digest = hashlib.sha256('\n'.join(ast.dump(n, include_attributes=False) for n in body).encode()).hexdigest()
         clones.setdefault(digest, []).append({'id': ident, 'file': fn['file'], 'line': fn['line'], 'end_line': fn['end_line']})
-    duplicate_groups = [{'fingerprint': key, 'occurrences': rows} for key, rows in sorted(clones.items()) if len(rows) > 1]
+    duplicate_groups = list(result.get('duplicates') or [])
+    ast_duplicate_groups = [
+        {'fingerprint': key, 'occurrences': rows}
+        for key, rows in sorted(clones.items()) if len(rows) > 1
+    ]
+    duplicate_groups.extend(ast_duplicate_groups)
     findings = [dict(f) for f in result.get('findings', [])]
-    for group in duplicate_groups:
+    for group in ast_duplicate_groups:
         first, *others = group['occurrences']
         for duplicate in others:
             findings.append({'rule_id': 'DUP-01', 'severity': 'info', 'file': duplicate['file'], 'line': duplicate['line'],

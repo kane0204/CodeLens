@@ -10,7 +10,7 @@ import re
 import tokenize
 from pathlib import PurePosixPath
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", "build", "dist", "tests"}
 MAX_FILES = 200
 MAX_FILE_BYTES = 1024 * 1024
@@ -164,7 +164,7 @@ def cycles_of(nodes, edges):
     return sorted(result)
 
 
-def analyze(payload):
+def _analyze_python(payload):
     if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
         raise ValueError("请求必须包含 files 列表")
     if len(payload["files"]) > MAX_FILES:
@@ -491,3 +491,37 @@ def analyze(payload):
                      "inheritance":sorted(inheritance,key=lambda e:(e["source"],e["target"])),"cycles":cycles},
             "errors":errors,"warnings":sorted(warnings,key=lambda e:(e["file"],e["line"],e["message"])),
             "limitations":LIMITATIONS}
+
+
+def analyze(payload):
+    """Dispatch Python AST analysis and non-Python heuristic analysis."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
+        raise ValueError("分析负载必须包含 files 列表")
+    from . import multilang
+    python_files, generic_files, other_files = [], [], []
+    for item in payload["files"]:
+        if not isinstance(item, dict):
+            raise ValueError("文件记录无效")
+        path = normalized_path(item.get("path"))
+        suffix = PurePosixPath(path).suffix.lower()
+        if suffix == ".py":
+            python_files.append(item)
+        elif suffix in multilang.LANGUAGES:
+            generic_files.append(item)
+        else:
+            other_files.append(item)
+    if not generic_files:
+        return _analyze_python(payload)
+    python_result = _analyze_python({
+        "project": payload.get("project"),
+        "files": python_files,
+    }) if python_files else None
+    generic_result = multilang.analyze({
+        "project": payload.get("project"),
+        "files": generic_files + other_files,
+    })
+    return multilang.merge(
+        python_result,
+        generic_result,
+        str(payload.get("project") or "多语言项目")[:120],
+    )

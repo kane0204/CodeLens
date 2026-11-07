@@ -25,6 +25,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build React frontend
+        run: npm run build
       - name: Python 引擎与本机接口回归
         run: python -B -m unittest discover -s tests -p 'test_*.py' -v
       - name: 前端语法与真实数据链路

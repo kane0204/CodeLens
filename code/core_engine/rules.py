@@ -219,6 +219,10 @@ def evaluate(result):
         name = fn.get("name")
         if not isinstance(ident, str) or not isinstance(name, str):
             continue
+        record = next((item for item in result.get("files") or []
+                       if item.get("path") == fn.get("file")), None)
+        if record and record.get("language") not in (None, "Python"):
+            continue
         metrics["functions"] += 1
         if name.startswith("_") or name in ENTRY_NAMES or name.startswith("test"):
             continue

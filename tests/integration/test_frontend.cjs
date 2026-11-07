@@ -76,7 +76,7 @@ function loadLayout() {
   if (layoutLoaded) return layoutLoaded;
   const file = path.join(frontRoot, 'lib', 'layout.js');
   if (!fs.existsSync(file)) throw new Error('缺少 lib/layout.js');
-  require(file);
+  vm.runInThisContext(fs.readFileSync(file, 'utf8'), { filename: file });
   const CL = globalThis.CL;
   if (!CL || !CL.layout) throw new Error('lib/layout.js 未导出 globalThis.CL.layout');
   if (typeof CL.layout.buildGraph !== 'function') throw new Error('CL.layout.buildGraph 不是函数');
@@ -294,8 +294,9 @@ function report() {
   await runLayoutContracts();
   const appCheck=nodeCheck(path.join(frontRoot,'app.js'));assert.ok(appCheck.ok,appCheck.message);
   const html=fs.readFileSync(path.join(frontRoot,'index.html'),'utf8');
-  assert.deepEqual([...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map(m=>m[1]),['/app.js']);
-  for(const id of ['app','folder-input','settings-dialog','detail-dialog'])assert.ok(html.includes('id="'+id+'"'));
+  assert.deepEqual([...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map(m=>m[1]),['/src/main.jsx']);
+  const appSource=fs.readFileSync(path.join(frontRoot,'src','App.jsx'),'utf8');
+  for(const id of ['app','folder-input','settings-dialog','detail-dialog'])assert.ok(appSource.includes('id="'+id+'"'));
   const browser=spawnSync(process.execPath,[path.join(__dirname,'test_browser.cjs')],{cwd:repoRoot,stdio:'inherit',windowsHide:true,timeout:120000});
   assert.equal(browser.status,0,'Real browser workflow failed');
   report();

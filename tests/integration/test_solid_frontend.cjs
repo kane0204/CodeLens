@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../../code/frontend/app.js'), 'utf8');
 const start = source.indexOf('  function solidView()');
-const end = source.indexOf('  function filteredRisks()', start);
+const end = source.indexOf('  function risksView()', start);
 const ids = ['SRP-01', 'OCP-01', 'LSP-01', 'ISP-01', 'DIP-01'];
 const context = {
   state: {result: {solid: {checked_overrides: 1, limitations: ['未命中不等于符合'],
@@ -16,14 +16,15 @@ const context = {
   esc: x => String(x ?? '').replaceAll('<', '&lt;'), val: x => x ?? '—',
   arr: x => Array.isArray(x) ? x : [], card: (title, body) => title + body,
   table: (headers, body) => headers.join(' ') + body, tag: x => x, evidence: x => x,
-  button: x => x, findingDetail: () => ''
+  button: x => x, ruleLabel: x => x, findingDetail: () => ''
 };
 vm.createContext(context);
 vm.runInContext(source.slice(start, end), context);
 const html = context.solidView();
 for (const id of ids) assert.ok(html.includes(id), id);
-for (const text of ['拒绝接口成员', '父类未解析', '未发现静态风险', '部分发现未展示', '未命中不等于符合']) {
+for (const text of ['拒绝接口成员', '未发现静态风险', '部分代码因', '设计规则命中']) {
   assert.ok(html.includes(text), text);
 }
+assert.ok(!html.includes('分析覆盖范围'));
 assert.ok(!html.includes('>通过<'));
 console.log('SOLID frontend rendering: PASS');

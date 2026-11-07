@@ -11,6 +11,7 @@ async function main(){
   const fixture=path.join(work,'project'),downloads=path.join(work,'downloads');fs.mkdirSync(fixture);fs.mkdirSync(downloads);
   fs.writeFileSync(path.join(fixture,'a.py'),'from dep import increment, Worker\ndef run(x):\n    return increment(x)\nclass Pipeline:\n    def __init__(self): self.worker = Worker()\n');
   fs.writeFileSync(path.join(fixture,'dep.py'),'def increment(x):\n    return x + 1\nclass Worker:\n    def work(self): return 1\n');
+  fs.writeFileSync(path.join(fixture,'Worker.java'),'class Worker {\n  static int work(int value) {\n    if (value > 0) { return value + 1; }\n    return 0;\n  }\n}\n');
   let mode='ok',modelCalls=0,lastPrompt='';
   const model=http.createServer((req,res)=>{let body='';req.on('data',b=>body+=b);req.on('end',()=>{
     modelCalls++;lastPrompt=JSON.parse(body).messages[1].content;
@@ -56,20 +57,31 @@ async function main(){
     await click('[data-action="ai-citation"][data-path="dep.py"]');
     assert.ok((await text()).includes('return x + 1'));
     await click('#detail-dialog [data-action="close-dialog"]');
-    await click('a[href="#export"]');await delay(150);
-    for(const format of ['json','md','csv'])await click(`[data-action="export"][data-format="${format}"]`);
+    for(const format of ['json','md','csv']){
+      await evaluate('document.querySelector(".export-dropdown").open=true');await delay(50);
+      await click(`[data-action="export"][data-format="${format}"]`);
+    }
     await poll(()=>['json','md','csv'].every(ext=>fs.existsSync(path.join(downloads,`codelens-report.${ext}`))),'downloads');
     const report=JSON.parse(fs.readFileSync(path.join(downloads,'codelens-report.json'),'utf8'));
     assert.equal(report.ai_explanations.length,1);assert.ok(report.files.every(f=>!('source'in f)));assert.ok(report.health);assert.ok(Array.isArray(report.class_metrics));
     assert.ok(fs.readFileSync(path.join(downloads,'codelens-report.md'),'utf8').includes('先调用 increment'));
+    await evaluate('document.querySelector(".export-dropdown").open=true');
     await click('[data-change="export-ai"]');await click('[data-change="export-source"]');
     fs.unlinkSync(path.join(downloads,'codelens-report.json'));
+    await evaluate('document.querySelector(".export-dropdown").open=true');
     await click('[data-action="export"][data-format="json"]');
     await poll(()=>fs.existsSync(path.join(downloads,'codelens-report.json')),'optional source export');
     const withoutAi=JSON.parse(fs.readFileSync(path.join(downloads,'codelens-report.json'),'utf8'));
     assert.equal(withoutAi.ai_explanations.length,0);assert.ok(withoutAi.files.every(f=>typeof f.source==='string'));
     await click('a[href="#solid"]');assert.ok((await text()).includes('ISP-01'));
-    await click('a[href="#metrics"]');assert.ok((await text()).includes('LCOM1'));
+    await click('a[href="#metrics"]');assert.ok((await text()).includes('规则命中汇总'));
+    assert.ok(!(await text()).includes('LCOM1'));assert.ok(!(await text()).includes('结构重复'));
+    assert.equal(await evaluate('document.querySelectorAll(".rule-group[open]").length'),0);
+    await click('a[href="#risks"]');
+    for(const label of ['可疑依赖调用','重复实现','未处理异常','硬编码敏感信息','死代码','假设未校验','注释与实现不一致','过度防御'])assert.ok((await text()).includes(label),label);
+    assert.equal(await evaluate('document.querySelectorAll(".risk-row[open]").length'),0);
+    await evaluate('document.querySelector(".risk-row > summary").click()');
+    assert.equal(await evaluate('document.querySelectorAll(".risk-row[open]").length'),1);
     await click('a[href="#graphs"]');await click('[data-action="graph-tab"][data-tab="inheritance"]');
     assert.ok(await evaluate('Array.from(document.querySelectorAll(".graph-edge title")).some(e=>e.textContent.includes("composition"))'));
     await click('a[href="#logic"]');mode='error';await click('[data-action="ai-explain"]');
@@ -82,11 +94,11 @@ async function main(){
     await evaluate(`(()=>{
       const file=(name,content)=>({name,isFile:true,isDirectory:false,file:ok=>queueMicrotask(()=>ok(new File([content],name)))});
       const dir=(name,children)=>({name,isDirectory:true,isFile:false,createReader(){let i=0;return {readEntries(ok){queueMicrotask(()=>ok(i<children.length?[children[i++]]:[]));}};}});
-      const root=dir('dropped',[file('a.py','from dep import increment\\ndef run(x):\\n    return increment(x)\\n'),file('dep.py','def increment(x):\\n    return x + 1\\n'),dir('tests',[file('excluded.py','def never_import(): pass')])]);
+      const root=dir('dropped',[file('a.py','from dep import increment\\ndef run(x):\\n    return increment(x)\\n'),file('dep.py','def increment(x):\\n    return x + 1\\n'),file('Worker.java','class Worker { static int work(int value) { if (value > 0) { return value + 1; } return 0; } }\\n'),dir('tests',[file('excluded.py','def never_import(): pass')])]);
       const event=new Event('drop',{bubbles:true,cancelable:true});Object.defineProperty(event,'dataTransfer',{value:{items:[{kind:'file',webkitGetAsEntry:()=>root,getAsFile:()=>null}],files:[]}});document.querySelector('#dropzone').dispatchEvent(event);
     })()`);
     await poll(async()=>(await text()).includes('健康度总分'),'paged drag import');
-    await click('a[href="#structure"]');assert.ok(!(await text()).includes('excluded.py'));
+    await click('a[href="#structure"]');assert.ok((await text()).includes('Worker.java'));assert.ok(!(await text()).includes('excluded.py'));
     await click('a[href="#logic"]');
     // Simulate old backend status, using real page reconnect flow.
     await evaluate(`window.realFetch=window.fetch;window.fetch=async(...args)=>{const r=await window.realFetch(...args);if(args[0]==='/api/status'){const d=await r.json();delete d.api_revision;delete d.capabilities;return new Response(JSON.stringify(d));}return r;};`);

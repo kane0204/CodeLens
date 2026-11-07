@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_left
+from itertools import islice
 from pathlib import PurePosixPath
 
 LANGUAGES = {
@@ -88,54 +89,48 @@ def code_line_count(source):
     return total
 
 
+def _blank_range(source, chars, start, end):
+    for index in range(start, end):
+        if source[index] != "\n":
+            chars[index] = " "
+    return end
+
+
+def _blank_string(source, chars, start):
+    quote = source[start]
+    chars[start] = " "
+    index = start + 1
+    while index < len(source):
+        char = source[index]
+        if char == "\\":
+            chars[index:index + 2] = " " * min(2, len(source) - index)
+            index += 2
+            continue
+        if char != "\n":
+            chars[index] = " "
+        index += 1
+        if char == quote:
+            break
+    return index
+
+
 def _sanitize(source):
     """Blank out comments and string bodies while preserving offsets/newlines."""
     chars = list(source)
-    i, n = 0, len(source)
-    in_block = False
-    while i < n:
-        c = source[i]
-        nxt = source[i + 1] if i + 1 < n else ""
-        if in_block:
-            if c == "*" and nxt == "/":
-                chars[i] = chars[i + 1] = " "
-                in_block = False
-                i += 2
-                continue
-            if c != "\n":
-                chars[i] = " "
-            i += 1
-            continue
-        if c == "/" and nxt == "*":
-            chars[i] = chars[i + 1] = " "
-            in_block = True
-            i += 2
-            continue
-        if c == "/" and nxt == "/":
-            while i < n and source[i] != "\n":
-                chars[i] = " "
-                i += 1
-            continue
-        if c in "\"'`":
-            quote = c
-            chars[i] = " "
-            i += 1
-            while i < n:
-                if source[i] == "\\":
-                    chars[i] = " "
-                    if i + 1 < n:
-                        chars[i + 1] = " "
-                    i += 2
-                    continue
-                if source[i] == quote:
-                    chars[i] = " "
-                    i += 1
-                    break
-                if source[i] != "\n":
-                    chars[i] = " "
-                i += 1
-            continue
-        i += 1
+    index = 0
+    while index < len(source):
+        if source.startswith("/*", index):
+            closing = source.find("*/", index + 2)
+            end = len(source) if closing < 0 else closing + 2
+            index = _blank_range(source, chars, index, end)
+        elif source.startswith("//", index):
+            closing = source.find("\n", index)
+            end = len(source) if closing < 0 else closing
+            index = _blank_range(source, chars, index, end)
+        elif source[index] in "\"'\x60":
+            index = _blank_string(source, chars, index)
+        else:
+            index += 1
     return "".join(chars)
 
 
@@ -172,26 +167,24 @@ def _params_of(header):
     open_at = header.find("(")
     if open_at < 0:
         return 0
-    depth, count, has_value = 0, 0, False
-    for ch in header[open_at:]:
-        if ch == "(":
-            depth += 1
-            if depth == 1:
-                continue
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                break
-        elif depth == 1 and ch == ",":
-            count += 1
-        elif depth == 1 and not ch.isspace():
-            has_value = True
-    if not has_value:
-        return 0
-    text = header[open_at + 1: header.find(")", open_at)]
+    text = header[open_at + 1:header.find(")", open_at)]
     if text.strip() in {"", "void"}:
         return 0
-    return count + 1
+    return _count_parameters(header[open_at + 1:])
+
+
+def _count_parameters(parameters):
+    depth, count, has_value = 1, 0, False
+    for char in parameters:
+        if char in "()":
+            depth += 1 if char == "(" else -1
+            if depth == 0:
+                break
+        elif depth == 1 and char == ",":
+            count += 1
+        elif depth == 1 and not char.isspace():
+            has_value = True
+    return count + 1 if has_value else 0
 
 
 def _effective_lines(source, start_line, end_line):
@@ -218,6 +211,11 @@ def _function_header(clean, brace):
     go = GO_FUNC_RE.search(text)
     if go:
         return go.group(1), text
+    name = _c_style_function_name(text)
+    return (name, text) if name is not None else None
+
+
+def _c_style_function_name(text):
     if "(" not in text or ")" not in text:
         return None
     head = text.split("(")[0].strip()
@@ -231,10 +229,7 @@ def _function_header(clean, brace):
         return None
     if not re.fullmatch(r"[A-Za-z_~][\w:~]*", name):
         return None
-    # C/C++ declarations such as `int x` must not be treated as functions.
-    if text.rstrip().endswith(";") and "{" not in text:
-        return None
-    return name.split("::")[-1].lstrip("~"), text
+    return name.split("::")[-1].lstrip("~")
 
 
 def _class_bases(text):
@@ -242,13 +237,18 @@ def _class_bases(text):
     names = []
     if match:
         names = [item.strip().split("<")[0] for item in re.split(r",|\band\b", match.group(1)) if item.strip()]
-    colon = re.search(r":\s*([^{]+)", text)
-    if colon:
-        for item in colon.group(1).split(","):
-            cleaned = re.sub(r"\b(public|private|protected|virtual)\b", "", item).strip().split("<")[0]
-            if cleaned and re.fullmatch(r"[\w:.]+", cleaned):
-                names.append(cleaned.split("::")[-1])
+    names.extend(_colon_bases(text))
     return [name for name in names if name and name not in {"public", "private", "protected"}]
+
+
+def _colon_bases(text):
+    colon = re.search(r":\s*([^{]+)", text)
+    if not colon:
+        return
+    for item in colon.group(1).split(","):
+        cleaned = re.sub(r"\b(public|private|protected|virtual)\b", "", item).strip().split("<")[0]
+        if cleaned and re.fullmatch(r"[\w:.]+", cleaned):
+            yield cleaned.split("::")[-1]
 
 
 def _resolve_include(current_path, target, known):
@@ -328,14 +328,12 @@ def _scan_functions(clean, pairs, classes, module, path, lines):
         end = pairs[brace]
         start_line = lines.line_at(brace - len(text))
         end_line = lines.line_at(end)
-        if end_line < start_line:
-            continue
         owner = next((item for item in classes if item["_span"][0] < brace < item["_span"][1]), None)
         ident = f"{module}.{owner['name']}.{name}" if owner else f"{module}.{name}"
         if ident in seen_ids:
             ident += "@" + str(start_line)
         if ident in seen_ids:
-            continue
+            ident += "-" + str(brace)
         seen_ids.add(ident)
         functions.append({
             "id": ident,
@@ -361,25 +359,27 @@ def _apply_metrics(functions, clean, source, lines):
         start, end = span
         ranges = _kept_ranges(start + 1, end, inner.get(span) or [])
         item["cc"] = 1 + sum(len(CC_TOKEN_RE.findall(clean[a:b])) for a, b in ranges)
-        depth = maximum = 0
-        stack = []
-        for a, b in ranges:
-            for index in range(a, b):
-                ch = clean[index]
-                if ch == "{":
-                    control = _control_before(clean, index)
-                    stack.append(control)
-                    if control:
-                        depth += 1
-                        maximum = max(maximum, depth)
-                elif ch == "}" and stack:
-                    if stack.pop():
-                        depth -= 1
-        item["nesting"] = maximum
+        item["nesting"] = _control_depth(clean, ranges)
         item["length"] = _effective_lines(source, item["line"], item["end_line"])
         item["params"] = _params_of(item["_text"])
         item["statements"] = []
         item["_ranges"] = ranges
+
+
+def _control_depth(clean, ranges):
+    depth = maximum = 0
+    stack = []
+    positions = (index for start, end in ranges for index in range(start, end))
+    for index in positions:
+        char = clean[index]
+        if char == "{":
+            control = _control_before(clean, index)
+            stack.append(control)
+            depth += control
+            maximum = max(maximum, depth)
+        elif char == "}" and stack:
+            depth -= stack.pop()
+    return maximum
 
 
 def _threshold_findings(functions, path):
@@ -408,15 +408,10 @@ def _line_findings(source, path):
             findings.append(_finding("A4", "warning", path, number,
                                      "敏感命名变量被直接赋予非占位字符串字面量；值已从报告隐藏。",
                                      "确认是否为真实凭据，改用环境变量或密钥管理服务；未验证凭据有效性。"))
-        if EMPTY_CATCH_RE.search(line):
-            findings.append(_finding("A8-DEFENSIVE", "warning", path, number,
-                                     "异常捕获块为空，异常被静默吞掉。",
-                                     "至少记录异常并给出恢复路径或向上抛出。", evidence="inference", confidence="medium"))
-        elif BROAD_CATCH_RE.search(line):
-            findings.append(_finding("A8-DEFENSIVE", "info", path, number,
-                                     "捕获范围过宽（Exception/Throwable/...），可能掩盖非预期错误。",
-                                     "缩小捕获类型，只处理可恢复的异常。", evidence="inference", confidence="low"))
-        if TODO_RE.search(line) and ("//" in line or "#" in line or "/*" in line or "*" in line):
+        catch = _catch_finding(line, path, number)
+        if catch is not None:
+            findings.append(catch)
+        if TODO_RE.search(line) and ("#" in line or "*" in line or "//" in line):
             findings.append(_finding("CMT-01", "info", path, number,
                                      "存在未完成、临时或占位注释，实现可能与注释描述不一致。",
                                      "核对注释与当前实现，补齐未完成部分或删除过期注释。",
@@ -424,37 +419,41 @@ def _line_findings(source, path):
     return findings
 
 
+def _catch_finding(line, path, number):
+    if EMPTY_CATCH_RE.search(line):
+        return _finding("A8-DEFENSIVE", "warning", path, number,
+                                     "异常捕获块为空，异常被静默吞掉。",
+                                     "至少记录异常并给出恢复路径或向上抛出。", evidence="inference", confidence="medium")
+    if BROAD_CATCH_RE.search(line):
+        return _finding("A8-DEFENSIVE", "info", path, number,
+                                     "捕获范围过宽（Exception/Throwable/...），可能掩盖非预期错误。",
+                                     "缩小捕获类型，只处理可恢复的异常。", evidence="inference", confidence="low")
+
+
 def _build_calls(functions, clean, path, lines):
     by_name = {}
     for item in functions:
         by_name.setdefault(item["name"], []).append(item["id"])
-    calls = []
-    exhausted = False
-    for item in functions:
-        if exhausted:
-            break
-        for a, b in item["_ranges"]:
-            for match in CALL_RE.finditer(clean[a:b]):
-                name = match.group(1)
-                if name in KEYWORDS:
-                    continue
-                ids = by_name.get(name) or []
-                resolved = len(ids) == 1
-                calls.append({
-                    "source": item["id"],
-                    "target": ids[0] if resolved else None,
-                    "expression": name,
-                    "file": path,
-                    "line": lines.line_at(a + match.start()),
-                    "status": "resolved" if resolved else "unresolved",
-                    "evidence_type": "fact" if resolved else "inference",
-                })
-                if len(calls) >= MAX_CALLS_PER_FILE:
-                    exhausted = True
-                    break
-            if exhausted:
-                break
-    return calls
+    calls = (_call_edge(item, match, offset, by_name, path, lines)
+             for item in functions for offset, match in _call_matches(item, clean))
+    return list(islice(calls, MAX_CALLS_PER_FILE))
+
+
+def _call_matches(item, clean):
+    for start, end in item["_ranges"]:
+        for match in CALL_RE.finditer(clean[start:end]):
+            if match.group(1) not in KEYWORDS:
+                yield start, match
+
+
+def _call_edge(item, match, offset, by_name, path, lines):
+    name = match.group(1)
+    ids = by_name.get(name, ())
+    resolved = len(ids) == 1
+    return {"source": item["id"], "target": ids[0] if resolved else None,
+            "expression": name, "file": path, "line": lines.line_at(offset + match.start()),
+            "status": "resolved" if resolved else "unresolved",
+            "evidence_type": "fact" if resolved else "inference"}
 
 
 def _dead_code_findings(functions, calls, path):
@@ -533,21 +532,24 @@ def _js_edges(source, path, known, push):
     for number, line in enumerate(source.splitlines(), 1):
         for match in pattern.finditer(line):
             target = match.group(1)
-            internal = None
-            if target.startswith("."):
-                base = PurePosixPath(path).parent
-                raw = str((base / target).as_posix())
-                parts = []
-                for part in raw.split("/"):
-                    if part == "..":
-                        if parts:
-                            parts.pop()
-                    elif part not in ("", "."):
-                        parts.append(part)
-                stem = "/".join(parts)
-                candidates = [stem] + [f"{stem}{ext}" for ext in (".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js")]
-                internal = next((item for item in known if item in candidates), None)
-            push(target, number, internal)
+            push(target, number, _resolve_js_import(path, target, known))
+
+
+def _resolve_js_import(path, target, known):
+    if not target.startswith("."):
+        return None
+    raw = (PurePosixPath(path).parent / target).as_posix()
+    parts = []
+    for part in raw.split("/"):
+        if part == "..":
+            if parts:
+                parts.pop()
+        elif part not in ("", "."):
+            parts.append(part)
+    stem = "/".join(parts)
+    extensions = (".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js")
+    candidates = {stem, *(stem + extension for extension in extensions)}
+    return next((item for item in known if item in candidates), None)
 
 
 def _go_edges(source, path, known, push):

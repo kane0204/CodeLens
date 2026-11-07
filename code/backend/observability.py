@@ -44,7 +44,7 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 # key/value pairs that look like credentials or embedded source.
 _SECRET_PAIRS = re.compile(
     r"(?i)\b(api[_-]?key|token|secret|password|authorization|content_base64|source|content)\b"
-    r"\s*[=:]\s*(\"[^\"]*\"|'[^']*'|[^\s,;&]+)"
+    r"""["']?\s*[=:]\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;&]+)"""
 )
 _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-]+")
 # Field names that must never be emitted even if a call site adds them later.
@@ -138,7 +138,7 @@ def configure_logging(level: str | None = None, log_file: str | None = None) -> 
                 logger.addHandler(file_handler)
             except OSError as exc:
                 # Logging must never prevent the API from starting.
-                logger.warning("file log disabled path=%s reason=%s", "<redacted>", redact(exc, 80))
+                logger.warning("file log disabled path=%s reason=%s", "<redacted>", type(exc).__name__)
             else:
                 logger.info("file log enabled path=%s", "<redacted>")
 

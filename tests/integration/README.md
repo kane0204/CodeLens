@@ -4,7 +4,7 @@
 
 `test_server.py` 通过真实 HTTP 分析引擎与服务源码，验证来源/令牌限制，以及 18766 不再提供静态页面；`test_explanation.py` 验证 AI 解读接口。
 
-在仓库根目录运行 `python -B -m unittest discover -s tests -p 'test_*.py' -v`。界面（`codelens-prototype/`）另需 `npm ci && npm run build` 做类型检查与构建。下文保留完整测试规划。
+在仓库根目录运行 `python -B -m unittest discover -s tests/integration -v`。界面（`codelens-prototype/`）另需 `npm ci && npm run build` 做类型检查与构建。[单元测试和覆盖率](../../doc/README.md) 单独运行。
 
 验证「AI 生成的项目文件夹 → 逻辑说明 + 结构图 + 风险报告」的端到端流程。
 

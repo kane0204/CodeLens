@@ -53,7 +53,8 @@ class ErrorHandlingTests(unittest.TestCase):
             with urllib.request.urlopen(req, timeout=30) as response:
                 return response.status, response.read()
         except urllib.error.HTTPError as exc:
-            return exc.code, exc.read()
+            with exc:
+                return exc.code, exc.read()
 
     def post_json(self, path, payload, token=None):
         status, raw = self.request(path, json.dumps(payload).encode(), token)

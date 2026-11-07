@@ -1,0 +1,10 @@
+[run]
+source = code
+
+[report]
+precision = 2
+show_missing = True
+exclude_lines =
+
+[html]
+directory = htmlcov/python

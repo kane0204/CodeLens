@@ -53,6 +53,25 @@ def run(files):
 
 
 class HealthTests(unittest.TestCase):
+    def test_missing_and_mixed_metric_rows_degrade_without_inventing_scores(self):
+        self.assertIsNone(health.apply(None))
+        self.assertFalse(health.apply({})["health"]["available"])
+        result = health.apply({"functions": [
+            None,
+            {"id": "good", "cc": 19, "length": 50, "nesting": 4},
+            {"id": "fair", "cc": 27, "length": 50, "nesting": 4},
+        ]})
+        self.assertEqual(result["health"]["distribution"],
+                         {"excellent": 0, "good": 1, "fair": 1, "poor": 0})
+        self.assertEqual(result["health"]["score"], 76)
+        self.assertIsNone(result["functions"][0])
+
+    def test_high_penalties_use_poor_grade_with_minimum_score(self):
+        result = health.apply({"functions": [{"cc": 100, "length": 1000, "nesting": 20}]})["health"]
+        self.assertEqual((result["score"], result["grade"]), (30, "需关注"))
+        self.assertEqual(result["distribution"]["poor"], 1)
+        self.assertEqual(health.grade_of(-1), "需关注")
+
     def test_result_untouched(self):
         result = run([("demo.py", SIMPLE)])
         before = json.dumps(result, sort_keys=True, ensure_ascii=False)
@@ -130,6 +149,15 @@ class HealthTests(unittest.TestCase):
 
 
 class SequenceTests(unittest.TestCase):
+    def test_ignores_invalid_call_and_function_rows(self):
+        raw = run([("main.py", "def run():\n    return external()\n")])
+        raw["graph"]["calls"] += [None, {"file": "main.py", "line": "two"}, {"file": None, "line": 2}]
+        raw["functions"].append({"id": "bad", "file": "main.py", "line": None})
+        result = sequence.build(raw)
+        steps = result["files"][0]["steps"]
+        self.assertEqual([(item["expression"], item["enclosing"]) for item in steps],
+                         [("external", "main.run")])
+
     def test_orders_by_line_and_marks_status(self):
         result = run([("demo.py", DEEP)])
         model = sequence.build(result)

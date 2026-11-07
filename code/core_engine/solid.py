@@ -48,18 +48,25 @@ def _refuses(method):
     return _name(exc) in {"NotImplementedError", "builtins.NotImplementedError"}
 
 
-def _signature(method):
-    args = method.args
-    positional = list(args.posonlyargs) + list(args.args)
+def _positional_parameters(args, skip_receiver):
+    positional = args.posonlyargs + args.args
     required = len(positional) - len(args.defaults)
     params = []
-    for i, arg in enumerate(positional):
-        if i == 0 and _mode(method) != "static":
+    for index, arg in enumerate(positional):
+        if index < skip_receiver:
             continue
-        kind = inspect.Parameter.POSITIONAL_ONLY if i < len(args.posonlyargs) else inspect.Parameter.POSITIONAL_OR_KEYWORD
-        params.append(inspect.Parameter(arg.arg, kind, default=inspect.Parameter.empty if i < required else None))
-    if _mode(method) != "static" and not positional:
+        kind = inspect.Parameter.POSITIONAL_ONLY if index < len(args.posonlyargs) else inspect.Parameter.POSITIONAL_OR_KEYWORD
+        default = inspect.Parameter.empty if index < required else None
+        params.append(inspect.Parameter(arg.arg, kind, default=default))
+    return params
+
+
+def _signature(method):
+    args = method.args
+    skip_receiver = _mode(method) != "static"
+    if skip_receiver and not (args.posonlyargs or args.args):
         return None
+    params = _positional_parameters(args, skip_receiver)
     if args.vararg:
         params.append(inspect.Parameter(args.vararg.arg, inspect.Parameter.VAR_POSITIONAL))
     for arg, default in zip(args.kwonlyargs, args.kw_defaults):
@@ -73,6 +80,40 @@ def _signature(method):
         return None
 
 
+def _keyword_variants(parameters, supplied, extra_keywords):
+    remaining = {parameter.name: parameter for parameter in parameters if parameter.name not in supplied}
+    required = {name: None for name, parameter in remaining.items() if parameter.default is inspect.Parameter.empty}
+    optional = set(remaining) | extra_keywords
+    yield required
+    yield {**dict.fromkeys(optional), **required}
+    for key in sorted(optional):
+        yield {**required, key: None}
+
+
+def _call_variants(signature, positional, max_pos, extra_keywords):
+    kinds = inspect.Parameter
+    keyword_parameters = [parameter for parameter in signature.parameters.values()
+                          if parameter.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)]
+    for count in range(max_pos + 1):
+        args = [None] * count
+        supplied = {parameter.name for parameter in positional[:count]}
+        for keywords in _keyword_variants(keyword_parameters, supplied, extra_keywords):
+            yield args, keywords
+
+
+def _rejected_call(parent, child, variants):
+    for args, keywords in variants:
+        try:
+            parent.bind(*args, **keywords)
+        except TypeError:
+            continue
+        try:
+            child.bind(*args, **keywords)
+        except TypeError:
+            return {"positional": len(args), "keywords": sorted(keywords)}
+    return False
+
+
 def _narrowed(parent, child):
     """Witness a parent-valid call rejected by the override (values are inert)."""
     p, c = _signature(parent), _signature(child)
@@ -84,28 +125,10 @@ def _narrowed(parent, child):
     # Bound work for unusually huge generated signatures; coverage records the gap.
     if max_pos > 128:
         return None
-    for n in range(max_pos + 1):
-        supplied = {a.name for a in positional[:n]}
-        required = {a.name: None for a in p.parameters.values()
-                    if a.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY)
-                    and a.default is kinds.empty and a.name not in supplied}
-        optional = {a.name for a in p.parameters.values()
-                    if a.kind in (kinds.POSITIONAL_OR_KEYWORD, kinds.KEYWORD_ONLY) and a.name not in supplied}
-        if parent.args.kwarg:
-            optional |= set(c.parameters) - set(p.parameters)
-            optional.add("_codelens_extra_keyword")
-        variants = [required, {**dict.fromkeys(optional), **required}]
-        variants.extend({**required, key: None} for key in sorted(optional))
-        for keywords in variants:
-            try:
-                p.bind(*([None] * n), **keywords)
-            except TypeError:
-                continue
-            try:
-                c.bind(*([None] * n), **keywords)
-            except TypeError:
-                return {"positional": n, "keywords": sorted(keywords)}
-    return False
+    extra_keywords = set()
+    if parent.args.kwarg:
+        extra_keywords = (set(c.parameters) - set(p.parameters)) | {"_codelens_extra_keyword"}
+    return _rejected_call(p, c, _call_variants(p, positional, max_pos, extra_keywords))
 
 
 def _inherited(ident, seen, classes, parents, marker_bases, methods):
@@ -138,7 +161,7 @@ def _lsp_reasons(parent, child, witness):
     return reasons, refused
 
 
-def _evaluate_overrides(classes, parents, methods, marker_bases, findings, gaps, add):
+def _evaluate_overrides(classes, parents, methods, marker_bases, gaps, add):
     checked = 0
     for ident, cls in sorted(classes.items()):
         inherited_methods = _inherited(ident, set(), classes, parents, marker_bases, methods)
@@ -146,46 +169,49 @@ def _evaluate_overrides(classes, parents, methods, marker_bases, findings, gaps,
             gaps.append({"class": ident, "file": cls["file"], "line": cls["line"],
                          "reason": "父类未解析、继承有环或存在多继承，未推断 MRO"})
             continue
-        public_contract = {name for name in inherited_methods if not name.startswith("_")}
-        for name, child in sorted(methods[ident].items()):
-            if name not in inherited_methods or name in {"__init__", "__new__"}:
-                continue
-            base_id, parent = inherited_methods[name]
-            if _mode(parent) is None or _mode(child) is None or _signature(parent) is None or _signature(child) is None:
-                gaps.append({"class": ident, "file": cls["file"], "line": child.lineno,
-                             "reason": name + " 的装饰器或绑定签名无法静态检查"})
-                continue
-            witness = _narrowed(parent, child)
-            if witness is None:
-                gaps.append({"class": ident, "file": cls["file"], "line": child.lineno,
-                             "reason": name + " 的签名超出静态检查范围"})
-                continue
-            checked += 1
-            reasons, refused = _lsp_reasons(parent, child, witness)
-            if reasons:
-                add("LSP-01", cls, child, base_id,
-                    "{}.{} 覆盖 {}.{} 时{}；请复核可替换性。".format(ident, name, base_id, name, "；".join(reasons)), reasons)
-            if refused and name in public_contract and len(public_contract) >= 2:
-                add("ISP-01", cls, child, base_id,
-                    "{} 继承的公开契约有 {} 个方法，但 {} 显式抛出 NotImplementedError，可能被迫依赖不需要的成员。".format(ident, len(public_contract), name),
-                    {"contract_methods": sorted(public_contract), "refused": name})
+        checked += _check_class_overrides(ident, cls, methods[ident], inherited_methods, gaps, add)
     return checked
+
+
+def _check_class_overrides(ident, cls, methods, inherited_methods, gaps, add):
+    checked = 0
+    public_contract = {name for name in inherited_methods if not name.startswith("_")}
+    for name, child in sorted(methods.items()):
+        if name not in inherited_methods or name in {"__init__", "__new__"}:
+            continue
+        base_id, parent = inherited_methods[name]
+        checked += _check_override(ident, cls, name, child, base_id, parent, public_contract, gaps, add)
+    return checked
+
+
+def _check_override(ident, cls, name, child, base_id, parent, public_contract, gaps, add):
+    if _mode(parent) is None or _mode(child) is None or _signature(parent) is None or _signature(child) is None:
+        gaps.append({"class": ident, "file": cls["file"], "line": child.lineno,
+                     "reason": name + " 的装饰器或绑定签名无法静态检查"})
+        return 0
+    witness = _narrowed(parent, child)
+    if witness is None:
+        gaps.append({"class": ident, "file": cls["file"], "line": child.lineno,
+                     "reason": name + " 的签名超出静态检查范围"})
+        return 0
+    reasons, refused = _lsp_reasons(parent, child, witness)
+    if reasons:
+        add("LSP-01", cls, child, base_id,
+            "{}.{} 覆盖 {}.{} 时{}；请复核可替换性。".format(ident, name, base_id, name, "；".join(reasons)), reasons)
+    if refused and name in public_contract and len(public_contract) >= 2:
+        add("ISP-01", cls, child, base_id,
+            "{} 继承的公开契约有 {} 个方法，但 {} 显式抛出 NotImplementedError，可能被迫依赖不需要的成员。".format(ident, len(public_contract), name),
+            {"contract_methods": sorted(public_contract), "refused": name})
+    return 1
 
 
 def _build_marker_bases(result, classes):
     marker_bases = {}
     for record in result.get("files", []):
-        aliases = {}
         tree = _parse_tree(record)
         if tree is None:
             continue
-        for statement in tree.body:
-            if isinstance(statement, ast.ImportFrom) and statement.module in {"abc", "typing", "typing_extensions"}:
-                for alias in statement.names:
-                    aliases[alias.asname or alias.name] = statement.module + "." + alias.name
-            elif isinstance(statement, ast.Import):
-                for alias in statement.names:
-                    aliases[alias.asname or alias.name] = alias.name
+        aliases = _marker_aliases(tree)
         for cls in classes.values():
             if cls["file"] != record.get("path"):
                 continue
@@ -194,6 +220,18 @@ def _build_marker_bases(result, classes):
                 if _qualified(aliases, base) in {"abc.ABC", "typing.Protocol", "typing_extensions.Protocol"}
             }
     return marker_bases
+
+
+def _marker_aliases(tree):
+    aliases = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.ImportFrom) and statement.module in {"abc", "typing", "typing_extensions"}:
+            for alias in statement.names:
+                aliases[alias.asname or alias.name] = statement.module + "." + alias.name
+        elif isinstance(statement, ast.Import):
+            for alias in statement.names:
+                aliases[alias.asname or alias.name] = alias.name
+    return aliases
 
 
 def _parse_tree(record):
@@ -230,6 +268,6 @@ def evaluate(result, nodes):
                          "related": [{"file": classes[base_id]["file"],
                                       "line": methods[base_id][method.name].lineno}]})
 
-    checked = _evaluate_overrides(classes, parents, methods, marker_bases, findings, gaps, add)
+    checked = _evaluate_overrides(classes, parents, methods, marker_bases, gaps, add)
     return {"findings": findings, "checked_overrides": checked, "coverage_gaps": gaps,
             "limitations": list(LIMITATIONS)}

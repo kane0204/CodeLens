@@ -143,16 +143,16 @@ class Runner:
             skill = skill_registry.get(skill_id)
             if skill is None:
                 continue
-            if targets:
-                refs = [ref for ref in targets if self._accepts(skill, ref)]
-            else:
-                refs = [ref for ref in skill.candidates(self.env, per_skill) if self._accepts(skill, ref)]
-            for ref in refs[:per_skill]:
-                if (skill.id, ref) not in [(item.id, r) for item, r in chosen]:
+            for ref in self._select_refs(skill, targets, per_skill):
+                if not any(item.id == skill.id and selected == ref for item, selected in chosen):
                     chosen.append((skill, ref))
             if len(chosen) >= MAX_TARGETS:
                 break
         return chosen[:MAX_TARGETS]
+
+    def _select_refs(self, skill, targets, per_skill):
+        candidates = targets or skill.candidates(self.env, per_skill)
+        return [ref for ref in candidates if self._accepts(skill, ref)][:per_skill]
 
     # ---- 单条执行 --------------------------------------------------------
 
@@ -224,24 +224,36 @@ class Runner:
             self.cache.put(key, result)
             return result
 
-        attempts = 1
+        ctx, attempts, gap_reason = self._prepare_context(skill, ctx)
+        if gap_reason is not None:
+            result = self._degraded(skill, ref, "insufficient_evidence", gap_reason,
+                                    key, attempts=attempts, ctx=ctx)
+            self.cache.put(key, result)
+            return result
+
+        raw = self._produce(skill, ref, ctx, attempts)
+        try:
+            validated = contract.validate_skill_result(
+                raw, index.resolve, allowed_rule_ids=index.rule_ids(), output_schema=skill.output_schema)
+        except contract.SkillError as exc:
+            validated = self._degraded(skill, ref, exc.kind, str(exc), key, attempts=attempts)
+        validated["cache_key"] = key
+        self.cache.put(key, validated)
+        return validated
+
+    def _prepare_context(self, skill, ctx):
+        gap = skill.gap(ctx)
+        if gap is None:
+            return ctx, 1, None
+        if gap.get("fatal"):
+            return ctx, 1, gap.get("reason") or ""
+        ctx = skill.repair(self.env, ctx, gap)
         gap = skill.gap(ctx)
         if gap is not None:
-            if gap.get("fatal"):
-                result = self._degraded(skill, ref, "insufficient_evidence", gap.get("reason") or "",
-                                        key, attempts=attempts, ctx=ctx)
-                self.cache.put(key, result)
-                return result
-            ctx = skill.repair(self.env, ctx, gap)
-            attempts = 2
-            gap = skill.gap(ctx)
-            if gap is not None:
-                result = self._degraded(skill, ref, "insufficient_evidence",
-                                        gap.get("reason") or "补一次上下文后仍不足", key,
-                                        attempts=attempts, ctx=ctx)
-                self.cache.put(key, result)
-                return result
+            return ctx, 2, gap.get("reason") or "补一次上下文后仍不足"
+        return ctx, 2, None
 
+    def _produce(self, skill, ref, ctx, attempts):
         used_provider = self.provider
         try:
             raw, diagnostics = used_provider.produce(skill, ctx)
@@ -259,15 +271,7 @@ class Runner:
         raw["diagnostics"] = diagnostics
         raw.setdefault("skill", skill.id)
         raw.setdefault("target", ref)
-
-        try:
-            validated = contract.validate_skill_result(
-                raw, index.resolve, allowed_rule_ids=index.rule_ids(), output_schema=skill.output_schema)
-        except contract.SkillError as exc:
-            validated = self._degraded(skill, ref, exc.kind, str(exc), key, attempts=attempts)
-        validated["cache_key"] = key
-        self.cache.put(key, validated)
-        return validated
+        return raw
 
     # ---- 批量 ------------------------------------------------------------
 
@@ -287,6 +291,10 @@ class Runner:
         chosen = self.select(ordered_ids, targets=targets, per_skill=per_skill)
         results = [self._one(skill, ref) for skill, ref in chosen]
 
+        return {"results": results, "summary": self._summarize(results),
+                "warnings": warnings, "limitations": list(LIMITATIONS)}
+
+    def _summarize(self, results):
         counts = {status: 0 for status in contract.STATUSES}
         for item in results:
             counts[item.get("status")] = counts.get(item.get("status"), 0) + 1
@@ -297,13 +305,7 @@ class Runner:
                 citations[field] += int(row.get(field) or 0)
         if citations["count"]:
             citations["coverage"] = round(citations["resolved"] / citations["count"], 4)
-        return {
-            "results": results,
-            "summary": {"requested": len(results), "ok": counts.get("ok", 0),
-                        "insufficient_evidence": counts.get("insufficient_evidence", 0),
-                        "need_more": counts.get("need_more", 0),
-                        "refused": counts.get("refused", 0),
-                        "citations": citations},
-            "warnings": warnings,
-            "limitations": list(LIMITATIONS),
-        }
+        return {"requested": len(results), "ok": counts.get("ok", 0),
+                "insufficient_evidence": counts.get("insufficient_evidence", 0),
+                "need_more": counts.get("need_more", 0), "refused": counts.get("refused", 0),
+                "citations": citations}

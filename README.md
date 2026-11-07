@@ -87,12 +87,26 @@ SOLID 检查覆盖 S（方法数线索）、O（类型分派线索）、L（覆�
 
 AI 项目审查：在初始化页填写兼容 chat/completions 的 Base URL、模型名称和 API Key，选择项目文件夹后自动完成「静态分析 → AI 审查」。审查结果分为逻辑说明、设计检查、风险评估三段并共享同一份阅读记录；审查意外中断后重新生成会从服务端断点续跑。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。详细范围见 [AI 逻辑解读说明](docs/software/ai-logic-explanation.md)。
 
-检查命令（界面构建另需 Node.js 18+）：
+单元测试集中在 [doc](doc/README.md)，包含 Python 和前端的运行命令、覆盖率报告和验收方法。
 
 ```bash
-python -B -m unittest discover -s tests -p 'test_*.py' -v
+python -B -m unittest discover -s doc/unit -v
+```
+
+运行前端单元测试和生产构建（测试需要 Node.js 22.12+ 或 24+）：
+
+```bash
+cd codelens-prototype
+npm ci
+npm run test:coverage
+npm run build
+```
+
+前端测试覆盖文件导入限制、上传与取消、接口错误、AI 审查流分片解析。Python 和前端单元测试都可离线运行。若要运行 Python 集成测试与 SOLID 基准，请回到仓库根目录：
+
+```bash
+python -B -m unittest discover -s tests/integration -v
 python -B tests/evaluate_solid.py
-cd codelens-prototype && npm ci && npm run build
 ```
 
 ## 项目结构
@@ -109,9 +123,10 @@ CodeLens/
 │   ├── backend/          # 本机 JSON API（18766）
 │   └── core_engine/      # 核心引擎：解析、逻辑建模、图、指标、规则
 ├── codelens-prototype/   # Vite + React 界面（5173）
-├── tests/
-│   ├── unit/             # 单元测试（解析、逻辑模型、指标、规则）
-│   └── integration/      # 集成测试（API 契约与引擎链路）
+├── doc/
+│   ├── unit/              # Python 单元测试
+│   └── frontend/          # JavaScript / TypeScript 单元测试
+├── tests/                 # 集成测试、SOLID 基准与测试样本
 └── .github/
     ├── workflows/
     └── ISSUE_TEMPLATE/

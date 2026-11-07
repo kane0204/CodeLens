@@ -92,8 +92,12 @@ def apply(result):
             "notes": list(NOTES),
         }
         return copied
-    distribution = {"excellent": 0, "good": 0, "fair": 0, "poor": 0}
-    numbers = []
+    copied["health"] = _health_summary(functions, limits)
+    return copied
+
+
+def _score_functions(functions, limits):
+    scores = []
     for function in functions:
         if not isinstance(function, dict):
             continue
@@ -101,19 +105,28 @@ def apply(result):
         function["score"] = detail["score"]
         function["score_grade"] = detail["grade"]
         function["score_deductions"] = detail["deductions"]
-        numbers.append(detail["score"])
-        if detail["score"] >= 90:
-            distribution["excellent"] += 1
-        elif detail["score"] >= 75:
-            distribution["good"] += 1
-        elif detail["score"] >= 60:
-            distribution["fair"] += 1
-        else:
-            distribution["poor"] += 1
+        scores.append(function)
+    return scores
+
+
+def _distribution(numbers):
+    buckets = ("excellent", "good", "fair", "poor")
+    distribution = dict.fromkeys(buckets, 0)
+    for score in numbers:
+        for (floor, _), bucket in zip(GRADES, buckets):
+            if score >= floor:
+                distribution[bucket] += 1
+                break
+    return distribution
+
+
+def _health_summary(functions, limits):
+    scored = _score_functions(functions, limits)
+    numbers = [f["score"] for f in scored]
+    distribution = _distribution(numbers)
     average = round(sum(numbers) / len(numbers)) if numbers else None
-    scored = [f for f in functions if isinstance(f, dict) and isinstance(f.get("score"), int)]
     worst = sorted(scored, key=lambda f: (f["score"], str(f.get("id", ""))))[:10]
-    copied["health"] = {
+    return {
         "available": True,
         "score": average,
         "grade": grade_of(average),
@@ -126,4 +139,3 @@ def apply(result):
         "worst": [{"id": f.get("id"), "score": f["score"], "grade": f.get("score_grade")} for f in worst],
         "notes": list(NOTES),
     }
-    return copied

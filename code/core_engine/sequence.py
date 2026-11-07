@@ -93,20 +93,17 @@ def build(result, max_steps=MAX_STEPS_PER_FILE):
             "files": [],
             "notes": list(NOTES),
         }
-    modules = {}
-    for file in result.get("files") or []:
-        if isinstance(file, dict):
-            modules[file.get("path")] = file.get("module")
-    functions_by_file = {}
-    for function in result.get("functions") or []:
-        if isinstance(function, dict):
-            functions_by_file.setdefault(function.get("file"), []).append(function)
+    modules, functions_by_file = _sequence_index(result)
     grouped = _group_calls(calls)
     files = []
     for path in sorted(grouped):
         module = modules.get(path) or ""
         ordered = sorted(grouped[path], key=lambda c: (c.get("line"), str(c.get("expression"))))
         files.append(_build_file_steps(path, module, ordered, functions_by_file, max_steps))
+    return _sequence_summary(files, max_steps)
+
+
+def _sequence_summary(files, max_steps):
     participants = _collect_participants(files)
     return {
         "available": True,
@@ -117,3 +114,15 @@ def build(result, max_steps=MAX_STEPS_PER_FILE):
         "max_steps_per_file": max_steps,
         "notes": list(NOTES),
     }
+
+
+def _sequence_index(result):
+    modules = {}
+    for file in result.get("files") or []:
+        if isinstance(file, dict):
+            modules[file.get("path")] = file.get("module")
+    functions_by_file = {}
+    for function in result.get("functions") or []:
+        if isinstance(function, dict):
+            functions_by_file.setdefault(function.get("file"), []).append(function)
+    return modules, functions_by_file

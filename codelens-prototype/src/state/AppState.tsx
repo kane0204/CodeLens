@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { analyzeProject, errorText, fetchStatus, isAbortError, reviewProject } from '../api/client';
+import { analyzeProject, errorText, fetchStatus, isAbortError, reviewProject, type AnalyzeProgress } from '../api/client';
 import { filesFromDataTransfer, prepareSelection, type RawFile } from '../lib/files';
 import { exportReport, type ExportFormat } from '../lib/export';
 import { logger } from '../lib/logger';
@@ -170,6 +170,26 @@ function readHash(): Route {
   return (allowed as string[]).includes(hash) ? (hash as Route) : 'overview';
 }
 
+const ANALYSIS_PHASES: Record<AnalyzeProgress['phase'], string> = {
+  read: '读取项目文件',
+  upload: '本机引擎正在分析',
+  done: '分析完成',
+};
+
+function estimatedSeconds(start: number, done: number, total: number): number | null {
+  if (done <= 0 || done >= total) return null;
+  const elapsed = (performance.now() - start) / 1000;
+  return Math.max(1, Math.round((elapsed / done) * (total - done)));
+}
+
+function functionAtLine(result: AnalyzeResult, file: AnalyzeResult['files'][number], line: number): string {
+  const ownIds = new Set(file.functions.map((item) => item.id));
+  const candidates = result.functions
+    .filter((item) => ownIds.has(item.id) && item.line <= line && line <= item.end_line)
+    .sort((a, b) => a.end_line - a.line - (b.end_line - b.line));
+  return candidates[0]?.id ?? file.functions[0]?.id ?? '';
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<ConnectionState>('connecting');
   const [token, setToken] = useState('');
@@ -305,6 +325,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [resetAfterResult]);
 
+  const reportReviewProgress = useCallback((next: AiReviewProgress) => {
+    setReviewProgress(next);
+    setPhase(next.label || (next.stage === 'read' ? 'AI 正在分批阅读源码' : 'AI 正在生成综合审查'));
+    setProgress(next.done);
+    setProgressTotal(next.total);
+    setEta(estimatedSeconds(progressClock.current, next.done, next.total));
+  }, []);
+
+  const reportAnalysisProgress = useCallback((next: AnalyzeProgress) => {
+    setPhase(ANALYSIS_PHASES[next.phase]);
+    setProgress(next.done);
+    setProgressTotal(next.total);
+    setEta(next.phase === 'read' ? estimatedSeconds(progressClock.current, next.done, next.total) : null);
+  }, []);
+
   const executeReview = useCallback(
     async (data: AnalyzeResult): Promise<AiReviewResult | null> => {
       const files = data.files
@@ -324,18 +359,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const review = await reviewProject(
           { project: data.project, files, settings },
           token,
-          (next) => {
-            setReviewProgress(next);
-            setPhase(next.label || (next.stage === 'read' ? 'AI 正在分批阅读源码' : 'AI 正在生成综合审查'));
-            setProgress(next.done);
-            setProgressTotal(next.total);
-            if (next.done > 0 && next.done < next.total) {
-              const elapsed = (performance.now() - progressClock.current) / 1000;
-              setEta(Math.max(1, Math.round((elapsed / next.done) * (next.total - next.done))));
-            } else {
-              setEta(null);
-            }
-          },
+          reportReviewProgress,
           controller.signal,
         );
         setAiReview(review);
@@ -360,8 +384,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [settings, token],
+    [settings, token, reportReviewProgress],
   );
+
+  const announceAnalysis = useCallback(async (data: AnalyzeResult) => {
+    let message = `分析完成：${data.summary.parsed} 个文件，${data.summary.findings} 条风险`;
+    let kind: ToastKind = 'success';
+    if (settings.baseUrl.trim() && settings.model.trim()) {
+      setImporting(true);
+      setPhase('准备 AI 审查');
+      setProgress(0);
+      setProgressTotal(1);
+      const review = await executeReview(data);
+      if (review) {
+        message = `静态分析与 AI 审查完成：${data.summary.parsed} 个文件`;
+      } else {
+        message = `${message}；AI 审查未完成，可在页面中重试`;
+        kind = 'warning';
+      }
+      setImporting(false);
+    }
+    if (window.location.hash !== '#overview') window.location.hash = 'overview';
+    setRoute('overview');
+    toast(message, kind);
+  }, [settings, executeReview, toast]);
 
   const runWithRaw = useCallback(
     async (raw: RawFile[]) => {
@@ -389,40 +435,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const data = await analyzeProject(
           { project: prepared.project, files: prepared.files },
           token,
-          (next) => {
-            setPhase(next.phase === 'read' ? '读取项目文件' : next.phase === 'upload' ? '本机引擎正在分析' : '分析完成');
-            setProgress(next.done);
-            setProgressTotal(next.total);
-            if (next.phase === 'read' && next.done > 0 && next.done < next.total) {
-              const elapsed = (performance.now() - progressClock.current) / 1000;
-              setEta(Math.max(1, Math.round((elapsed / next.done) * (next.total - next.done))));
-            } else {
-              setEta(null);
-            }
-          },
+          reportAnalysisProgress,
           controller.signal,
         );
         resetAfterResult(data);
 
-        let message = `分析完成：${data.summary.parsed} 个文件，${data.summary.findings} 条风险`;
-        let kind: ToastKind = 'success';
-        if (settings.baseUrl.trim() && settings.model.trim()) {
-          setImporting(true);
-          setPhase('准备 AI 审查');
-          setProgress(0);
-          setProgressTotal(1);
-          const review = await executeReview(data);
-          if (review) {
-            message = `静态分析与 AI 审查完成：${data.summary.parsed} 个文件`;
-          } else {
-            message = `${message}；AI 审查未完成，可在页面中重试`;
-            kind = 'warning';
-          }
-          setImporting(false);
-        }
-        if (window.location.hash !== '#overview') window.location.hash = 'overview';
-        setRoute('overview');
-        toast(message, kind);
+        await announceAnalysis(data);
       } catch (error) {
         logger.warn('analyze', 'analysis.stopped', {
           aborted: isAbortError(error),
@@ -438,7 +456,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setBusy(false);
       }
     },
-    [busy, status, token, settings, toast, resetAfterResult, executeReview],
+    [busy, status, token, toast, resetAfterResult, reportAnalysisProgress, announceAnalysis],
   );
 
   const startAnalysis = useCallback(
@@ -549,9 +567,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (patch.granularity !== undefined) setGraphGranularity(patch.granularity);
     if (patch.direction !== undefined) setGraphDirection(patch.direction);
     if (patch.query !== undefined) setGraphQuery(patch.query);
-    if (patch.tab !== undefined || patch.entry !== undefined || patch.granularity !== undefined) {
-      setDrawerNode(null);
-    }
+    const navigationKeys = ['tab', 'entry', 'granularity'] as const;
+    if (navigationKeys.some((key) => patch[key] !== undefined)) setDrawerNode(null);
   }, []);
 
   const runExport = useCallback(
@@ -647,17 +664,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast(`目标位置：${finding.file}:${finding.line ?? '—'}，结果中没有对应源码`, 'warning');
         return;
       }
-      const ownIds = new Set(targetFile.functions.map((item) => item.id));
-      const candidates = result.functions
-        .filter(
-          (item) =>
-            ownIds.has(item.id) &&
-            item.line <= (finding.line ?? 0) &&
-            (finding.line ?? 0) <= item.end_line,
-        )
-        .sort((a, b) => a.end_line - a.line - (b.end_line - b.line));
       setFile(targetFile.path);
-      setFn(candidates[0]?.id ?? targetFile.functions[0]?.id ?? '');
+      setFn(functionAtLine(result, targetFile, finding.line));
       setHighlight({ start: finding.line, end: finding.line });
       go('logic');
       toast(`目标位置：${finding.file}:${finding.line}`);

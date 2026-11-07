@@ -41,7 +41,7 @@
   ```
 
 - 前端：`codelens-prototype/src/lib/logger.ts` 为 200 条内存环形缓冲 + 脱敏，可在本页「模型设置 → 下载诊断日志」导出 JSON；`ErrorBoundary` 兜底渲染崩溃并提供同一入口；全局 `error` / `unhandledrejection` 也入日志。日志不上传、不写 localStorage。
-- 回归测试：`tests/unit/test_observability.py`、`tests/integration/test_error_handling.py`。
+- 回归测试：`doc/unit/test_observability.py`、`tests/integration/test_error_handling.py`。
 
 ## 待补充
 

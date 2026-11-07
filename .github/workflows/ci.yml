@@ -25,13 +25,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Python 引擎与本机接口回归
-        run: python -B -m unittest discover -s tests -p 'test_*.py' -v
-      - name: React 界面类型检查与构建
+      - name: Python 单元测试与本机接口回归
+        run: |
+          python -m pip install -r doc/requirements-test.txt
+          python -B -m coverage run --rcfile=doc/.coveragerc -m unittest discover -s doc/unit -v
+          python -B -m coverage report --rcfile=doc/.coveragerc --fail-under=100
+          python -B -m unittest discover -s tests/integration -v
+      - name: 前端单元测试、类型检查与构建
         if: matrix.python-version == '3.13'
         working-directory: codelens-prototype
         run: |
           npm ci
+          npm run test:coverage:check
           npm run build
 
   repo-check:
@@ -55,7 +60,8 @@ jobs:
             code/backend
             code/core_engine
             codelens-prototype
-            tests/unit
+            doc/unit
+            doc/frontend
             tests/integration
             .github/workflows
           )

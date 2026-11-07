@@ -1,4 +1,5 @@
 """Regression cases for static SOLID contracts and analysis coverage."""
+import ast
 import sys
 import unittest
 from pathlib import Path
@@ -7,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
 from core_engine.engine import analyze
 from core_engine import rules
 from backend.server import enrich, ai_analyze
+from core_engine import solid
 
 
 def evaluate(source, more=None):
@@ -15,6 +17,42 @@ def evaluate(source, more=None):
 
 
 class SolidTests(unittest.TestCase):
+    def test_signature_comparison_returns_unknown_for_missing_receiver(self):
+        parent = ast.parse("def f(self, x): pass").body[0]
+        child = ast.parse("def f(): pass").body[0]
+        self.assertIsNone(solid._narrowed(parent, child))
+
+    def test_signature_above_work_limit_reports_coverage_gap(self):
+        args = ", ".join(f"arg{i}" for i in range(129))
+        source = f"class Parent:\n    def f(self, {args}): pass\nclass Child(Parent):\n    def f(self, *args): pass\n"
+        result = analyze({"files": [{"path": "large.py", "content": source}]})
+        report = enrich(result)["solid"]
+        self.assertTrue(any("签名超出静态检查范围" in gap["reason"] for gap in report["coverage_gaps"]))
+
+    def test_qualified_exception_refusal_after_docstring_preserves_contract_evidence(self):
+        source = '''class Parent:
+    def run(self): return True
+    def stop(self): return False
+
+class Child(Parent):
+    def run(self):
+        """No implementation."""
+        raise builtins.NotImplementedError()
+'''
+        result = enrich(analyze({"files": [{"path": "main.py", "content": source}]}))
+        findings = {item["rule_id"]: item for item in result["findings"]}
+        self.assertEqual(findings["LSP-01"]["line"], 6)
+        self.assertEqual(findings["ISP-01"]["line"], 6)
+
+    def test_invalid_binding_signature_or_decorator_reports_gap(self):
+        for method in ("    def f(): pass", "    def f(self, a, a): pass",
+                       "    @custom()\n    def f(self, a): pass"):
+            source = "class Parent:\n    def f(self, a): pass\nclass Child(Parent):\n" + method
+            result = enrich(analyze({"files": [{"path": "main.py", "content": source}]}))
+            with self.subTest(method=method):
+                self.assertTrue(any("绑定签名无法静态检查" in gap["reason"]
+                                    for gap in result["solid"]["coverage_gaps"]))
+
     def check_override(self, parent, child, expected=True):
         out = evaluate("class Base:\n    " + parent + "\nclass Child(Base):\n    " + child + "\n")
         self.assertEqual(any(f["rule_id"] == "LSP-01" for f in out["findings"]), expected, out)

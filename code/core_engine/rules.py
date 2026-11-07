@@ -77,21 +77,24 @@ def _type_name_of(second):
     return None
 
 
+def _is_named_call(node, name):
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name
+
+
+def _compared_type(left, right):
+    if _is_named_call(left, "type") and left.args:
+        return right.id if isinstance(right, ast.Name) else None
+    if _is_named_call(right, "type") and right.args and isinstance(left, ast.Name):
+        return left.id
+    return None
+
+
 def _is_type_test(node):
-    """`isinstance(x, T)` 或 `type(x) is T`，返回被判断的类型名。"""
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "isinstance":
-        if len(node.args) >= 2:
-            return _type_name_of(node.args[1])
-        return None
+    """Recognize isinstance(x, T) and identity comparisons with type(x)."""
+    if _is_named_call(node, "isinstance"):
+        return _type_name_of(node.args[1]) if len(node.args) >= 2 else None
     if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Is):
-        left, right = node.left, node.comparators[0]
-        if isinstance(left, ast.Call) and isinstance(left.func, ast.Name) and left.func.id == "type" and left.args:
-            if isinstance(right, ast.Name):
-                return right.id
-            return None
-        if isinstance(right, ast.Call) and isinstance(right.func, ast.Name) and right.func.id == "type" and right.args:
-            if isinstance(left, ast.Name):
-                return left.id
+        return _compared_type(node.left, node.comparators[0])
     return None
 
 
@@ -132,27 +135,37 @@ def _collect_type_names(methods):
     return type_names
 
 
-def _collect_constructed(result, cls, nodes, method_ids):
+def _is_method_call(call, method_ids):
+    return call.get("status") == "resolved" and call.get("source") in method_ids
+
+
+def _collect_constructed(result, nodes, method_ids):
+    classes = result.get("classes") or []
     constructed = set()
     for call in (result.get("graph") or {}).get("calls") or []:
         target = call.get("target")
-        if call.get("status") != "resolved" or call.get("source") not in method_ids:
+        if not _is_method_call(call, method_ids):
             continue
-        target_cls = next((c for c in result.get("classes") or [] if c.get("id") == target), None)
+        target_cls = next((c for c in classes if c.get("id") == target), None)
         if target_cls is None:
             continue
         target_node = nodes.get((target_cls.get("file"), target_cls.get("line")))
-        if target_node and any(solid._abstract(m) for m in target_node.body
-                               if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))):
+        if _is_abstract_class(target_node):
             continue
         constructed.add(target)
     return constructed
 
 
+def _is_abstract_class(node):
+    return node is not None and any(
+        solid._abstract(item) for item in node.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+
+
 def _evaluate_classes(result, nodes, metrics, add):
     """SRP-01 / OCP-01 / DIP-01：逐类检查。"""
     for cls in result.get("classes") or []:
-        ident = cls.get("id")
         path = cls.get("file")
         line = cls.get("line")
         node = nodes.get((path, line))
@@ -161,36 +174,43 @@ def _evaluate_classes(result, nodes, metrics, add):
         metrics["classes"] += 1
         methods = [item for item in node.body
                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))]
-        public = [item for item in methods if not item.name.startswith("_")]
-        if len(public) > MAX_METHODS_PER_CLASS:
-            add("SRP-01", "info", path, line,
-                "类 {} 定义了 {} 个公开方法，超过口径 {}；方法数多不等于违反单一职责，但值得确认它是否只承担一件事。".format(
-                    cls.get("name"), len(public), MAX_METHODS_PER_CLASS),
-                "按「数据 + 行为」切分：把操作同一组字段的方法聚成一个类，其余迁出。",
-                actual=len(public), threshold=MAX_METHODS_PER_CLASS, confidence="medium")
-
+        _evaluate_responsibility(cls, methods, add)
         type_names = _collect_type_names(methods)
-        method_ids = set(cls.get("methods") or [])
-        constructed = _collect_constructed(result, cls, nodes, method_ids)
+        constructed = _collect_constructed(result, nodes, set(cls.get("methods") or []))
         metrics["type_branches"] += len(type_names)
         metrics["concrete_deps"] += len(constructed)
-        if len(type_names) >= MAX_TYPE_BRANCHES:
-            add("OCP-01", "info", path, line,
-                "类 {} 的方法里用 {} 种类型判断（{}）做分派，新增一种类型就要改这里。".format(
-                    cls.get("name"), len(type_names), "、".join(sorted(type_names)[:6])),
-                "如果这些分支的行为彼此独立，考虑把差异下沉到各自类型的多态实现；数量少时条件分派更容易读，不必强改。",
-                actual=len(type_names), threshold=MAX_TYPE_BRANCHES, confidence="low")
-        if len(constructed) >= MAX_CONCRETE_DEPS:
-            add("DIP-01", "info", path, line,
-                "类 {} 直接构造了 {} 个本项目内的具体类（{}），依赖写在方法体里而不是构造参数里。".format(
-                    cls.get("name"), len(constructed), "、".join(sorted(constructed)[:6])),
-                "核对这几处构造是否需要可替换：需要就把协作对象改为由调用方传入。无需替换时直接构造是更简单的选择。",
-                actual=len(constructed), threshold=MAX_CONCRETE_DEPS, confidence="low")
+        _evaluate_design_dependencies(cls, type_names, constructed, add)
 
 
-def _evaluate_dead(result, metrics, add):
-    """A5-DEAD：未被本次分析内任何已解析调用指向的函数。"""
-    calls = (result.get("graph") or {}).get("calls") or []
+def _evaluate_responsibility(cls, methods, add):
+    path, line = cls.get("file"), cls.get("line")
+    public = [item for item in methods if not item.name.startswith("_")]
+    if len(public) > MAX_METHODS_PER_CLASS:
+        add("SRP-01", "info", path, line,
+            "类 {} 定义了 {} 个公开方法，超过口径 {}；方法数多不等于违反单一职责，但值得确认它是否只承担一件事。".format(
+                cls.get("name"), len(public), MAX_METHODS_PER_CLASS),
+            "按「数据 + 行为」切分：把操作同一组字段的方法聚成一个类，其余迁出。",
+            actual=len(public), threshold=MAX_METHODS_PER_CLASS, confidence="medium")
+
+
+
+
+def _evaluate_design_dependencies(cls, type_names, constructed, add):
+    path, line = cls.get("file"), cls.get("line")
+    if len(type_names) >= MAX_TYPE_BRANCHES:
+        add("OCP-01", "info", path, line,
+            "类 {} 的方法里用 {} 种类型判断（{}）做分派，新增一种类型就要改这里。".format(
+                cls.get("name"), len(type_names), "、".join(sorted(type_names)[:6])),
+            "如果这些分支的行为彼此独立，考虑把差异下沉到各自类型的多态实现；数量少时条件分派更容易读，不必强改。",
+            actual=len(type_names), threshold=MAX_TYPE_BRANCHES, confidence="low")
+    if len(constructed) >= MAX_CONCRETE_DEPS:
+        add("DIP-01", "info", path, line,
+            "类 {} 直接构造了 {} 个本项目内的具体类（{}），依赖写在方法体里而不是构造参数里。".format(
+                cls.get("name"), len(constructed), "、".join(sorted(constructed)[:6])),
+            "核对这几处构造是否需要可替换：需要就把协作对象改为由调用方传入。无需替换时直接构造是更简单的选择。",
+            actual=len(constructed), threshold=MAX_CONCRETE_DEPS, confidence="low")
+
+def _call_references(calls):
     called = {call.get("target") for call in calls
               if call.get("status") == "resolved" and call.get("target")}
     # 未解析的调用虽然给不出目标符号，但它的表达式末段仍是"可能有人在调我"的线索。
@@ -201,17 +221,29 @@ def _evaluate_dead(result, metrics, add):
         expression = call.get("expression")
         if isinstance(expression, str) and expression:
             hinted.add(expression.rsplit(".", 1)[-1])
-    for fn in result.get("functions") or []:
+    return called, hinted
+
+
+def _python_functions(functions):
+    for fn in functions:
         ident = fn.get("id")
         name = fn.get("name")
         if not isinstance(ident, str) or not isinstance(name, str):
             continue
         # Non-Python dead code is judged by the language analyzer (private helpers
         # with no inbound call); this rule only understands Python call semantics.
-        if not str(fn.get("file") or "").endswith(".py"):
+        if not str(fn.get("file") or "").lower().endswith(".py"):
             continue
+        yield fn, ident, name
+
+
+def _evaluate_dead(result, metrics, add):
+    """A5-DEAD：未被本次分析内任何已解析调用指向的函数。"""
+    calls = (result.get("graph") or {}).get("calls") or []
+    called, hinted = _call_references(calls)
+    for fn, ident, name in _python_functions(result.get("functions") or []):
         metrics["functions"] += 1
-        if name.startswith("_") or name in ENTRY_NAMES or name.startswith("test"):
+        if name.startswith(("_", "test")) or name in ENTRY_NAMES:
             continue
         if ident in called or name in hinted:
             continue
@@ -297,15 +329,8 @@ def merge(base, extra):
     """
     extra_rows = extra.get("findings") if isinstance(extra, dict) else extra
     holder = dict(base) if isinstance(base, dict) else None
-    base_rows = (holder.get("findings") if holder is not None else base) or []
-    combined = [dict(item) for item in base_rows] + [dict(item) for item in (extra_rows or [])]
-    for item in combined:
-        item.pop("id", None)
-    combined.sort(key=lambda item: (ORDER.get(item.get("severity"), 9),
-                                    item.get("file") or "", item.get("line") or 0,
-                                    item.get("rule_id") or ""))
-    for index, item in enumerate(combined):
-        item["id"] = "finding-" + str(index + 1)
+    base_rows = holder.get("findings") if holder is not None else base
+    combined = _sorted_findings(base_rows or [], extra_rows or [])
     if holder is None:
         return combined
     holder["findings"] = combined
@@ -314,3 +339,15 @@ def merge(base, extra):
     if isinstance(extra, dict) and "solid" in extra:
         holder["solid"] = extra["solid"]
     return holder
+
+
+def _sorted_findings(base_rows, extra_rows):
+    combined = [dict(item) for item in base_rows] + [dict(item) for item in extra_rows]
+    for item in combined:
+        item.pop("id", None)
+    combined.sort(key=lambda item: (ORDER.get(item.get("severity"), 9),
+                                    item.get("file") or "", item.get("line") or 0,
+                                    item.get("rule_id") or ""))
+    for index, item in enumerate(combined):
+        item["id"] = "finding-" + str(index + 1)
+    return combined

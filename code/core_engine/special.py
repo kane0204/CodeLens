@@ -32,8 +32,8 @@ def _item(finding):
     }
 
 
-def _by_rule(findings, rules):
-    return [item for item in findings if item.get("rule_id") in rules]
+def _items_for_rule(findings, rule):
+    return [_item(item) for item in findings if item.get("rule_id") == rule]
 
 
 def _suspicious_items(graph):
@@ -72,33 +72,38 @@ def _duplicate_items(duplicates):
     return items
 
 
+def _nonpython_only(files):
+    languages = {record.get("language") for record in files if record.get("language")}
+    return bool(languages) and not any(name == "Python" or name.startswith("Python ") for name in languages)
+
+
+def _category(ident, items, *, covered=True, reason=None, truncated=False):
+    return {"id": ident, "covered": covered, "reason": reason,
+            "truncated": truncated, "items": items[:LIMIT]}
+
+
+def _rule_categories(findings, nonpython):
+    return [
+        _category("unhandled-exception", _items_for_rule(findings, "A3-IO"),
+                  reason="该检测仅覆盖 Python 内置 open 的局部异常处理。" if nonpython else None),
+        _category("hardcoded-secret", _items_for_rule(findings, "A4")),
+        _category("dead-code", _items_for_rule(findings, "A5-DEAD"),
+                  reason="非 Python 仅对私有/下划线命名且无调用方的函数给出推断。" if nonpython else None),
+        _category("unchecked-assumption", [], covered=False,
+                  reason="当前引擎未提供通用边界/假设校验检测：Python 部分见「未处理异常」，其他语言需人工复核。"),
+        _category("comment-mismatch", _items_for_rule(findings, "CMT-01"),
+                  reason="仅识别 TODO/FIXME/占位注释，不能证明实现一定与注释冲突。"),
+        _category("excessive-defense", _items_for_rule(findings, "A8-DEFENSIVE")),
+    ]
+
+
 def build(result):
     if not isinstance(result, dict):
         return {"categories": []}
     findings = [item for item in (result.get("findings") or []) if isinstance(item, dict)]
-    graph = result.get("graph") or {}
-    duplicates = result.get("duplicates") or []
-    languages = {record.get("language") for record in (result.get("files") or []) if record.get("language")}
-
-    def category(ident, covered, items=None, reason=None, truncated=False):
-        return {"id": ident, "covered": covered, "reason": reason,
-                "truncated": truncated, "items": (items or [])[:LIMIT]}
-
-    suspicious, unresolved_count = _suspicious_items(graph)
-    duplicate_items = _duplicate_items(duplicates)
-
-    categories = [
-        category("suspicious-dependency", True, suspicious, truncated=unresolved_count > LIMIT),
-        category("duplicate-implementation", True, duplicate_items),
-        category("unhandled-exception", True, [_item(item) for item in _by_rule(findings, {"A3-IO"})],
-                 reason=None if "Python" in languages or not languages else "该检测仅覆盖 Python 内置 open 的局部异常处理。"),
-        category("hardcoded-secret", True, [_item(item) for item in _by_rule(findings, {"A4"})]),
-        category("dead-code", True, [_item(item) for item in _by_rule(findings, {"A5-DEAD"})],
-                 reason=None if "Python" in languages or not languages else "非 Python 仅对私有/下划线命名且无调用方的函数给出推断。"),
-        category("unchecked-assumption", False, [],
-                 reason="当前引擎未提供通用边界/假设校验检测：Python 部分见「未处理异常」，其他语言需人工复核。"),
-        category("comment-mismatch", True, [_item(item) for item in _by_rule(findings, {"CMT-01"})],
-                 reason="仅识别 TODO/FIXME/占位注释，不能证明实现一定与注释冲突。"),
-        category("excessive-defense", True, [_item(item) for item in _by_rule(findings, {"A8-DEFENSIVE"})]),
-    ]
-    return {"categories": categories}
+    suspicious, unresolved_count = _suspicious_items(result.get("graph") or {})
+    return {"categories": [
+        _category("suspicious-dependency", suspicious, truncated=unresolved_count > LIMIT),
+        _category("duplicate-implementation", _duplicate_items(result.get("duplicates") or [])),
+        *_rule_categories(findings, _nonpython_only(result.get("files") or [])),
+    ]}

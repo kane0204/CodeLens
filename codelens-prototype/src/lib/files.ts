@@ -59,6 +59,22 @@ function isSupported(path: string): boolean {
 }
 
 export function prepareSelection(raw: RawFile[]): PreparedSelection {
+  const { supported, ignored } = filterSourceFiles(raw);
+  const totalBytes = supported.reduce((sum, item) => sum + item.file.size, 0);
+  const errors = selectionErrors(supported, totalBytes);
+  const roots = new Set(supported.map((item) => (item.path.includes('/') ? item.path.split('/')[0] : '')));
+  const root = roots.size === 1 ? [...roots][0] : '';
+  const project = root || '所选项目';
+
+  const files: SelectedFile[] = supported.map((item) => ({
+    file: item.file,
+    path: root ? item.path.slice(root.length + 1) : item.path,
+  }));
+
+  return { project, files: errors.length ? [] : files, errors, ignored, totalBytes };
+}
+
+function filterSourceFiles(raw: RawFile[]) {
   const supported: RawFile[] = [];
   const ignored: Record<string, number> = {};
 
@@ -71,7 +87,10 @@ export function prepareSelection(raw: RawFile[]): PreparedSelection {
       ignored[key] = (ignored[key] ?? 0) + 1;
     }
   }
+  return { supported, ignored };
+}
 
+function selectionErrors(supported: RawFile[], totalBytes: number): string[] {
   const errors: string[] = [];
   if (!supported.length) {
     errors.push('所选目录没有未被排除的受支持源码文件');
@@ -85,21 +104,10 @@ export function prepareSelection(raw: RawFile[]): PreparedSelection {
       errors.push(`${item.path}：单文件 ${(item.file.size / 1024 / 1024).toFixed(2)}MB，超过 1MB`);
     }
   }
-  const totalBytes = supported.reduce((sum, item) => sum + item.file.size, 0);
   if (totalBytes > LIMITS.maxTotalBytes) {
     errors.push(`源码总量 ${(totalBytes / 1024 / 1024).toFixed(2)}MB，超过 8MB；请缩小目录范围。`);
   }
-
-  const roots = new Set(supported.map((item) => (item.path.includes('/') ? item.path.split('/')[0] : '')));
-  const root = roots.size === 1 ? [...roots][0] : '';
-  const project = root || '所选项目';
-
-  const files: SelectedFile[] = supported.map((item) => ({
-    file: item.file,
-    path: root ? item.path.slice(root.length + 1) : item.path,
-  }));
-
-  return { project, files: errors.length ? [] : files, errors, ignored, totalBytes };
+  return errors;
 }
 
 export function filesFromInput(list: FileList): RawFile[] {

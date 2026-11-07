@@ -116,6 +116,32 @@ def new_result(skill, target, status="ok", claims=None, outputs=None, generator=
     }
 
 
+def _object_end(raw, start):
+    """Return the first balanced object's end offset, ignoring braces in strings."""
+    depth = 0
+    in_string = escaped = False
+    for index in range(start, len(raw)):
+        char = raw[index]
+        if escaped:
+            escaped = False
+            continue
+        if in_string and char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
 def extract_json_object(text):
     """从模型输出里取出第一个 JSON 对象；容忍 ```json 围栏与前后废话。
 
@@ -131,34 +157,13 @@ def extract_json_object(text):
     start = raw.find("{")
     if start < 0:
         raise SkillError("insufficient_evidence", "模型输出不含 JSON 对象")
-    depth = 0
-    in_string = False
-    escaped = False
-    for index in range(start, len(raw)):
-        char = raw[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    value = json.loads(raw[start:index + 1])
-                except ValueError as exc:
-                    raise SkillError("insufficient_evidence", "模型输出不是合法 JSON：" + str(exc)[:80])
-                if not isinstance(value, dict):
-                    raise SkillError("insufficient_evidence", "模型输出的 JSON 不是对象")
-                return value
-    raise SkillError("insufficient_evidence", "模型输出的 JSON 不完整")
+    end = _object_end(raw, start)
+    if end is None:
+        raise SkillError("insufficient_evidence", "模型输出的 JSON 不完整")
+    try:
+        return json.loads(raw[start:end])
+    except ValueError as exc:
+        raise SkillError("insufficient_evidence", "模型输出不是合法 JSON：" + str(exc)[:80])
 
 
 def _check_banned(text):
@@ -187,6 +192,23 @@ def _check_rule_tokens(text, allowed_rule_ids):
     return None
 
 
+def _bounded_text(value, limit):
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if value and len(value) <= limit else None
+
+
+def _bounded_text_list(value, limit):
+    if not isinstance(value, list):
+        return None
+    items = [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+    return items if items and len(items) <= limit else None
+
+
+_OUTPUT_VALIDATORS = {"str": _bounded_text, "list_str": _bounded_text_list}
+
+
 def _normalize_outputs(outputs, schema):
     """按 skill 声明的 output schema 裁剪；类型不符的键直接丢弃而不是报错。"""
     if outputs is None:
@@ -200,23 +222,12 @@ def _normalize_outputs(outputs, schema):
         if key not in outputs:
             continue
         kind, limit = spec
-        value = outputs[key]
-        if kind == "str":
-            if not isinstance(value, str):
-                continue
-            value = value.strip()
-            if not value or len(value) > limit:
-                continue
-        elif kind == "list_str":
-            if not isinstance(value, list):
-                continue
-            items = [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
-            if not items or len(items) > limit:
-                continue
-            value = items
-        else:  # pragma: no cover - schema 由本仓库自己声明，出现未知类型属编码错误
+        validator = _OUTPUT_VALIDATORS.get(kind)
+        if validator is None:
             continue
-        clean[key] = value
+        value = validator(outputs[key], limit)
+        if value is not None:
+            clean[key] = value
     return clean
 
 
@@ -238,26 +249,34 @@ def _resolve_evidence(evidence, resolve):
     return refs, ref_reason, total_refs, resolved_refs
 
 
-def _validate_claim(item, allowed, resolve):
-    """校验单条 claim，返回 (kept_item, dropped_reason, 统计增量)。"""
-    stats = {"total_refs": 0, "resolved_refs": 0}
+def _claim_fields(item, allowed):
     if not isinstance(item, dict):
-        return None, {"reason": "claim 不是对象", "text": str(item)[:80]}, stats
+        return None, {"reason": "claim 不是对象", "text": str(item)[:80]}
     text = item.get("text")
     if not isinstance(text, str) or not text.strip():
-        return None, {"reason": "claim 缺少正文", "text": ""}, stats
+        return None, {"reason": "claim 缺少正文", "text": ""}
     text = " ".join(text.split())
     if len(text) > MAX_CLAIM_CHARS:
-        return None, {"reason": "正文超过 {} 字".format(MAX_CLAIM_CHARS), "text": text[:80]}, stats
+        return None, {"reason": "正文超过 {} 字".format(MAX_CLAIM_CHARS), "text": text[:80]}
     kind = item.get("kind")
     if kind not in CLAIM_KINDS:
-        return None, {"reason": "未知的 claim 类型：" + str(kind)[:20], "text": text[:80]}, stats
+        return None, {"reason": "未知的 claim 类型：" + str(kind)[:20], "text": text[:80]}
     confidence = item.get("confidence")
     if confidence not in CONFIDENCES:
-        return None, {"reason": "未知的置信度：" + str(confidence)[:20], "text": text[:80]}, stats
+        return None, {"reason": "未知的置信度：" + str(confidence)[:20], "text": text[:80]}
     reason = _check_banned(text) or _check_rule_tokens(text, allowed)
     if reason:
-        return None, {"reason": reason, "text": text[:80]}, stats
+        return None, {"reason": reason, "text": text[:80]}
+    return (text, kind, confidence), None
+
+
+def _validate_claim(item, allowed, resolve):
+    """Return the validated claim, any drop reason, and citation counts."""
+    stats = {"total_refs": 0, "resolved_refs": 0}
+    fields, error = _claim_fields(item, allowed)
+    if error is not None:
+        return None, error, stats
+    text, kind, confidence = fields
     evidence = item.get("evidence")
     if not isinstance(evidence, list) or not evidence:
         return None, {"reason": "claim 没有证据引用", "text": text[:80]}, stats
@@ -280,14 +299,7 @@ def validate_skill_result(raw, resolve, *, allowed_rule_ids=(), output_schema=No
     返回对象的 `citations` 与 `dropped` 是"这次校验做了什么"的唯一记录，
     调用方（runner / server / 测试）只信这两个字段，不猜。
     """
-    if not isinstance(raw, dict):
-        raise SkillError("refused", "SkillResult 必须是对象")
-    skill = raw.get("skill")
-    if skill not in SKILLS:
-        raise SkillError("refused", "未注册的 skill：" + str(skill)[:40])
-    status = raw.get("status")
-    if status not in STATUSES:
-        raise SkillError("refused", "非法状态：" + str(status)[:40])
+    skill, status = _result_envelope(raw)
     if status != "ok":
         # 非 ok 状态不承载 claim，但仍然回填统一的元信息与 outputs，保证下游不必分支处理。
         # outputs 在非 ok 时是"为什么没有结论"的说明文字（标题/摘要），不是结论本身。
@@ -295,28 +307,8 @@ def validate_skill_result(raw, resolve, *, allowed_rule_ids=(), output_schema=No
                           outputs=_normalize_outputs(raw.get("outputs"), output_schema or {}),
                           diagnostics=raw.get("diagnostics"), generator=raw.get("generator"),
                           dropped=raw.get("dropped"))
-    target = raw.get("target")
-    if not isinstance(target, str) or not target.strip():
-        raise SkillError("refused", "缺少 target 引用")
-
-    claims_in = raw.get("claims")
-    if not isinstance(claims_in, list):
-        raise SkillError("refused", "claims 必须是列表")
-
-    allowed = set(allowed_rule_ids or ())
-    kept, dropped = [], []
-    total_refs = resolved_refs = 0
-
-    for item in claims_in[:max_claims]:
-        kept_item, drop_reason, stats = _validate_claim(item, allowed, resolve)
-        total_refs += stats["total_refs"]
-        resolved_refs += stats["resolved_refs"]
-        if kept_item is not None:
-            kept.append(kept_item)
-        else:
-            dropped.append(drop_reason)
-
-    coverage = round(resolved_refs / total_refs, 4) if total_refs else 0.0
+    target, claims = _result_claims(raw)
+    kept, dropped, citations = _collect_claims(claims[:max_claims], set(allowed_rule_ids or ()), resolve)
     result = new_result(
         skill,
         target,
@@ -328,10 +320,50 @@ def validate_skill_result(raw, resolve, *, allowed_rule_ids=(), output_schema=No
         diagnostics=raw.get("diagnostics"),
         dropped=dropped,
     )
-    result["citations"] = {
+    result["citations"] = citations
+    return result
+
+
+def _result_envelope(raw):
+    if not isinstance(raw, dict):
+        raise SkillError("refused", "SkillResult 必须是对象")
+    skill = raw.get("skill")
+    if not isinstance(skill, str) or skill not in SKILLS:
+        raise SkillError("refused", "未注册的 skill：" + str(skill)[:40])
+    status = raw.get("status")
+    if status not in STATUSES:
+        raise SkillError("refused", "非法状态：" + str(status)[:40])
+    return skill, status
+
+
+def _result_claims(raw):
+    target = raw.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise SkillError("refused", "缺少 target 引用")
+
+    claims_in = raw.get("claims")
+    if not isinstance(claims_in, list):
+        raise SkillError("refused", "claims 必须是列表")
+    return target, claims_in
+
+
+def _collect_claims(claims, allowed, resolve):
+    kept, dropped = [], []
+    total_refs = resolved_refs = 0
+
+    for item in claims:
+        kept_item, drop_reason, stats = _validate_claim(item, allowed, resolve)
+        total_refs += stats["total_refs"]
+        resolved_refs += stats["resolved_refs"]
+        if kept_item is not None:
+            kept.append(kept_item)
+        else:
+            dropped.append(drop_reason)
+
+    coverage = round(resolved_refs / total_refs, 4) if total_refs else 0.0
+    return kept, dropped, {
         "count": total_refs,
         "resolved": resolved_refs,
         "unresolved": total_refs - resolved_refs,
         "coverage": coverage,
     }
-    return result

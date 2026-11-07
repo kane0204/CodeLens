@@ -61,7 +61,8 @@ POST 使用本机 Host、Origin 和 `X-CodeLens-Token` 校验。请求体上限 
 ## 验证
 
 ```sh
-python -B -m unittest discover -s tests -p 'test_*.py' -v
+python -B -m unittest discover -s doc/unit -v
+python -B -m unittest discover -s tests/integration -v
 python -B tests/evaluate_solid.py
 cd codelens-prototype && npm ci && npm run build
 ```

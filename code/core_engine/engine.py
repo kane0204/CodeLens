@@ -58,23 +58,25 @@ def own_walk(node):
         stack.extend(reversed(list(ast.iter_child_nodes(item))))
 
 
+def _decision_count(item):
+    if isinstance(item, (ast.If, ast.IfExp, ast.Assert)):
+        return 1
+    if isinstance(item, (ast.For, ast.AsyncFor, ast.While)):
+        return 1 + bool(item.orelse)
+    if isinstance(item, (ast.Try, ast.TryStar)):
+        return len(item.handlers) + bool(item.orelse)
+    if isinstance(item, ast.BoolOp):
+        return len(item.values) - 1
+    if isinstance(item, ast.comprehension):
+        return 1 + len(item.ifs)
+    if isinstance(item, ast.Match):
+        return sum(not (isinstance(c.pattern, ast.MatchAs) and c.pattern.pattern is None)
+                   for c in item.cases)
+    return 0
+
+
 def complexity(node):
-    count = 1
-    for item in own_walk(node):
-        if isinstance(item, (ast.If, ast.IfExp, ast.Assert)):
-            count += 1
-        elif isinstance(item, (ast.For, ast.AsyncFor, ast.While)):
-            count += 1 + bool(item.orelse)
-        elif isinstance(item, (ast.Try, ast.TryStar)):
-            count += len(item.handlers) + bool(item.orelse)
-        elif isinstance(item, ast.BoolOp):
-            count += len(item.values) - 1
-        elif isinstance(item, ast.comprehension):
-            count += 1 + len(item.ifs)
-        elif isinstance(item, ast.Match):
-            count += sum(not (isinstance(c.pattern, ast.MatchAs) and c.pattern.pattern is None)
-                         for c in item.cases)
-    return count
+    return 1 + sum(_decision_count(item) for item in own_walk(node))
 
 
 def nesting(node):
@@ -181,14 +183,13 @@ class _AnalysisContext:
     """Mutable state shared by the analysis stages (scope tables, findings, etc.)."""
 
     __slots__ = (
-        "records", "seen", "excluded_count", "trees", "definitions", "definition_nodes",
+        "records", "excluded_count", "trees", "definitions", "definition_nodes",
         "bindings", "scope_parent", "owner_scope", "parents", "imports", "module_paths",
         "findings", "warnings", "generic_calls", "generic_dependencies", "calls", "inheritance",
     )
 
-    def __init__(self, records, seen, excluded_count):
+    def __init__(self, records, excluded_count):
         self.records = records
-        self.seen = seen
         self.excluded_count = excluded_count
         self.trees = {}
         self.definitions = {}
@@ -225,10 +226,15 @@ class _AnalysisContext:
         if not node.level:
             return node.module or ""
         # A selected package root is represented without a synthetic directory prefix.
-        if "__init__.py" in self.seen and "/" not in record["path"] and node.level == 1:
+        root_init = self.module_paths.get("__init__", "")
+        at_root = root_init[:-3] == "__init__" and "/" not in record["path"]
+        if at_root and node.level == 1:
             return node.module or ""
+        return self._relative_import_base(node, record)
+
+    def _relative_import_base(self, node, record):
         package = record["module"].split(".")
-        if not record["path"].endswith("/__init__.py"):
+        if not record["path"][:-3].endswith("/__init__"):
             package = package[:-1]
         if node.level > len(package):
             return "<unresolved-relative>"
@@ -244,6 +250,14 @@ class _AnalysisContext:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             self._collect_definition(node, scope, record)
             return
+        if isinstance(node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            self._collect_expression_scope(node, scope, record)
+            return
+        self._collect_bindings(node, scope, record)
+        for c in ast.iter_child_nodes(node):
+            self.collect(c, scope, record)
+
+    def _collect_bindings(self, node, scope, record):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             self._collect_import(node, scope, record)
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -253,11 +267,6 @@ class _AnalysisContext:
                 self.bind(scope, name, None)
         if isinstance(node, ast.ExceptHandler) and node.name:
             self.bind(scope, node.name, None)
-        if isinstance(node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-            self._collect_expression_scope(node, scope, record)
-            return
-        for c in ast.iter_child_nodes(node):
-            self.collect(c, scope, record)
 
     def _collect_definition(self, node, scope, record):
         fqn = scope + "." + node.name
@@ -349,6 +358,19 @@ class _AnalysisContext:
                 return base + "." + expr.attr
         return None
 
+    def _catches_io(self, handler, scope):
+        if handler.type is None:
+            return True
+        types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        for exception_type in types:
+            if not isinstance(exception_type, ast.Name):
+                continue
+            if exception_type.id in {"OSError", "IOError", "Exception", "BaseException"}:
+                _, bound = self.resolve_name(exception_type.id, scope)
+                if not bound:
+                    return True
+        return False
+
     def handled_io(self, call):
         current = call
         child = call
@@ -358,27 +380,62 @@ class _AnalysisContext:
             if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 break
             if isinstance(current, (ast.Try, ast.TryStar)) and child in current.body:
-                for handler in current.handlers:
-                    types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
-                    if handler.type is None:
-                        return True
-                    for t in types:
-                        if isinstance(t, ast.Name) and t.id in {"OSError", "IOError", "Exception", "BaseException"}:
-                            _, bound = self.resolve_name(t.id, self.owner_scope.get(id(current)))
-                            if not bound:
-                                return True
+                scope = self.owner_scope.get(id(current))
+                if any(self._catches_io(handler, scope) for handler in current.handlers):
+                    return True
         return False
 
 
 # -- stage 1: load & validate file records -----------------------------------
 
-def _load_records(payload):
+def _source_bytes(item):
+    if "content_base64" in item:
+        return base64.b64decode(item["content_base64"], validate=True)
+    if isinstance(item.get("content"), str):
+        return item["content"].encode("utf-8")
+    raise ValueError("文件缺少源码内容")
+
+
+def _decode_source(raw):
+    try:
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+        return raw.decode(encoding)
+    except (SyntaxError, LookupError, UnicodeError):
+        return raw.decode("utf-8", errors="replace")
+
+
+def _read_record(item, path, suffix):
+    is_python = suffix == ".py"
+    record = {"path": path, "module": module_name(path) if is_python else path,
+              "language": "Python 3.11" if is_python else generic.language_of(path),
+              "source": "", "status": "error",
+              "functions": [], "classes": [], "line_count": 0, "code_lines": 0}
+    size = 0
+    try:
+        raw = _source_bytes(item)
+        if len(raw) > MAX_FILE_BYTES:
+            raise ValueError("文件超过 1 MB")
+        size = len(raw)
+        record["sha256"] = hashlib.sha256(raw).hexdigest()
+        record["source"] = _decode_source(raw)
+        record["line_count"] = len(record["source"].splitlines())
+    except (ValueError, UnicodeError, SyntaxError, LookupError) as exc:
+        record["error"] = {"file": path, "line": None, "type": type(exc).__name__,
+                           "message": "读取或编码失败；请检查文件编码及大小"}
+    return record, size
+
+
+def _request_files(payload):
     if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
         raise ValueError("请求必须包含 files 列表")
     if len(payload["files"]) > MAX_FILES:
         raise ValueError(f"最多分析 {MAX_FILES} 个源码文件，请缩小目录范围")
+    return payload["files"]
+
+
+def _load_records(payload):
     records, total, seen, excluded_count = [], 0, set(), 0
-    for item in payload["files"]:
+    for item in _request_files(payload):
         if not isinstance(item, dict):
             raise ValueError("文件记录无效")
         path = normalized_path(item.get("path"))
@@ -389,43 +446,20 @@ def _load_records(payload):
         if path in seen:
             raise ValueError("存在重复的文件路径")
         seen.add(path)
-        is_python = suffix == ".py"
-        record = {"path": path, "module": module_name(path) if is_python else path,
-                  "language": "Python 3.11" if is_python else generic.language_of(path),
-                  "source": "", "status": "error",
-                  "functions": [], "classes": [], "line_count": 0, "code_lines": 0}
-        try:
-            if "content_base64" in item:
-                raw = base64.b64decode(item["content_base64"], validate=True)
-            elif isinstance(item.get("content"), str):
-                raw = item["content"].encode("utf-8")
-            else:
-                raise ValueError("文件缺少源码内容")
-            if len(raw) > MAX_FILE_BYTES:
-                raise ValueError("文件超过 1 MB")
-            total += len(raw)
-            record["sha256"] = hashlib.sha256(raw).hexdigest()
-            try:
-                encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
-                record["source"] = raw.decode(encoding)
-            except (SyntaxError, LookupError, UnicodeError):
-                record["source"] = raw.decode("utf-8", errors="replace")
-            record["line_count"] = len(record["source"].splitlines())
-        except (ValueError, UnicodeError, SyntaxError, LookupError) as exc:
-            record["error"] = {"file": path, "line": None, "type": type(exc).__name__,
-                               "message": "读取或编码失败；请检查文件编码及大小"}
+        record, size = _read_record(item, path, suffix)
+        total += size
         records.append(record)
     if total > MAX_TOTAL_BYTES:
         raise ValueError("源码总量超过 8 MB，请缩小目录范围")
     records.sort(key=lambda r: r["path"])
-    return records, seen, excluded_count
+    return records, excluded_count
 
 
 # -- stage 2: parse sources (Python AST + non-Python lexer) ------------------
 
 def _build_module_paths(ctx):
     for record in ctx.records:
-        if not record["path"].endswith(".py"):
+        if not record["path"].lower().endswith(".py"):
             continue
         if record["module"] in ctx.module_paths:
             raise ValueError("同时存在同名模块文件和包目录，无法唯一识别，请缩小分析范围")
@@ -450,6 +484,40 @@ def _parse_nonpython(ctx, record):
                            "message": "非 Python 源码解析失败；请检查文件编码与结构"}
 
 
+def _python_code_lines(tree, source):
+    active_lines = code_line_numbers(source)
+    for item in ast.walk(tree):
+        if not isinstance(item, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if ast.get_docstring(item, clean=False) is not None:
+            doc = item.body[0]
+            active_lines.difference_update(range(doc.lineno, doc.end_lineno + 1))
+    return sorted(active_lines)
+
+
+def _score_function(ctx, function, active_lines):
+    node = ctx.definition_nodes[function["id"]]
+    cc = complexity(node)
+    function.update(cc=cc, rank=rank(cc), nesting=nesting(node),
+                    length=bisect_right(active_lines, node.end_lineno) - bisect_left(active_lines, node.lineno),
+                    params=len(node.args.posonlyargs + node.args.args + node.args.kwonlyargs) +
+                    bool(node.args.vararg) + bool(node.args.kwarg))
+    statements = sorted((s for s in own_walk(node) if isinstance(s, ast.stmt)),
+                        key=lambda s: (s.lineno, s.col_offset))
+    function["statements"] = [{"line": s.lineno, "end_line": s.end_lineno, "ast_type": type(s).__name__,
+                               "description": statement_description(s), "evidence_type": "fact"}
+                              for s in statements]
+    for key, rule, threshold, label in [("cc", "CC-01", 10, "圈复杂度"),
+                                        ("length", "LEN-01", 50, "有效代码行数"),
+                                        ("nesting", "DEPTH-01", 4, "控制结构嵌套深度")]:
+        value = function[key]
+        if value > threshold:
+            ctx.finding(rule, "critical" if rule == "CC-01" and value > 20 else "warning",
+                        function["file"], function["line"],
+                        f"{function['id']} 的{label}为 {value}，超过阈值 {threshold}。",
+                        "检查复杂路径与职责边界，考虑拆分独立逻辑。", actual=value, threshold=threshold)
+
+
 def _score_python(ctx, record):
     """Parse one Python record and attach symbols, metrics and threshold findings."""
     try:
@@ -461,35 +529,10 @@ def _score_python(ctx, record):
         ctx.bindings.setdefault(record["module"], {})
         ctx.scope_parent[record["module"]] = None
         ctx.collect(tree, record["module"], record)
-        active_lines = code_line_numbers(record["source"])
-        for item in ast.walk(tree):
-            if isinstance(item, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                if item.body and isinstance(item.body[0], ast.Expr) and \
-                        isinstance(item.body[0].value, ast.Constant) and \
-                        isinstance(item.body[0].value.value, str):
-                    doc = item.body[0]
-                    active_lines.difference_update(range(doc.lineno, doc.end_lineno + 1))
+        active_lines = _python_code_lines(tree, record["source"])
         record["code_lines"] = len(active_lines)
-        sorted_active = sorted(active_lines)
-        for f in record["functions"]:
-            n = ctx.definition_nodes[f["id"]]
-            cc = complexity(n)
-            f.update(cc=cc, rank=rank(cc), nesting=nesting(n),
-                     length=bisect_right(sorted_active, n.end_lineno) - bisect_left(sorted_active, n.lineno),
-                     params=len(n.args.posonlyargs + n.args.args + n.args.kwonlyargs) +
-                     bool(n.args.vararg) + bool(n.args.kwarg))
-            statements = sorted((s for s in own_walk(n) if isinstance(s, ast.stmt)),
-                                key=lambda s: (s.lineno, s.col_offset))
-            f["statements"] = [{"line": s.lineno, "end_line": s.end_lineno, "ast_type": type(s).__name__,
-                                "description": statement_description(s), "evidence_type": "fact"}
-                               for s in statements]
-            for rule, value, threshold, label in [("CC-01", cc, 10, "圈复杂度"),
-                                                  ("LEN-01", f["length"], 50, "有效代码行数"),
-                                                  ("DEPTH-01", f["nesting"], 4, "控制结构嵌套深度")]:
-                if value > threshold:
-                    ctx.finding(rule, "critical" if rule == "CC-01" and value > 20 else "warning",
-                                f["file"], f["line"], f"{f['id']} 的{label}为 {value}，超过阈值 {threshold}。",
-                                "检查复杂路径与职责边界，考虑拆分独立逻辑。", actual=value, threshold=threshold)
+        for function in record["functions"]:
+            _score_function(ctx, function, active_lines)
     except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
         record["status"] = "error"
         record["functions"] = []
@@ -505,7 +548,7 @@ def _parse_sources(ctx):
     for record in ctx.records:
         if "error" in record:
             continue
-        if not record["path"].endswith(".py"):
+        if not record["path"].lower().endswith(".py"):
             _parse_nonpython(ctx, record)
             continue
         _score_python(ctx, record)
@@ -519,15 +562,19 @@ def _resolve_nonpython_inheritance(ctx):
         for cls in record["classes"]:
             class_names.setdefault(cls["name"], cls["id"])
     for record in ctx.records:
-        if record["path"].endswith(".py") or record["status"] != "ok":
+        if record["path"].lower().endswith(".py") or record["status"] != "ok":
             continue
         for cls in record["classes"]:
-            for base in cls.get("bases") or []:
-                target = class_names.get(base.split("::")[-1].strip())
-                if target and target != cls["id"]:
-                    ctx.inheritance.append({"source": cls["id"], "target": target,
-                                            "file": record["path"], "line": cls["line"],
-                                            "evidence_type": "inference"})
+            _link_generic_bases(ctx, record["path"], cls, class_names)
+
+
+def _link_generic_bases(ctx, path, cls, class_names):
+    for base in cls.get("bases") or []:
+        target = class_names.get(base.split("::")[-1].strip())
+        if target and target != cls["id"]:
+            ctx.inheritance.append({"source": cls["id"], "target": target, "file": path,
+                                    "line": cls["line"], "evidence_type": "inference"})
+
 
 
 def _check_call(ctx, record, item, scope, valid_defs):
@@ -598,7 +645,7 @@ def _resolve_relations(ctx):
 
 # -- stage 4: dependencies & cycles ------------------------------------------
 
-def _run_rule_checks(ctx):
+def _module_dependencies(ctx):
     dependencies = []
     for edge in ctx.imports:
         if edge["file"] not in ctx.trees:
@@ -614,9 +661,14 @@ def _run_rule_checks(ctx):
         edge["evidence_type"] = "fact"
         dependencies.append(edge)
     dependencies.extend(ctx.generic_dependencies)
+    return dependencies
+
+
+def _run_rule_checks(ctx):
+    dependencies = _module_dependencies(ctx)
     unique_edges = sorted({(d["source"], d["target"]) for d in dependencies if d["internal"]})
     graph_nodes = set(ctx.module_paths) | {r["module"] for r in ctx.records
-                                           if r["status"] == "ok" and not r["path"].endswith(".py")}
+                                           if r["status"] == "ok" and not r["path"].lower().endswith(".py")}
     cycles = cycles_of(graph_nodes, unique_edges)
     for group in cycles:
         evidence = next(d for d in dependencies if d["source"] in group and d["target"] in group)
@@ -638,35 +690,53 @@ def _status_of(records, errors):
     return "complete"
 
 
+def _number_findings(findings):
+    order = {"critical": 0, "warning": 1, "info": 2}
+    findings.sort(key=lambda f: (order[f["severity"]], f["file"], f["line"], f["rule_id"]))
+    for index, finding in enumerate(findings, start=1):
+        finding["id"] = f"finding-{index}"
+
+
+def _language_counts(records):
+    counts = {}
+    for record in records:
+        language = record["language"]
+        counts[language] = counts.get(language, 0) + 1
+    return counts
+
+
+def _report_summary(ctx, parsed, errors, functions, classes, language_counts):
+    average_cc = round(sum(f["cc"] for f in functions) / len(functions), 2) if functions else None
+    return {"files": len(ctx.records), "parsed": len(ctx.records) - len(errors),
+            "failed": len(errors), "excluded": ctx.excluded_count,
+            "functions": len(functions), "classes": len(classes),
+            "languages": language_counts,
+            "code_lines": sum(r["code_lines"] for r in parsed),
+            "findings": len(ctx.findings),
+            "average_cc": average_cc,
+            "max_cc": max((f["cc"] for f in functions), default=None)}
+
+
+def _report_config(language_counts):
+    languages = sorted(name for name in language_counts if name)
+    return {"language": " / ".join(languages) or "未知", "languages": languages,
+            "excluded": sorted(EXCLUDED), "rules": RULES,
+            "thresholds": {"cc": 10, "length": 50, "nesting": 4},
+            "length_definition": "物理有效代码行，排除空行、纯注释及独立文档字符串；包含定义行与内层定义。非 Python 文件排除空行与纯注释行。",
+            "cc_definition": "Python：初始1；if/三元/assert +1；循环 +1（else再+1）；try按except数（else再+1）；布尔n项+n-1；推导式+1及if数；match非通配case+1。非 Python：初始1，按 if/for/while/case/catch/&&/||/?: 关键字计数。内层函数/类/lambda不计入外层。"}
+
+
 def _assemble_report(ctx, project, dependencies, cycles):
     errors = [r["error"] for r in ctx.records if "error" in r]
-    functions = [f for r in ctx.records if r["status"] == "ok" for f in r["functions"]]
-    classes = [c for r in ctx.records if r["status"] == "ok" for c in r["classes"]]
-    order = {"critical": 0, "warning": 1, "info": 2}
-    ctx.findings.sort(key=lambda f: (order[f["severity"]], f["file"], f["line"], f["rule_id"]))
-    for i, f in enumerate(ctx.findings):
-        f["id"] = "finding-" + str(i + 1)
+    parsed = [r for r in ctx.records if r["status"] == "ok"]
+    functions = [f for r in parsed for f in r["functions"]]
+    classes = [c for r in parsed for c in r["classes"]]
+    _number_findings(ctx.findings)
     status = _status_of(ctx.records, errors)
-    language_counts = {}
-    for record in ctx.records:
-        language_counts[record["language"]] = language_counts.get(record["language"], 0) + 1
-    languages = [name for name in language_counts if name]
-    language_label = " / ".join(sorted(languages)) if languages else "未知"
-    average_cc = round(sum(f["cc"] for f in functions) / len(functions), 2) if functions else None
+    language_counts = _language_counts(ctx.records)
     return {"schema_version": "1.0", "engine_version": VERSION, "project": project, "status": status,
-            "config": {"language": language_label, "languages": sorted(languages),
-                       "excluded": sorted(EXCLUDED), "rules": RULES,
-                       "thresholds": {"cc": 10, "length": 50, "nesting": 4},
-                       "length_definition": "物理有效代码行，排除空行、纯注释及独立文档字符串；包含定义行与内层定义。非 Python 文件排除空行与纯注释行。",
-                       "cc_definition": "Python：初始1；if/三元/assert +1；循环 +1（else再+1）；try按except数（else再+1）；布尔n项+n-1；推导式+1及if数；match非通配case+1。非 Python：初始1，按 if/for/while/case/catch/&&/||/?: 关键字计数。内层函数/类/lambda不计入外层。"},
-            "summary": {"files": len(ctx.records), "parsed": len(ctx.records) - len(errors),
-                        "failed": len(errors), "excluded": ctx.excluded_count,
-                        "functions": len(functions), "classes": len(classes),
-                        "languages": language_counts,
-                        "code_lines": sum(r["code_lines"] for r in ctx.records if r["status"] == "ok"),
-                        "findings": len(ctx.findings),
-                        "average_cc": average_cc,
-                        "max_cc": max((f["cc"] for f in functions), default=None)},
+            "config": _report_config(language_counts),
+            "summary": _report_summary(ctx, parsed, errors, functions, classes, language_counts),
             "files": ctx.records, "functions": functions, "classes": classes, "findings": ctx.findings,
             "graph": {"dependencies": sorted(dependencies, key=lambda e: (e["file"], e["line"], e["target"])),
                       "calls": sorted(ctx.calls, key=lambda c: (c["file"], c["line"], c["expression"])),
@@ -679,9 +749,9 @@ def _assemble_report(ctx, project, dependencies, cycles):
 
 def analyze(payload):
     """Analyze a project payload. Orchestrates the pipeline stages above."""
+    records, excluded_count = _load_records(payload)
     project = str(payload.get("project", "代码项目"))[:120]
-    records, seen, excluded_count = _load_records(payload)
-    ctx = _AnalysisContext(records, seen, excluded_count)
+    ctx = _AnalysisContext(records, excluded_count)
     _parse_sources(ctx)
     _resolve_relations(ctx)
     dependencies, cycles = _run_rule_checks(ctx)

@@ -80,12 +80,7 @@ class ClassNodeName(Skill):
                 name, module, count, self._label(ctx)),
             evidence, kind="naming", confidence="high"))
 
-        if ctx["inheritance"]:
-            for edge in ctx["inheritance"][:2]:
-                claims.append(contract.claim(
-                    "{} 继承 {}；图上线要保留这条纵向关系，节点标签不必重复父类信息。".format(name, edge.get("target")),
-                    ["inherit:{}->{}".format(edge.get("source"), edge.get("target")), "def:" + index],
-                    kind="naming", confidence="high"))
+        claims.extend(self._inheritance_claims(ctx, name))
 
         if count >= 5:
             claims.append(contract.claim(
@@ -100,12 +95,21 @@ class ClassNodeName(Skill):
                     name, len(ctx["findings"]), rules),
                 refs + ["def:" + index], kind="naming", confidence="medium"))
 
-
         outputs = {"headline": base.short(self._label(ctx), 80),
                    "subtitle": base.short("{} · {} 行 · {}".format(module, ctx["line"], ctx["path"]), 160),
                    "tags": [tag for tag in [ctx["module"] or "", "class"] if tag]}
         return self.envelope(ctx, claims, outputs,
                              notes=["标签只由类名、方法集合、基类与规则发现构成，未推断类的业务含义。"])
+
+    def _inheritance_claims(self, ctx, name):
+        if not ctx["inheritance"]:
+            return
+        index = ctx["ident"]
+        for edge in ctx["inheritance"][:2]:
+            yield contract.claim(
+                "{} 继承 {}；图上线要保留这条纵向关系，节点标签不必重复父类信息。".format(name, edge.get("target")),
+                ["inherit:{}->{}".format(edge.get("source"), edge.get("target")), "def:" + index],
+                kind="naming", confidence="high")
 
     def prompt(self, ctx):
         return (

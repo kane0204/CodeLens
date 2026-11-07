@@ -11,10 +11,10 @@ export interface LogEntry {
 
 const MAX_ENTRIES = 200;
 const MAX_TEXT = 200;
-const SENSITIVE_KEY = /(api[_-]?key|token|secret|password|authorization|content_base64|source|content|payload|body)/i;
+const SENSITIVE_KEY = /(api[_-]?key|token|secret|password|authorization|project|file[_-]?(?:name|path)|^file$|source|content|payload|body)/i;
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/g;
 const BEARER = /\bBearer\s+[A-Za-z0-9._-]+/gi;
-const SECRET_PAIRS = /\b(api[_-]?key|token|secret|password|authorization)\b\s*[=:]\s*\S+/gi;
+const SECRET_PAIRS = /\b(api[_-]?key|token|secret|password|authorization)\b["']?\s*[=:]\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;&]+)/gi;
 
 export function redactText(value: unknown): string {
   let text = String(value).replace(CONTROL, ' ');
@@ -78,7 +78,10 @@ class ClientLogger {
   }
 
   entries(): LogEntry[] {
-    return this.buffer.map((item) => ({ ...item }));
+    return this.buffer.map((item) => ({
+      ...item,
+      context: item.context ? { ...item.context } : undefined,
+    }));
   }
 
   clear(): void {

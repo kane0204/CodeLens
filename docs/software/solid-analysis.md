@@ -31,8 +31,8 @@ L 不将构造器签名变化视作普通覆盖方法的替换性问题；抽象
 ## 验证
 
 ```sh
-python -B -m unittest discover -s tests -p 'test_*.py' -v
+python -B -m unittest discover -s doc/unit -p 'test_solid.py' -v
 cd codelens-prototype && npm ci && npm run build
 ```
 
-`tests/unit/test_solid.py` 覆盖正反例、签名兼容、跨文件继承、抽象契约、保守跳过、导入别名、结果稳定性与普通/AI 分析路径。
+`doc/unit/test_solid.py` 覆盖正反例、签名兼容、跨文件继承、抽象契约、保守跳过、导入别名、结果稳定性与普通/AI 分析路径。

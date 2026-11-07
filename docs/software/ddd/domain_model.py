@@ -135,6 +135,11 @@ class ReviewReport:
             raise ValueError("未知报告状态")
         if type(self.partial_coverage_acknowledged) is not bool:
             raise ValueError("部分覆盖确认标记必须为布尔值")
+        self._validate_findings(paths)
+        if self.state == "finalized":
+            self._validate_finalization()
+
+    def _validate_findings(self, paths):
         ids = set()
         for item in self._findings:
             if not isinstance(item, ReviewFinding) or item.report_id != self.report_id:
@@ -144,8 +149,6 @@ class ReviewReport:
             ids.add(item.finding_id)
             if item.evidence.location.file not in paths:
                 raise ValueError("证据必须来自本次分析的源码清单")
-        if self.state == "finalized":
-            self._validate_finalization()
 
     @property
     def findings(self) -> tuple[ReviewFinding, ...]:

@@ -56,19 +56,19 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
+function nonEmptyErrorText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function errorObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
+}
+
 function messageFromError(data: unknown, fallback: string): string {
-  if (typeof data === 'string' && data.trim()) return data;
-  if (data && typeof data === 'object') {
-    const record = data as Record<string, unknown>;
-    const error = record.error;
-    if (typeof error === 'string' && error.trim()) return error;
-    if (error && typeof error === 'object') {
-      const nested = error as Record<string, unknown>;
-      if (typeof nested.message === 'string' && nested.message.trim()) return nested.message;
-    }
-    if (typeof record.message === 'string' && record.message.trim()) return record.message;
-  }
-  return fallback;
+  const record = errorObject(data);
+  const error = record?.error;
+  return nonEmptyErrorText(data) ?? nonEmptyErrorText(error) ?? nonEmptyErrorText(errorObject(error)?.message)
+    ?? nonEmptyErrorText(record?.message) ?? fallback;
 }
 
 function requestIdFromError(data: unknown): string | undefined {
@@ -135,6 +135,19 @@ async function parseJson(response: Response): Promise<unknown> {
   }
 }
 
+function postJson(path: string, payload: unknown, token: string, signal: AbortSignal): Promise<Response> {
+  return fetch(path, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CodeLens-Token': token,
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+}
+
 export function fetchStatus(): Promise<StatusInfo> {
   return withLogging('api', '/api/status', {}, fetchStatusInner);
 }
@@ -195,10 +208,29 @@ async function analyzeProjectInner(
   if (!request.files.length) throw new ApiError('所选目录没有可分析的源码文件');
   onProgress({ phase: 'read', done: 0, total: request.files.length });
 
+  const encoded = await encodeProjectFiles(request.files, onProgress, signal);
+  if (signal.aborted) throw abortError();
+  onProgress({ phase: 'upload', done: request.files.length, total: request.files.length });
+
+  const response = await postJson('/api/analyze', { project: request.project, files: encoded }, token, signal);
+  const data = await parseJson(response);
+  if (!response.ok) {
+    throw apiErrorFrom(data, `分析请求失败（${response.status}）`, response.status);
+  }
+  const result = readAnalysisResult(data);
+  onProgress({ phase: 'done', done: request.files.length, total: request.files.length });
+  return result;
+}
+
+async function encodeProjectFiles(
+  files: SelectedFile[],
+  onProgress: (progress: AnalyzeProgress) => void,
+  signal: AbortSignal,
+) {
   const encoded: { path: string; content_base64: string }[] = [];
-  for (let index = 0; index < request.files.length; index += 1) {
+  for (let index = 0; index < files.length; index += 1) {
     if (signal.aborted) throw abortError();
-    const item = request.files[index];
+    const item = files[index];
     let buffer: ArrayBuffer;
     try {
       buffer = await item.file.arrayBuffer();
@@ -206,33 +238,17 @@ async function analyzeProjectInner(
       throw new ApiError(`读取文件失败（第 ${index + 1} 个），请检查文件是否被占用或已移除`);
     }
     encoded.push({ path: item.path, content_base64: toBase64(buffer) });
-    onProgress({ phase: 'read', done: index + 1, total: request.files.length });
+    onProgress({ phase: 'read', done: index + 1, total: files.length });
   }
+  return encoded;
+}
 
-  if (signal.aborted) throw abortError();
-  onProgress({ phase: 'upload', done: request.files.length, total: request.files.length });
-
-  const body = JSON.stringify({ project: request.project, files: encoded });
-  const response = await fetch('/api/analyze', {
-    method: 'POST',
-    cache: 'no-store',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CodeLens-Token': token,
-    },
-    body,
-    signal,
-  });
-  const data = await parseJson(response);
-  if (!response.ok) {
-    throw apiErrorFrom(data, `分析请求失败（${response.status}）`, response.status);
-  }
+function readAnalysisResult(data: unknown): AnalyzeResult {
   if (!data || typeof data !== 'object') throw new ApiError('分析服务返回的数据为空');
   const result = data as Partial<AnalyzeResult>;
   if (!result.summary || !Array.isArray(result.files) || !Array.isArray(result.findings)) {
     throw new ApiError('分析服务返回的数据格式不完整，请重试。');
   }
-  onProgress({ phase: 'done', done: request.files.length, total: request.files.length });
   return result as AnalyzeResult;
 }
 
@@ -256,44 +272,42 @@ async function explainCodeInner(
   token: string,
   signal: AbortSignal,
 ): Promise<ExplainResult> {
-  const configured = Boolean(request.settings.baseUrl || request.settings.model || request.settings.apiKey);
-  const payload: Record<string, unknown> = {
+  const payload = withProvider({
     project: request.project,
     files: request.files,
     include_context: true,
     target: request.target,
-  };
-  if (configured) {
-    payload.provider = {
-      base_url: request.settings.baseUrl,
-      model: request.settings.model,
-      api_key: request.settings.apiKey,
-    };
-  }
-  const response = await fetch('/api/explain', {
-    method: 'POST',
-    cache: 'no-store',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CodeLens-Token': token,
-    },
-    body: JSON.stringify(payload),
-    signal,
-  });
+  }, request.settings);
+  const response = await postJson('/api/explain', payload, token, signal);
   const data = await parseJson(response);
   if (!response.ok) {
     throw apiErrorFrom(data, `AI 解读失败（${response.status}）`, response.status);
   }
+  return normalizeExplanation(data, request.target);
+}
+
+function withProvider(payload: Record<string, unknown>, { baseUrl, model, apiKey }: LlmSettings) {
+  if (!baseUrl && !model && !apiKey) return payload;
+  return { ...payload, provider: { base_url: baseUrl, model, api_key: apiKey } };
+}
+
+function explanationLocation(result: Partial<ExplainResult>, target: ExplainTarget) {
+  return {
+    file: String(result.file ?? target.file),
+    function: result.function ?? null,
+    line: result.line ?? null,
+    end_line: result.end_line ?? null,
+  };
+}
+
+function normalizeExplanation(data: unknown, target: ExplainTarget): ExplainResult {
   if (!data || typeof data !== 'object') throw new ApiError('模型未返回有效解读');
   const result = data as Partial<ExplainResult>;
   if (typeof result.text !== 'string' || !result.text.trim()) throw new ApiError('模型未返回有效解读');
   return {
     text: result.text,
     model: String(result.model ?? ''),
-    file: String(result.file ?? request.target.file),
-    function: result.function ?? null,
-    line: result.line ?? null,
-    end_line: result.end_line ?? null,
+    ...explanationLocation(result, target),
     context: Array.isArray(result.context) ? result.context : [],
     scope: result.scope,
     source_files: result.source_files,
@@ -338,61 +352,60 @@ async function reviewProjectInner(
   onProgress: (progress: AiReviewProgress) => void,
   signal: AbortSignal,
 ): Promise<AiReviewResult> {
-  const configured = Boolean(request.settings.baseUrl || request.settings.model || request.settings.apiKey);
-  const payload: Record<string, unknown> = {
-    project: request.project,
-    files: request.files,
-  };
-  if (configured) {
-    payload.provider = {
-      base_url: request.settings.baseUrl,
-      model: request.settings.model,
-      api_key: request.settings.apiKey,
-    };
-  }
-
-  const response = await fetch('/api/review', {
-    method: 'POST',
-    cache: 'no-store',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CodeLens-Token': token,
-    },
-    body: JSON.stringify(payload),
-    signal,
-  });
+  const payload = withProvider({ project: request.project, files: request.files }, request.settings);
+  const response = await postJson('/api/review', payload, token, signal);
   if (!response.ok) {
     const data = await parseJson(response);
     throw apiErrorFrom(data, `AI 审查失败（${response.status}）`, response.status);
   }
   if (!response.body) throw new ApiError('浏览器不支持读取 AI 审查进度');
+  return readReviewStream(response.body, onProgress);
+}
 
-  const reader = response.body.getReader();
+function parseReviewEvent(line: string): ReviewStreamEvent {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    logger.warn('api', 'review.invalid_ndjson');
+    throw new ApiError('AI 审查进度数据格式无效');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ApiError('AI 审查进度数据格式无效');
+  }
+  return parsed as ReviewStreamEvent;
+}
+
+function reviewProgress({ stage, done, total, label }: ReviewStreamEvent): AiReviewProgress | undefined {
+  if (!stage || typeof done !== 'number' || typeof total !== 'number') return;
+  return { stage, done, total, label: String(label ?? '') };
+}
+
+function reviewResult(event: ReviewStreamEvent, onProgress: (progress: AiReviewProgress) => void) {
+  const progress = event.type === 'progress' ? reviewProgress(event) : undefined;
+  if (progress) {
+    onProgress(progress);
+    return;
+  }
+  if (event.type === 'result' && event.result) return event.result;
+  if (event.type === 'error') {
+    throw new ApiError(event.error || 'AI 审查失败', 502, undefined, event.error_id);
+  }
+  logger.warn('api', 'review.unknown_event', { type: event.type });
+}
+
+async function readReviewStream(
+  body: ReadableStream<Uint8Array>,
+  onProgress: (progress: AiReviewProgress) => void,
+): Promise<AiReviewResult> {
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let finalResult: AiReviewResult | null = null;
 
   const handleLine = (line: string) => {
     if (!line.trim()) return;
-    let event: ReviewStreamEvent;
-    try {
-      event = JSON.parse(line) as ReviewStreamEvent;
-    } catch {
-      logger.warn('api', 'review.invalid_ndjson');
-      throw new ApiError('AI 审查进度数据格式无效');
-    }
-    if (event.type === 'progress' && event.stage && typeof event.done === 'number' && typeof event.total === 'number') {
-      onProgress({ stage: event.stage, done: event.done, total: event.total, label: String(event.label ?? '') });
-      return;
-    }
-    if (event.type === 'result' && event.result) {
-      finalResult = event.result;
-      return;
-    }
-    if (event.type === 'error') {
-      throw new ApiError(event.error || 'AI 审查失败', 502, undefined, event.error_id);
-    }
-    logger.warn('api', 'review.unknown_event', { type: event.type });
+    finalResult = reviewResult(parseReviewEvent(line), onProgress) ?? finalResult;
   };
 
   try {

@@ -113,13 +113,18 @@ def _validate_ai_payload(payload):
     skills = payload.get("skills")
     if not isinstance(skills, list) or not skills:
         raise ai_contract.SkillError("refused", "skills 必须是非空数组")
-    unknown = [item for item in skills if item not in ai_contract.SKILLS]
+    unknown = [item for item in skills if not isinstance(item, str) or item not in ai_contract.SKILLS]
     if unknown:
         raise ai_contract.SkillError("refused", "未注册的 skill：" + "、".join(str(x)[:40] for x in unknown[:4]))
-    targets = payload.get("targets")
-    if targets is not None and (not isinstance(targets, list) or not all(isinstance(item, str) for item in targets)):
+    _validate_ai_targets(payload.get("targets"))
+
+
+def _validate_ai_targets(targets):
+    if targets is None:
+        return
+    if not isinstance(targets, list) or not all(isinstance(item, str) for item in targets):
         raise ai_contract.SkillError("refused", "targets 必须是字符串数组或 null")
-    if targets is not None and len(targets) > MAX_AI_TARGETS:
+    if len(targets) > MAX_AI_TARGETS:
         raise ai_contract.SkillError("refused", "targets 超过上限 " + str(MAX_AI_TARGETS))
 
 
@@ -317,34 +322,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_post(self):
         logger = obs.get_logger()
-        origin = self.headers.get("Origin")
-        origins = {f"http://127.0.0.1:{self.server.server_port}",f"http://localhost:{self.server.server_port}"}
-        if not self.allowed_host() or origin not in origins or self.headers.get("X-CodeLens-Token") != TOKEN:
+        if not self._post_allowed():
             obs.log_event(logger, logging.WARNING, "request_rejected",
                           request_id=self.request_id, reason="guard")
             return self.send_data(403,{"error":"请从本机 CodeLens 页面发起分析"})
         path = self.request_path()
         if path not in ("/api/analyze", "/api/ai", "/api/explain", "/api/review"):
             return self.send_data(404,{"error":"接口不存在"})
-        is_ai = path == "/api/ai"
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
             return self.send_data(415,{"error":"仅支持 JSON 请求"})
+        return self._process_post(path, logger)
+
+    def _post_allowed(self):
+        origin = self.headers.get("Origin")
+        origins = {f"http://127.0.0.1:{self.server.server_port}",f"http://localhost:{self.server.server_port}"}
+        return self.allowed_host() and origin in origins and self.headers.get("X-CodeLens-Token") == TOKEN
+
+    def _process_post(self, path, logger):
         try:
             length = int(self.headers.get("Content-Length","0"))
             if not 0 < length <= MAX_BODY:
                 return self.send_data(413,{"error":"请求超过 12 MB 或为空"})
-            self.connection.settimeout(30)
-            data = self.rfile.read(length)
-            if len(data) != length:
-                raise ValueError("请求数据不完整")
-            payload = json.loads(data)
-            if path == "/api/explain":
-                return self.send_data(200, explanation.explain(payload))
-            if path == "/api/review":
-                return self.stream_review(payload)
-            if is_ai:
-                return self.send_data(200, ai_analyze(payload))
-            return self.send_data(200, enrich(analyze(payload)))
+            return self._route_post(path, self._read_post(length))
         except explanation.ExplanationError as exc:
             obs.log_event(logger, logging.WARNING, "explain_refused",
                           request_id=self.request_id, type=type(exc).__name__)
@@ -352,9 +351,7 @@ class Handler(BaseHTTPRequestHandler):
         except ai_contract.SkillError as exc:
             obs.log_event(logger, logging.WARNING, "skill_refused",
                           request_id=self.request_id, kind=obs.redact(exc.kind, 40))
-            if is_ai:
-                return self.send_data(400, ai_error(exc.kind, str(exc)[:200]))
-            return self.send_data(400,{"error":obs.redact(str(exc))})
+            return self._post_skill_error(path, exc)
         except TimeoutError:
             obs.log_event(logger, logging.WARNING, "request_read_timeout",
                           request_id=self.request_id)
@@ -368,9 +365,33 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             obs.log_exception(logger, exc, self.request_id, method="POST",
                               path=obs.safe_path(path))
-            if is_ai:
-                return self.send_data(500, ai_error("internal", "AI 解读失败；未生成替代结论"))
-            return self.send_data(500,{"error":"分析失败，请缩小项目范围后重试；未生成替代结果"})
+            return self._post_internal_error(path)
+
+    def _read_post(self, length):
+        self.connection.settimeout(30)
+        data = self.rfile.read(length)
+        if len(data) != length:
+            raise ValueError("请求数据不完整")
+        return json.loads(data)
+
+    def _route_post(self, path, payload):
+        if path == "/api/explain":
+            return self.send_data(200, explanation.explain(payload))
+        if path == "/api/review":
+            return self.stream_review(payload)
+        if path == "/api/ai":
+            return self.send_data(200, ai_analyze(payload))
+        return self.send_data(200, enrich(analyze(payload)))
+
+    def _post_skill_error(self, path, exc):
+        if path == "/api/ai":
+            return self.send_data(400, ai_error(exc.kind, str(exc)[:200]))
+        return self.send_data(400, {"error": obs.redact(str(exc))})
+
+    def _post_internal_error(self, path):
+        if path == "/api/ai":
+            return self.send_data(500, ai_error("internal", "AI 解读失败；未生成替代结论"))
+        return self.send_data(500,{"error":"分析失败，请缩小项目范围后重试；未生成替代结果"})
 
 
 def main():

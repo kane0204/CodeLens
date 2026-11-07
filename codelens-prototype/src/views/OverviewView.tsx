@@ -131,7 +131,40 @@ export function OverviewView() {
   };
   const health = result.health;
 
-  const stats: { label: string; value: string; hint: string; route?: 'structure' | 'risks'; accent?: string }[] = [
+  const stats = overviewStats(result, counts);
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <OverviewStats stats={stats} health={health} go={go} />
+
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2">
+        <Card className="min-h-0">
+          <CardHeader title="复杂度参考" icon="activity" subtitle="函数级" />
+          <Gauge maxCc={summary.max_cc} averageCc={summary.average_cc} />
+        </Card>
+        <Card className="min-h-0">
+          <CardHeader title="风险分布" icon="shield" />
+          <RiskPie counts={counts} />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+type OverviewResult = NonNullable<ReturnType<typeof useApp>['result']>;
+type OverviewHealth = OverviewResult['health'];
+type Navigate = ReturnType<typeof useApp>['go'];
+
+interface OverviewStat {
+  label: string;
+  value: string;
+  hint: string;
+  route?: 'structure' | 'risks';
+  accent?: string;
+}
+
+function overviewStats(result: OverviewResult, counts: Record<Severity, number>): OverviewStat[] {
+  const { summary, health } = result;
+  return [
     {
       label: '健康度总分',
       value: health?.available === false ? '—' : formatNumber(health?.score),
@@ -163,58 +196,63 @@ export function OverviewView() {
       accent: ccClass(summary.max_cc),
     },
   ];
+}
 
+interface OverviewStatsProps {
+  stats: OverviewStat[];
+  health: OverviewHealth;
+  go: Navigate;
+}
+
+function OverviewStats({ stats, health, go }: OverviewStatsProps) {
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="grid shrink-0 grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-5">
-        {stats.map((stat, index) => {
-          const content = (
-            <>
-              <span className="flex items-center gap-1 text-[10.5px] font-medium uppercase tracking-[0.1em] text-faint">
-                {stat.label}
-                {index === 0 ? <HealthPopover health={health} /> : null}
-              </span>
-              <strong className={`num mt-1.5 block text-[26px] font-medium leading-none tracking-[-0.02em] ${stat.accent ?? 'text-ink'}`}>
-                {stat.value}
-              </strong>
-              <span className="mt-1.5 flex items-center gap-1 text-[10.5px] text-muted">
-                {stat.hint}
-                {stat.route ? <Icon name="chevronRight" size={10} className="text-faint" /> : null}
-              </span>
-            </>
-          );
-          const baseClass =
-            'relative flex flex-col rounded-[6px] border border-line bg-card px-3.5 py-3 text-left shadow-[0_1px_2px_#0000000d] transition-colors';
-          if (!stat.route) {
-            return (
-              <div key={stat.label} className={baseClass}>
-                {content}
-              </div>
-            );
-          }
-          return (
-            <button
-              key={stat.label}
-              type="button"
-              onClick={() => stat.route && go(stat.route)}
-              className={`${baseClass} hover:border-[#cdb795] hover:bg-[#fdfbf8]`}
-            >
-              {content}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2">
-        <Card className="min-h-0">
-          <CardHeader title="复杂度参考" icon="activity" subtitle="函数级" />
-          <Gauge maxCc={summary.max_cc} averageCc={summary.average_cc} />
-        </Card>
-        <Card className="min-h-0">
-          <CardHeader title="风险分布" icon="shield" />
-          <RiskPie counts={counts} />
-        </Card>
-      </div>
+    <div className="grid shrink-0 grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-5">
+      {stats.map((stat, index) => (
+        <OverviewStatCard key={stat.label} stat={stat} health={health} showHealth={index === 0} go={go} />
+      ))}
     </div>
+  );
+}
+
+interface OverviewStatCardProps {
+  stat: OverviewStat;
+  health: OverviewHealth;
+  showHealth: boolean;
+  go: Navigate;
+}
+
+function OverviewStatCard({ stat, health, showHealth, go }: OverviewStatCardProps) {
+  const content = (
+    <>
+      <span className="flex items-center gap-1 text-[10.5px] font-medium uppercase tracking-[0.1em] text-faint">
+        {stat.label}
+        {showHealth ? <HealthPopover health={health} /> : null}
+      </span>
+      <strong className={`num mt-1.5 block text-[26px] font-medium leading-none tracking-[-0.02em] ${stat.accent ?? 'text-ink'}`}>
+        {stat.value}
+      </strong>
+      <span className="mt-1.5 flex items-center gap-1 text-[10.5px] text-muted">
+        {stat.hint}
+        {stat.route ? <Icon name="chevronRight" size={10} className="text-faint" /> : null}
+      </span>
+    </>
+  );
+  const baseClass =
+    'relative flex flex-col rounded-[6px] border border-line bg-card px-3.5 py-3 text-left shadow-[0_1px_2px_#0000000d] transition-colors';
+  if (!stat.route) {
+    return (
+      <div className={baseClass}>
+        {content}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => stat.route && go(stat.route)}
+      className={`${baseClass} hover:border-[#cdb795] hover:bg-[#fdfbf8]`}
+    >
+      {content}
+    </button>
   );
 }

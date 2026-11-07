@@ -1,10 +1,22 @@
-# 单元测试（tests/unit）
+# Python 单元测试
 
 ## 已提供的回归检查
 
 `test_engine.py` 覆盖真实 AST 指标、逻辑行号、错误隔离、不执行源码、编码、依赖/调用/继承、循环依赖、变量遮蔽、规则和输入边界。
 
-仓库根目录运行：`python -B -m unittest discover -s tests -p 'test_*.py' -v`。下文保留完整测试规划。
+`test_generic.py` 覆盖非 Python 词法分析、复杂度与行号、跨语言依赖、调用解析、敏感值脱敏及混合语言项目。
+
+`test_review.py` 模拟模型调用，覆盖 AI 全项目审查的引用校验、缓存隔离、失败重试、分批断点续跑及并发请求复用。
+
+`test_provider.py` 覆盖模型启用条件、HTTP 请求及响应契约、异常响应，以及网络失败时模板回退的证据引用。
+
+`test_facts.py` 和 `test_ir.py` 覆盖控制流、定义与使用点、证据引用、模块切片及指纹。 `test_explain.py` 和 `test_server_unit.py` 覆盖源码解读和 HTTP 请求处理。
+
+在仓库根目录运行单元测试，无需启动后端或连接模型服务。
+
+```sh
+python -B -m unittest discover -s doc/unit -v
+```
 
 针对解析、逻辑建模、指标、规则与导出的测试，快速、无外部依赖。
 
@@ -25,7 +37,7 @@
 
 ## 约定
 
-- 框架：pytest；
+- 框架：Python 标准库 `unittest`，外部调用使用 `unittest.mock`；
 - 命名：`test_<模块名>.py`，测试函数 `test_<行为>_<期望>()`；
 - 逻辑模型测试使用最小代码片段，断言步骤的**顺序与行号范围**，不能只断言数量；
 - 指标测试写出手算结果作为断言；

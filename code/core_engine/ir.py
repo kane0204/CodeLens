@@ -130,19 +130,21 @@ class Index:
 
     def _index_graph(self, result):
         graph = result.get("graph") or {}
-        for call in graph.get("calls") or []:
+        self._index_calls(graph.get("calls") or [])
+        for edge in graph.get("dependencies") or []:
+            if edge.get("internal"):
+                self.deps.add((edge.get("source"), edge.get("target")))
+        self.inheritance.extend(graph.get("inheritance") or [])
+        self.cycles = list(graph.get("cycles") or [])
+
+    def _index_calls(self, calls):
+        for call in calls:
             source = call.get("source")
             if isinstance(source, str):
                 self.calls_by_source[source].append(call)
             path, line = call.get("file"), call.get("line")
             if isinstance(path, str) and isinstance(line, int):
                 self.calls_by_file_line[(path, line)].append(call)
-        for edge in graph.get("dependencies") or []:
-            if edge.get("internal"):
-                self.deps.add((edge.get("source"), edge.get("target")))
-        for edge in graph.get("inheritance") or []:
-            self.inheritance.append(edge)
-        self.cycles = list(graph.get("cycles") or [])
 
     # ---- 基础查询 -----------------------------------------------------
 
@@ -208,19 +210,9 @@ class Index:
         entry = self.functions.get(ident) or self.classes.get(ident)
         if not entry:
             return None
-        statements = sorted(
-            (stmt for (owner, _), stmt in self.statements.items() if owner == ident),
-            key=lambda s: (s.get("line") or 0, s.get("end_line") or 0),
-        )
-        truncated = len(statements) > MAX_STATEMENTS_PER_FUNCTION
-        calls = self.calls_by_source.get(ident, [])[:MAX_CALLS_PER_FUNCTION]
-        findings = self.findings_in(entry.get("file"), entry.get("line") or 0, entry.get("end_line") or 0)
-        owner = None
-        if entry.get("kind") == "function":
-            for cls in self.classes.values():
-                if ident in (cls.get("methods") or []):
-                    owner = cls
-                    break
+        statements = self._function_statements(ident)
+        path = entry.get("file")
+        findings = self.findings_in(path, entry.get("line") or 0, entry.get("end_line") or 0)
         return {
             "id": ident,
             "name": entry.get("name"),
@@ -232,12 +224,25 @@ class Index:
             "func": {key: entry.get(key) for key in ("cc", "rank", "nesting", "length", "params")
                      if key in entry},
             "statements": statements[:MAX_STATEMENTS_PER_FUNCTION],
-            "statements_truncated": truncated,
-            "calls": calls,
+            "statements_truncated": len(statements) > MAX_STATEMENTS_PER_FUNCTION,
+            "calls": self.calls_by_source.get(ident, [])[:MAX_CALLS_PER_FUNCTION],
             "findings": findings,
-            "owner_class": {"id": owner.get("id"), "name": owner.get("name"),
-                            "bases": owner.get("bases") or []} if owner else None,
+            "owner_class": self._function_owner(ident, entry),
         }
+
+    def _function_statements(self, ident):
+        return sorted(
+            (stmt for (owner, _), stmt in self.statements.items() if owner == ident),
+            key=lambda s: (s.get("line") or 0, s.get("end_line") or 0),
+        )
+
+    def _function_owner(self, ident, entry):
+        if entry.get("kind") != "function":
+            return None
+        for cls in self.classes.values():
+            if ident in (cls.get("methods") or []):
+                return {"id": cls.get("id"), "name": cls.get("name"), "bases": cls.get("bases") or []}
+        return None
 
     def slice_module(self, module):
         """一个模块的表达层输入：文件统计 + 顶层符号 + 依赖出边/入边。"""
@@ -245,9 +250,8 @@ class Index:
         if not path:
             return None
         record = self.files.get(path) or {}
-        out_edges = sorted(target for source, target in self.deps if source == module)
-        in_edges = sorted(source for source, target in self.deps if target == module)
-        symbols = sorted(ident for ident in self.defs if self.defs[ident].get("file") == path)
+        out_edges, in_edges = self._module_dependencies(module)
+        symbols = self._module_symbols(path)
         return {
             "module": module,
             "path": path,
@@ -259,6 +263,14 @@ class Index:
             "depended_by": in_edges,
             "findings": [f.get("id") for f in self.findings_by_file.get(path, [])],
         }
+
+    def _module_dependencies(self, module):
+        outgoing = sorted(target for source, target in self.deps if source == module)
+        incoming = sorted(source for source, target in self.deps if target == module)
+        return outgoing, incoming
+
+    def _module_symbols(self, path):
+        return sorted(ident for ident, entry in self.defs.items() if entry.get("file") == path)
 
     def findings_in(self, path, start, end):
         """落在 [start, end] 行区间内的 finding。A4 不输出原始值，这里也一样。"""
@@ -333,7 +345,7 @@ class Index:
         path, raw_line = parts
         if path not in self.files:
             return {"ok": False, "error": "文件不在本次分析范围内：" + path}
-        line = _line_number(raw_line)
+        line = _reference_number(raw_line)
         if line is None:
             return {"ok": False, "error": "行号非法：" + raw_line}
         record = self.files[path]
@@ -346,7 +358,7 @@ class Index:
         if not parts:
             return {"ok": False, "error": "stmt 引用必须形如 stmt:符号#行号"}
         ident, raw_line = parts
-        line = _line_number(raw_line)
+        line = _reference_number(raw_line)
         if line is None:
             return {"ok": False, "error": "行号非法：" + raw_line}
         if (ident, line) not in self.statements:
@@ -373,7 +385,7 @@ class Index:
         if not parts:
             return {"ok": False, "error": "call 引用必须形如 call:path#行号"}
         path, raw_line = parts
-        line = _line_number(raw_line)
+        line = _reference_number(raw_line)
         if line is None:
             return {"ok": False, "error": "行号非法：" + raw_line}
         if (path, line) not in self.calls_by_file_line:
@@ -390,8 +402,8 @@ class Index:
         return {"ok": False, "error": "没有这条继承关系：" + payload}
 
     def _resolve_cycle(self, payload):
-        index = _line_number(payload)
-        if index is None or index < 0 or index >= len(self.cycles):
+        index = _reference_number(payload, minimum=0)
+        if index is None or index >= len(self.cycles):
             return {"ok": False, "error": "没有这个循环依赖组：" + payload}
         return {"ok": True, "kind": "cycle", "index": index, "modules": list(self.cycles[index])}
 
@@ -423,12 +435,12 @@ class Index:
         return kept, errors
 
 
-def _line_number(raw):
+def _reference_number(raw, *, minimum=1):
     try:
         value = int(raw, 10)
     except (TypeError, ValueError):
         return None
-    return value if value > 0 else None
+    return value if value >= minimum else None
 
 
 def _call_key(call):

@@ -50,7 +50,7 @@ def _terminates(statements):
     if not statements:
         return False
     last = statements[-1]
-    if isinstance(last, JUMP_NODES):
+    if _is_jump(last):
         return True
     if isinstance(last, ast.If) and last.orelse:
         return _terminates(last.body) and _terminates(last.orelse)
@@ -119,27 +119,34 @@ class _Flow:
 
     def _loop(self, stmt, depth, loop, pending_break, pending_continue):
         line = stmt.lineno
-        kind_label = "for" if isinstance(stmt, ast.For) else "async for" if isinstance(stmt, ast.AsyncFor) else "while"
-        true_label = "loop" if isinstance(stmt, ast.For) else "loop" if isinstance(stmt, ast.AsyncFor) else "true"
-        header = self.add(line, line, "loop", kind_label, depth)
-        outer_breaks = []
-        body_entry = self.add(getattr(stmt.body[0], "lineno", line), line, "branch", "body", depth + 1) if stmt.body else None
-        if body_entry:
-            self.edge(header, body_entry, true_label)
-        body_exits = self.build(stmt.body, body_entry, depth + 1, header, outer_breaks, header) if stmt.body else []
-        for exits in (body_exits, outer_breaks):
-            for source in exits:
-                self.edge(source, header, "back")
-        after_loop = self.add(getattr(stmt.orelse[0], "lineno", line), line, "branch",
-                              "for-else" if not isinstance(stmt, ast.While) else "while-else", depth + 1) if stmt.orelse else None
-        if after_loop:
-            self.edge(header, after_loop, "exhausted")
-            if isinstance(stmt, ast.While):
-                self.edge(header, after_loop, "false")
-            else_exits = self.build(stmt.orelse, after_loop, depth + 1, loop, pending_break, pending_continue)
-        else:
-            else_exits = []
-        return header, [header] + else_exits
+        kind = {ast.For: "for", ast.AsyncFor: "async for", ast.While: "while"}[type(stmt)]
+        header = self.add(line, line, "loop", kind, depth)
+        self._loop_body(stmt, header, depth + 1)
+        exits = self._loop_else(stmt, header, depth + 1, loop, pending_break, pending_continue)
+        return header, [header] + exits
+
+    def _loop_body(self, stmt, header, depth):
+        if not stmt.body:
+            return
+        line = stmt.lineno
+        entry = self.add(getattr(stmt.body[0], "lineno", line), line, "branch", "body", depth)
+        self.edge(header, entry, "true" if isinstance(stmt, ast.While) else "loop")
+        breaks = []
+        exits = self.build(stmt.body, entry, depth, header, breaks, header)
+        for source in exits + breaks:
+            self.edge(source, header, "back")
+
+    def _loop_else(self, stmt, header, depth, loop, pending_break, pending_continue):
+        if not stmt.orelse:
+            return []
+        line = stmt.lineno
+        is_while = isinstance(stmt, ast.While)
+        entry = self.add(getattr(stmt.orelse[0], "lineno", line), line, "branch",
+                         "while-else" if is_while else "for-else", depth)
+        self.edge(header, entry, "exhausted")
+        if is_while:
+            self.edge(header, entry, "false")
+        return self.build(stmt.orelse, entry, depth, loop, pending_break, pending_continue)
 
     def _try(self, stmt, depth, loop, pending_break, pending_continue):
         line = stmt.lineno
@@ -310,12 +317,13 @@ def _block_members(leader, outgoing, leaders, block_of):
 
 
 def _block_record(block_id, members, by_id):
-    lines = [by_id[m]["line"] for m in members if by_id[m]["line"] is not None]
-    ends = [by_id[m]["end_line"] or by_id[m]["line"] or 0 for m in members]
+    nodes = [by_id[member] for member in members]
+    line = min((node["line"] for node in nodes if node["line"] is not None), default=None)
+    end_line = max((node["end_line"] or node["line"] or 0 for node in nodes), default=line)
     return {
         "id": block_id,
-        "line": min(lines) if lines else None,
-        "end_line": max(ends) if ends else (min(lines) if lines else None),
+        "line": line,
+        "end_line": end_line,
         "kinds": sorted({by_id[m]["kind"] for m in members}),
         "labels": [by_id[m]["label"] for m in members if by_id[m]["label"]],
         "size": len(members),
@@ -345,8 +353,6 @@ def _merge_blocks(flow):
 
     blocks, block_of = [], {}
     for leader in sorted(leaders):
-        if leader in block_of:
-            continue
         block_id = len(blocks) + 1
         members = _block_members(leader, outgoing, leaders, block_of)
         block_of[leader] = block_id
@@ -354,10 +360,16 @@ def _merge_blocks(flow):
             block_of[member] = block_id
         blocks.append(_block_record(block_id, members, by_id))
 
-    edges = sorted({(block_of[s], block_of[t], label) for s, t, label in flow.edges
-                    if block_of.get(s) is not None and block_of.get(t) is not None and block_of[s] != block_of[t]},
-                   key=lambda item: (item[0], item[1], item[2]))
-    return blocks, [list(edge) for edge in edges]
+    return blocks, _block_edges(flow.edges, block_of)
+
+
+def _block_edges(edges, block_of):
+    projected = set()
+    for source, target, label in edges:
+        start, end = block_of.get(source), block_of.get(target)
+        if start is not None and end is not None and start != end:
+            projected.add((start, end, label))
+    return [list(edge) for edge in sorted(projected)]
 
 
 def build_control_flow(node):
@@ -392,37 +404,47 @@ def build_control_flow(node):
     }
 
 
+def _record_name(table, name, line):
+    bucket = table.setdefault(name, set())
+    if isinstance(line, int) and line > 0:
+        bucket.add(line)
+
+
+def _record_variable(item, defs, uses):
+    if isinstance(item, ast.Name):
+        table = uses if isinstance(item.ctx, ast.Load) else defs
+        _record_name(table, item.id, item.lineno)
+    elif isinstance(item, ast.AugAssign) and isinstance(item.target, ast.Name):
+        _record_name(uses, item.target.id, item.lineno)  # a += 1 既读又写
+    else:
+        _record_special_binding(item, defs)
+
+
+def _record_special_binding(item, defs):
+    if isinstance(item, ast.NamedExpr) and isinstance(item.target, ast.Name):
+        _record_name(defs, item.target.id, item.lineno)
+    elif isinstance(item, ast.ExceptHandler) and item.name:
+        _record_name(defs, item.name, item.lineno)
+    elif isinstance(item, (ast.Global, ast.Nonlocal)):
+        for name in item.names:
+            _record_name(defs, name, item.lineno)
+
+
+def _record_parameters(node, defs):
+    args = node.args
+    regular = args.posonlyargs + args.args + args.kwonlyargs
+    variadic = [arg for arg in (args.vararg, args.kwarg) if arg]
+    for arg in regular + variadic:
+        _record_name(defs, arg.arg, getattr(arg, "lineno", node.lineno))
+    return sorted(arg.arg for arg in regular) + sorted(arg.arg for arg in variadic)
+
+
 def build_def_use(node):
-    """函数内变量的定义点与使用点。只统计 `Name`，属性/下标读写不计。"""
+    """函数内变量的定义点与使用点。只统计 Name，属性/下标读写不计。"""
     defs, uses = {}, {}
-
-    def add(table, name, line):
-        bucket = table.setdefault(name, set())
-        if isinstance(line, int) and line > 0:
-            bucket.add(line)
-
-    args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
-    for arg in args:
-        add(defs, arg.arg, getattr(arg, "lineno", node.lineno))
-    for arg in (node.args.vararg, node.args.kwarg):
-        if arg:
-            add(defs, arg.arg, getattr(arg, "lineno", node.lineno))
-
+    params = _record_parameters(node, defs)
     for item in own_walk(node):
-        if isinstance(item, ast.Name):
-            if isinstance(item.ctx, ast.Load):
-                add(uses, item.id, item.lineno)
-            else:
-                add(defs, item.id, item.lineno)
-        elif isinstance(item, ast.AugAssign) and isinstance(item.target, ast.Name):
-            add(uses, item.target.id, item.lineno)  # a += 1 既读又写
-        elif isinstance(item, ast.NamedExpr) and isinstance(item.target, ast.Name):
-            add(defs, item.target.id, item.lineno)
-        elif isinstance(item, ast.ExceptHandler) and item.name:
-            add(defs, item.name, item.lineno)
-        elif isinstance(item, (ast.Global, ast.Nonlocal)):
-            for name in item.names:
-                add(defs, name, item.lineno)
+        _record_variable(item, defs, uses)
 
     names = sorted(set(defs) | set(uses))
     truncated = len(names) > MAX_DEF_USE_NAMES
@@ -431,9 +453,6 @@ def build_def_use(node):
     for name in names:
         entry = {"name": name, "defs": sorted(defs.get(name, ())), "uses": sorted(uses.get(name, ()))}
         entries.append(entry)
-    params = sorted(arg.arg for arg in args) + sorted(
-        arg.arg for arg in (node.args.vararg, node.args.kwarg) if arg
-    )
     return {
         "available": True,
         "names": entries,

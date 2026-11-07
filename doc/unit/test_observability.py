@@ -1,8 +1,12 @@
 """Privacy and structure guarantees for the local API logger."""
+import io
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import redirect_stderr
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "code"))
@@ -15,6 +19,13 @@ class RedactionTests(unittest.TestCase):
         for marker in ("SENTINEL_KEY", "SENTINEL_TOKEN", "abc.def-ghi"):
             self.assertNotIn(marker, cleaned)
         self.assertIn("<redacted>", cleaned)
+
+    def test_json_credentials_with_spaces_and_escaped_quotes_are_scrubbed(self):
+        message = json.dumps({"api_key": 'BEFORE "AFTER" TAIL', "token": "PRIVATE", "status": 500})
+        cleaned = obs.redact(message)
+        for marker in ("BEFORE", "AFTER", "TAIL", "PRIVATE"):
+            self.assertNotIn(marker, cleaned)
+        self.assertIn("500", cleaned)
 
     def test_control_chars_and_length_limit(self):
         cleaned = obs.redact("a\n\tb\x00" + "x" * 500, limit=60)
@@ -84,3 +95,31 @@ class FileLoggingTests(unittest.TestCase):
         second = obs.configure_logging("ERROR", str(self.path))
         self.assertIs(first, second)
         self.assertEqual(len(first.handlers), 2)
+
+    def test_file_open_failure_keeps_console_logging_and_hides_path(self):
+        with redirect_stderr(io.StringIO()) as console, patch.object(
+            obs.logging.handlers, "RotatingFileHandler",
+            side_effect=PermissionError("cannot open PRIVATE_DIAGNOSTICS_PATH"),
+        ):
+            logger = obs.configure_logging("invalid-level", str(self.path))
+            logger.info("still running")
+        self.assertEqual(len(logger.handlers), 1)
+        self.assertIn("file log disabled", console.getvalue())
+        self.assertIn("still running", console.getvalue())
+        self.assertNotIn("PRIVATE_DIAGNOSTICS_PATH", console.getvalue())
+
+    def test_missing_log_directory_is_nonfatal(self):
+        with redirect_stderr(io.StringIO()) as console:
+            logger = obs.configure_logging("INFO", str(self.path.parent / "missing" / "api.log"))
+        self.assertEqual(len(logger.handlers), 1)
+        self.assertIn("file log disabled", console.getvalue())
+
+    def test_child_logger_respects_environment_level(self):
+        with patch.dict(obs.os.environ, {"CODELENS_LOG_LEVEL": "WARNING", "CODELENS_LOG_FILE": ""}):
+            with redirect_stderr(io.StringIO()) as console:
+                logger = obs.get_logger("http")
+                logger.info("filtered-out")
+                logger.warning("survives")
+        self.assertEqual(logger.name, "codelens.http")
+        self.assertIn("survives", console.getvalue())
+        self.assertNotIn("filtered-out", console.getvalue())

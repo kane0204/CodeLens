@@ -30,22 +30,7 @@ export function SourceDialog() {
         <p className="text-[12px] text-muted">分析结果中没有该文件的源码。</p>
       ) : (
         <>
-          <div className="scroll-thin max-h-[56vh] overflow-auto rounded-[4px] border border-line bg-[#fdfbf8] py-2">
-            <div className="source-block">
-              {file.source.split('\n').map((line, index) => {
-                const number = index + 1;
-                const start = target ? target.line : 1;
-                const end = target ? target.endLine : 1;
-                const inRange = number >= start && number <= end;
-                return (
-                  <div key={number} className={`source-line ${inRange ? 'hl' : ''}`}>
-                    <span className="ln">{number}</span>
-                    <code>{line || ' '}</code>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <SourceLines source={file.source} start={target?.line ?? 1} end={target?.endLine ?? 1} />
           <p className="mt-2 flex items-center gap-1.5 text-[10.5px] text-faint">
             <Icon name="info" size={12} />
             引用来自本次提交给引擎的源码，超出范围的引用不会被标记为有效。
@@ -53,6 +38,31 @@ export function SourceDialog() {
         </>
       )}
     </Modal>
+  );
+}
+
+interface SourceLinesProps {
+  source: string;
+  start: number;
+  end: number;
+}
+
+function SourceLines({ source, start, end }: SourceLinesProps) {
+  return (
+    <div className="scroll-thin max-h-[56vh] overflow-auto rounded-[4px] border border-line bg-[#fdfbf8] py-2">
+      <div className="source-block">
+        {source.split('\n').map((line, index) => {
+          const number = index + 1;
+          const inRange = number >= start && number <= end;
+          return (
+            <div key={number} className={`source-line ${inRange ? 'hl' : ''}`}>
+              <span className="ln">{number}</span>
+              <code>{line || ' '}</code>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

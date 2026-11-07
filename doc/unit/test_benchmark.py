@@ -5,7 +5,8 @@ from pathlib import Path
 
 class BenchmarkTests(unittest.TestCase):
     def test_reviewed_samples_match_labels(self):
-        spec = importlib.util.spec_from_file_location('evaluate_solid', Path(__file__).resolve().parents[1] / 'evaluate_solid.py')
+        benchmark = Path(__file__).resolve().parents[2] / 'tests' / 'evaluate_solid.py'
+        spec = importlib.util.spec_from_file_location('evaluate_solid', benchmark)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         report = module.evaluate()

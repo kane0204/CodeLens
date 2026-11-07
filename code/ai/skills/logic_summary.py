@@ -133,6 +133,25 @@ class LogicSummary(Skill):
                 name, piece.get("line"), piece.get("end_line"), signature, len(ctx["statements"])),
             head_evidence, kind="responsibility", confidence="high"))
 
+        claims.extend(self._step_claims(ctx, rows, dropped_middle))
+
+        flow_claim = self._flow_claim(ctx, rows)
+        if flow_claim:
+            claims.append(flow_claim)
+
+        claims.extend(self._side_effect_claims(ctx))
+
+        callers_claim = self._callers_claim(ctx)
+        if callers_claim:
+            claims.append(callers_claim)
+
+        steps = ["第 {} 行：{}".format(item.get("line"), item.get("description")) for item in rows]
+        headline = self._headline(ctx, name)
+        return self.envelope(ctx, claims, {"headline": headline, "steps": steps[:MAX_STEPS]},
+                             notes=["步骤文字由语句类型与已解析调用生成，未推断变量含义。"])
+
+    def _step_claims(self, ctx, rows, dropped_middle):
+        claims = []
         for position, item in enumerate(rows, start=1):
             claims.append(contract.claim(
                 "{}第 {} 行：{}。".format(base.ordinal(position), item.get("line"), item.get("description")),
@@ -144,29 +163,21 @@ class LogicSummary(Skill):
                 "函数语句较多，中间部分已省略，只保留开头与结尾的关键步骤；完整轨迹请看法制视图的语句列表。",
                 [base.statement_ref(ctx["ident"], rows[-1].get("line")), "def:" + ctx["ident"]],
                 kind="step", confidence="medium"))
+        return claims
 
-        flow_claim = self._flow_claim(ctx, rows)
-        if flow_claim:
-            claims.append(flow_claim)
+    def _headline(self, ctx, name):
+        flow = ctx["flow"]
+        branches = len(flow.get("blocks") or []) - 1
+        suffix = "，{} 处分支".format(branches) if flow.get("available") and branches > 0 else ""
+        return base.short("{}：{} 条语句{}".format(name, len(ctx["statements"]), suffix), 120)
 
+    def _side_effect_claims(self, ctx):
         for call in ctx["side_effects"][:2]:
-            claims.append(contract.claim(
+            yield contract.claim(
                 "第 {} 行调用了 {}，这一步会改动外部状态，不只是算值。".format(
                     call.get("line"), call.get("expression")),
                 ["call:{}#{}".format(call.get("file"), call.get("line")), "def:" + ctx["ident"]],
-                kind="side_effect", confidence="high"))
-
-        callers_claim = self._callers_claim(ctx)
-        if callers_claim:
-            claims.append(callers_claim)
-
-        steps = ["第 {} 行：{}".format(item.get("line"), item.get("description")) for item in rows]
-        flow = ctx["flow"]
-        headline = base.short("{}：{} 条语句{}".format(
-            name, len(ctx["statements"]),
-            "，{} 处分支".format(len(flow.get("blocks") or []) - 1) if flow.get("available") and len(flow.get("blocks") or []) > 1 else ""), 120)
-        return self.envelope(ctx, claims, {"headline": headline, "steps": steps[:MAX_STEPS]},
-                             notes=["步骤文字由语句类型与已解析调用生成，未推断变量含义。"])
+                kind="side_effect", confidence="high")
 
     def prompt(self, ctx):
         rendered = ["第 {} 行：{}".format(item.get("line"), item.get("description"))

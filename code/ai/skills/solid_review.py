@@ -19,6 +19,11 @@ ADVICE = {
 }
 
 
+def _class_methods(index, entry):
+    methods = (index.functions.get(ident) for ident in entry.get("methods") or [])
+    return [method for method in methods if method]
+
+
 class SolidReview(Skill):
     id = "solid-review"
     title = "SOLID 复核"
@@ -52,8 +57,7 @@ class SolidReview(Skill):
         return {"ref": ref, "ident": ident, "definition": definition, "class": entry,
                 "path": path, "line": line, "end_line": end_line,
                 "module": env["index"].module_of(path),
-                "methods": [env["index"].functions.get(m) for m in entry.get("methods") or []
-                            if env["index"].functions.get(m)],
+                "methods": _class_methods(env["index"], entry),
                 "findings": findings, "rule_ids": sorted({item.get("rule_id") for item in findings}),
                 "metrics": metrics}
 

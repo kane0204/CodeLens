@@ -81,7 +81,7 @@ cd codelens-prototype && npm install && npm run dev   # 终端 2：界面，loca
 
 SOLID 检查覆盖 S（方法数线索）、O（类型分派线索）、L（覆盖方法签名/绑定/同步异步/显式拒绝）、I（多方法继承契约中显式拒绝成员）、D（已解析的具体类构造依赖）。未命中不等于符合原则；外部父类、多继承、自定义装饰器等覆盖缺口会单独展示。详细规则见 [SOLID 分析说明](docs/software/solid-analysis.md)。
 
-当前已提供文件/符号统计、函数复杂度与健康度、WMC/DIT/CBO/LCOM1 类指标、SOLID 五项静态检查、结构重复检测、模块依赖与循环、调用图和类关系图（继承/组合/关联/依赖）。逻辑说明支持跨文件 AI 解读及已校验行号跳转；报告支持 Markdown/JSON/CSV，图支持 SVG。没有预置项目或模拟结果。静态分析不能证明完整运行时行为契约，也不覆盖所有语义等价重复。
+当前已提供文件/符号统计、函数复杂度与健康度、WMC/DIT/CBO/LCOM1 类指标、SOLID 五项静态检查、结构重复检测、模块依赖与循环、调用图和类关系图（继承/组合/关联/依赖）。逻辑说明、设计检查、风险评估共享同一份全项目 AI 审查结果，引用行号经范围校验；报告从顶栏导出 Markdown/JSON/CSV。没有预置项目或模拟结果。静态分析不能证明完整运行时行为契约，也不覆盖所有语义等价重复。
 
 静态分析仅在本机服务内存中完成，不执行或导入目标项目。导入时选择的项目源码会分批发送到配置的模型服务用于 AI 项目审查；未配置模型或审查失败时静态结果照常可用，不使用模板替代失败结果。最多 200 个文件、请求体 12 MB；默认排除测试、虚拟环境和构建目录。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
 
@@ -124,7 +124,7 @@ CodeLens/
 | [docs/requirements/problem_definition.md](docs/requirements/problem_definition.md) | 问题定义：5W1H 与产品描述 |
 | [docs/mgmt/backlog.md](docs/mgmt/backlog.md) | 迭代 Backlog 与验收标准 |
 | [docs/algorithm/README.md](docs/algorithm/README.md) | 算法文档规划（逻辑抽取、图、指标、规则） |
-| [docs/software/README.md](docs/software/README.md) | 软件设计文档规划 |
+| [docs/software/README.md](docs/software/README.md) | 软件设计文档索引与当前架构概览 |
 | [docs/software/local-workbench.md](docs/software/local-workbench.md) | 本地真实分析工作台、接口与限制 |
 | [docs/mgmt/project-setup.md](docs/mgmt/project-setup.md) | 看板、标签、里程碑配置 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |

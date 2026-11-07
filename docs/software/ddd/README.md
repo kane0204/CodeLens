@@ -194,7 +194,7 @@ python -B -m unittest discover -s docs/software/ddd -p 'test_domain_model.py' -v
 
 | 层次 | 方案 | 选择理由与边界 |
 |---|---|---|
-| 用户入口 | 原生 HTML/CSS/JS，本机 HTTP | 与现有工作台一致，选择目录并只向同源服务提交源码 |
+| 用户入口 | Vite + React（`codelens-prototype/`，5173） | 初始化页选择项目目录，向本机 18766 的 JSON API 提交源码；AI 审查另由用户配置模型服务 |
 | 接口/应用层 | 当前标准库 HTTP 适配器；应用服务编排 | 校验请求、映射 DTO、调用领域服务；正式 FastAPI 为后续计划 |
 | 核心计算 | Python 3.11 语法 AST、名称绑定、图与指标算法 | 确定性、可测试、不执行目标代码；不确定关系不伪造 |
 | 质量领域服务 | 固定规则与阈值、统一证据契约 | 当前 CC-01、LEN-01、DEPTH-01、A4、A3-IO、CYCLE-01；不声称覆盖全部坏味或 SOLID |

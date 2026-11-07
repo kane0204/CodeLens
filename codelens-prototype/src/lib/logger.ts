@@ -10,6 +10,8 @@ export interface LogEntry {
 }
 
 const MAX_ENTRIES = 200;
+const MAX_PERSISTED = 100;
+const STORAGE_KEY = 'codelens.diag.v1';
 const MAX_TEXT = 200;
 const SENSITIVE_KEY = /(api[_-]?key|token|secret|password|authorization|project|file[_-]?(?:name|path)|^file$|source|content|payload|body)/i;
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/g;
@@ -42,6 +44,49 @@ function safeContext(context?: Record<string, unknown>): LogEntry['context'] {
 
 class ClientLogger {
   private buffer: LogEntry[] = [];
+  private persisted: LogEntry[] = [];
+
+  constructor() {
+    this.restore();
+  }
+
+  /** Recover pre-crash records after a reload so diagnostics survive a white screen. */
+  private restore(): void {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const valid = parsed
+        .filter(
+          (item): item is LogEntry =>
+            Boolean(item) &&
+            typeof item === 'object' &&
+            typeof (item as LogEntry).ts === 'string' &&
+            typeof (item as LogEntry).message === 'string' &&
+            typeof (item as LogEntry).level === 'string',
+        )
+        .slice(-MAX_PERSISTED);
+      this.persisted = valid;
+      this.buffer = [...valid];
+    } catch {
+      // Storage disabled or corrupted: in-memory logging still works.
+    }
+  }
+
+  /** Synchronous write, so a killed tab does not lose the most recent events. */
+  private persist(entry: LogEntry): void {
+    if (entry.level === 'debug') return;
+    this.persisted.push(entry);
+    if (this.persisted.length > MAX_PERSISTED) {
+      this.persisted.splice(0, this.persisted.length - MAX_PERSISTED);
+    }
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.persisted));
+    } catch {
+      // Quota or privacy mode: keep the in-memory buffer only.
+    }
+  }
 
   write(level: LogLevel, scope: string, message: string, context?: Record<string, unknown>): void {
     const entry: LogEntry = {
@@ -55,6 +100,7 @@ class ClientLogger {
     if (this.buffer.length > MAX_ENTRIES) {
       this.buffer.splice(0, this.buffer.length - MAX_ENTRIES);
     }
+    this.persist(entry);
     if (import.meta.env.DEV || level === 'warn' || level === 'error') {
       const sink = level === 'error' ? console.error : level === 'warn' ? console.warn : console.debug;
       sink(`[codelens:${scope}] ${entry.message}`, entry.context ?? '');
@@ -84,8 +130,18 @@ class ClientLogger {
     }));
   }
 
+  restoredCount(): number {
+    return this.persisted.length;
+  }
+
   clear(): void {
     this.buffer = [];
+    this.persisted = [];
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // ignore
+    }
   }
 
   /** Export the ring buffer as a local JSON file; nothing is sent to a server. */
@@ -116,6 +172,7 @@ let attached = false;
 export function attachGlobalErrorHandlers(): void {
   if (attached || typeof window === 'undefined') return;
   attached = true;
+  logger.info('app', 'session.started', { restored: logger.restoredCount() });
   window.addEventListener('error', (event) => {
     logger.error('window', 'uncaught_error', {
       message: event.message,
@@ -124,5 +181,8 @@ export function attachGlobalErrorHandlers(): void {
   });
   window.addEventListener('unhandledrejection', (event) => {
     logger.error('window', 'unhandled_rejection', { message: reasonText(event.reason) });
+  });
+  window.addEventListener('pagehide', () => {
+    logger.info('app', 'session.ended');
   });
 }

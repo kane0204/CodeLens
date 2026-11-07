@@ -10,6 +10,7 @@ echo   CodeLens - React workbench
 echo   OPEN THIS ADDRESS : %UIURL%
 echo   Backend API       : %APIURL%
 echo   NOTE: 18766 serves JSON API only. The UI is at 5173.
+echo   Logs             : %CD%\logs\codelens.log
 echo ============================================================
 echo.
 

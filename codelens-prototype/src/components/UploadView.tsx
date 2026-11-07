@@ -257,7 +257,7 @@ function ImportFeedback() {
   return (
     <>
       <p className="mt-3 text-[10.5px] leading-relaxed text-faint">
-        最多 {LIMITS.maxFiles} 个源码文件；单文件 ≤1MB；总量 ≤8MB（{formatBytes(LIMITS.maxTotalBytes)}）。
+        最多 {LIMITS.maxFiles} 个源码文件；单文件 ≤{formatBytes(LIMITS.maxFileBytes)}；总量 ≤{formatBytes(LIMITS.maxTotalBytes)}。
       </p>
 
       {errors.length ? (

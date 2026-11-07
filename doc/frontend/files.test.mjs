@@ -68,7 +68,7 @@ test('file and project byte caps are inclusive and enforced independently', () =
   const fileOverflow = prepareSelection([source('demo/large.py', new Uint8Array(largest.length + 1))]);
   assert.deepEqual(fileOverflow.files, []);
   assert.equal(fileOverflow.errors.length, 1);
-  assert.match(fileOverflow.errors[0], /demo\/large\.py.*超过 1MB/);
+  assert.match(fileOverflow.errors[0], /demo\/large\.py.*超过 1\.00 MB/);
 });
 
 test('file input uses relative paths with a filename fallback', () => {

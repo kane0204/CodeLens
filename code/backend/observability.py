@@ -10,32 +10,37 @@ Invariants — do not relax these when adding new log sites:
 * Exception messages are sanitised and truncated; tracebacks are reduced to
   frame names, never source lines.
 
-Configuration (all optional):
+File logging is ON by default: ``<repo>/logs/codelens.log`` (directory created
+automatically, 5 MiB x 5 rotation). It exists so a crashed process still leaves
+a trace. Override or disable:
 
-* ``CODELENS_LOG_LEVEL``  DEBUG / INFO / WARNING / ERROR (default INFO)
-* ``CODELENS_LOG_FILE``   absolute path; enables a 1 MiB x 3 rotating file log.
-                         If it cannot be opened, the process keeps running with
-                         console logging only.
+* ``--log-file <path>`` / ``CODELENS_LOG_FILE``   replace the default path
+* ``--no-log-file`` / ``CODELENS_LOG_DISABLE_FILE=1``   console only
+* ``--log-level`` / ``CODELENS_LOG_LEVEL``   DEBUG / INFO / WARNING / ERROR
 """
 from __future__ import annotations
 
+import atexit
 import logging
 import logging.handlers
 import os
 import re
 import secrets
+import sys
 import threading
 import traceback
 from pathlib import Path
 from typing import Any
 
 LOGGER_NAME = "codelens"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_LOG_FILE = REPO_ROOT / "logs" / "codelens.log"
 MAX_MESSAGE = 200
-MAX_FILE_BYTES = 1024 * 1024
-BACKUP_COUNT = 3
+MAX_FILE_BYTES = 5 * 1024 * 1024
+BACKUP_COUNT = 5
 
 LEVELS = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING,
-           "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
+          "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
 _API_PATHS = frozenset({"/api/status", "/api/ai/status", "/api/analyze", "/api/ai",
                         "/api/explain", "/api/review"})
 
@@ -51,9 +56,12 @@ _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-]+")
 _SENSITIVE_FIELD = re.compile(
     r"(?i)(project|filename|file_path|filepath|source|content|payload|body|code|api[_-]?key|token|secret)"
 )
+_DISABLE_VALUES = {"1", "true", "yes", "on"}
 
 _LOCK = threading.Lock()
 _CONFIGURED = False
+_HOOKS_INSTALLED = False
+ACTIVE_LOG_FILE: Path | None = None
 
 
 def new_id() -> str:
@@ -105,9 +113,10 @@ def _build_formatter() -> logging.Formatter:
     )
 
 
-def configure_logging(level: str | None = None, log_file: str | None = None) -> logging.Logger:
+def configure_logging(level: str | None = None, log_file: str | None = None,
+                      enable_file: bool = True) -> logging.Logger:
     """Idempotent, thread-safe setup. Returns the shared ``codelens`` logger."""
-    global _CONFIGURED
+    global _CONFIGURED, ACTIVE_LOG_FILE
     with _LOCK:
         logger = logging.getLogger(LOGGER_NAME)
         if _CONFIGURED:
@@ -124,26 +133,43 @@ def configure_logging(level: str | None = None, log_file: str | None = None) -> 
         console.addFilter(privacy)
         logger.addHandler(console)
 
-        target = log_file if log_file is not None else os.environ.get("CODELENS_LOG_FILE")
-        if target:
-            try:
-                path = Path(target).expanduser()
-                if not path.parent.is_dir():
-                    raise OSError("log directory does not exist")
-                file_handler = logging.handlers.RotatingFileHandler(
-                    path, maxBytes=MAX_FILE_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8",
-                )
-                file_handler.setFormatter(formatter)
-                file_handler.addFilter(privacy)
-                logger.addHandler(file_handler)
-            except OSError as exc:
-                # Logging must never prevent the API from starting.
-                logger.warning("file log disabled path=%s reason=%s", "<redacted>", type(exc).__name__)
-            else:
-                logger.info("file log enabled path=%s", "<redacted>")
+        target = _file_log_target(log_file, enable_file)
+        ACTIVE_LOG_FILE = _attach_file_log(logger, target, formatter, privacy) if target else None
 
         _CONFIGURED = True
         return logger
+
+
+def _file_log_target(log_file: str | None, enable_file: bool) -> str | None:
+    disabled = os.environ.get("CODELENS_LOG_DISABLE_FILE", "").strip().lower() in _DISABLE_VALUES
+    if not enable_file or disabled:
+        return None
+    target = log_file if log_file is not None else os.environ.get("CODELENS_LOG_FILE")
+    return str(DEFAULT_LOG_FILE) if target is None else target
+
+
+def _attach_file_log(logger, target, formatter, privacy) -> Path | None:
+    try:
+        path = Path(target).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            path, maxBytes=MAX_FILE_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.addFilter(privacy)
+        logger.addHandler(file_handler)
+    except OSError as exc:
+        # Do not disclose filesystem paths from OS exceptions.
+        logger.warning("file log disabled reason=%s", type(exc).__name__)
+        return None
+    logger.info("file log enabled rotation_mb=%s backups=%s",
+                MAX_FILE_BYTES // (1024 * 1024), BACKUP_COUNT)
+    return path
+
+
+def active_log_file() -> Path | None:
+    """Where the process currently writes its file log (None = console only)."""
+    return ACTIVE_LOG_FILE
 
 
 def get_logger(suffix: str | None = None) -> logging.Logger:
@@ -154,13 +180,23 @@ def get_logger(suffix: str | None = None) -> logging.Logger:
 
 def reset_for_tests() -> None:
     """Drop handlers so a test can reconfigure with its own level/file."""
-    global _CONFIGURED
+    global _CONFIGURED, ACTIVE_LOG_FILE
     with _LOCK:
         logger = logging.getLogger(LOGGER_NAME)
         for handler in list(logger.handlers):
             handler.close()
             logger.removeHandler(handler)
+        ACTIVE_LOG_FILE = None
         _CONFIGURED = False
+
+
+def flush_all(logger: logging.Logger) -> None:
+    """Force buffered records to disk before a crash terminates the process."""
+    for handler in list(logger.handlers):
+        try:
+            handler.flush()
+        except Exception:  # a broken sink must not hide the original crash
+            pass
 
 
 def exception_summary(exc: BaseException) -> dict[str, str]:
@@ -210,3 +246,50 @@ def log_request(logger: logging.Logger, *, method: str, path: str, status: int,
 
 def log_event(logger: logging.Logger, level: int, event: str, **context: Any) -> None:
     logger.log(level, "event name=%s %s", event, format_fields(context))
+
+
+def install_crash_hooks(logger: logging.Logger) -> None:
+    """Persist uncaught / thread / process-exit traces for post-mortem debugging.
+
+    ThreadingHTTPServer handles each request in its own thread, so
+    ``threading.excepthook`` matters as much as ``sys.excepthook`` here.
+    """
+    global _HOOKS_INSTALLED
+    with _LOCK:
+        if _HOOKS_INSTALLED:
+            return
+        _HOOKS_INSTALLED = True
+
+    previous_uncaught = sys.excepthook
+    previous_thread = threading.excepthook
+
+    def on_uncaught(exc_type, exc, tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            log_event(logger, logging.INFO, "process_exit", reason="keyboard_interrupt")
+            flush_all(logger)
+            previous_uncaught(exc_type, exc, tb)
+            return
+        log_exception(logger, exc, new_id(), event="uncaught")
+        flush_all(logger)
+        previous_uncaught(exc_type, exc, tb)
+
+    def on_thread(args):
+        exc = args.exc_value or Exception("unknown thread failure")
+        log_exception(logger, exc, new_id(), event="thread_uncaught",
+                      thread=args.thread.name if args.thread else "-")
+        flush_all(logger)
+        previous_thread(args)
+
+    def on_exit():
+        # Handlers may already be closed (e.g. by a test harness).
+        if not logger.handlers:
+            return
+        exc = sys.exc_info()[1]
+        if exc is not None and not isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            log_exception(logger, exc, new_id(), event="process_exit")
+        log_event(logger, logging.INFO, "process_exit", pid=os.getpid())
+        flush_all(logger)
+
+    sys.excepthook = on_uncaught
+    threading.excepthook = on_thread
+    atexit.register(on_exit)

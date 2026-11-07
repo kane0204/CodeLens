@@ -15,7 +15,8 @@ from backend import server
 
 class RequestTests(unittest.TestCase):
     def setUp(self):
-        self.logger = Mock()
+        self.logger = Mock(handlers=[])
+        self.crash_hooks = self.enterContext(patch.object(server.obs, "install_crash_hooks"))
         for name in ("get_logger", "configure_logging"):
             configure = patch.object(server.obs, name, return_value=self.logger)
             configure.start()
@@ -247,6 +248,7 @@ class RequestTests(unittest.TestCase):
                 patch.object(server, "ThreadingHTTPServer", return_value=listener) as create, \
                 redirect_stdout(io.StringIO()) as output:
             server.main()
+        self.crash_hooks.assert_called_once_with(self.logger)
         create.assert_called_once_with(("127.0.0.1", 12345), server.Handler)
         listener.server_close.assert_called_once()
         self.assertIn("127.0.0.1:12345", output.getvalue())

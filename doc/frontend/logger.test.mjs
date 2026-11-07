@@ -70,9 +70,56 @@ test('global error handlers attach once and redact browser errors', () => {
   for (const reason of [new Error('token=DO_NOT_LOG'), { secret: 'DO_NOT_LOG' }]) {
     browser.dispatchEvent(Object.assign(new Event('unhandledrejection'), { reason }));
   }
+  browser.dispatchEvent(new Event('pagehide'));
   assert.deepEqual(logger.entries().map(({ message, context }) => [message, context]), [
+    ['session.started', { restored: 0 }],
     ['uncaught_error', { message: 'password=<redacted>', line: 12 }],
     ['unhandled_rejection', { message: 'token=<redacted>' }],
     ['unhandled_rejection', { message: '<object>' }],
+    ['session.ended', undefined],
   ]);
+});
+
+const storageKey = 'codelens.diag.v1';
+
+function stubDiagnosticStorage() {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  vi.stubGlobal('window', { localStorage: storage });
+  return storage;
+}
+
+test('the last 100 sanitized non-debug events persist and restore on reload', async () => {
+  const storage = stubDiagnosticStorage();
+  for (let index = 0; index < 102; index += 1) logger.info('unit', 'message ' + index);
+  logger.debug('unit', 'memory-only');
+  logger.warn('unit', 'token=PRIVATE', { source: 'PRIVATE' });
+  const snapshot = storage.getItem(storageKey);
+  assert.doesNotMatch(snapshot, /PRIVATE|memory-only/);
+  const saved = JSON.parse(snapshot);
+  assert.equal(saved.length, 100);
+  assert.equal(saved[0].message, 'message 3');
+  assert.equal(saved.at(-1).message, 'token=<redacted>');
+
+  storage.setItem(storageKey, JSON.stringify([...saved, null, { level: 'warn' }]));
+  vi.resetModules();
+  const { logger: reloaded } = await import('../../codelens-prototype/src/lib/logger.ts');
+  assert.equal(reloaded.restoredCount(), 100);
+  assert.equal(reloaded.entries().at(-1).context.source, '<redacted>');
+  reloaded.clear();
+  assert.equal(storage.getItem(storageKey), null);
+});
+
+test.each(['broken JSON', '{"message":"not a list"}'])('restore tolerates invalid storage %s', async (raw) => {
+  const storage = stubDiagnosticStorage();
+  storage.setItem(storageKey, raw);
+  vi.resetModules();
+  const { logger: reloaded } = await import('../../codelens-prototype/src/lib/logger.ts');
+  assert.deepEqual(reloaded.entries(), []);
+  reloaded.info('unit', 'new session');
+  assert.equal(JSON.parse(storage.getItem(storageKey))[0].message, 'new session');
 });

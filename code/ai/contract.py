@@ -25,7 +25,7 @@ SKILLS = {
     "logic-summary": {"version": "1.0.0", "title": "代码逻辑总结"},
     "class-node-name": {"version": "1.0.0", "title": "类图节点名"},
     "ai-risk-review": {"version": "1.0.0", "title": "AI 特有风险审查"},
-    "solid-review": {"version": "1.0.0", "title": "SOLID 复核"},
+    "solid-review": {"version": "2.0.0", "title": "SOLID 复核"},
 }
 
 #: 信封状态。`need_more` 只能由"单个子任务内部"抛出，用来申请补一次上下文，

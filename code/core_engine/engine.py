@@ -10,7 +10,7 @@ import re
 import tokenize
 from pathlib import PurePosixPath
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", "build", "dist", "tests"}
 MAX_FILES = 200
 MAX_FILE_BYTES = 1024 * 1024
@@ -22,8 +22,8 @@ LIMITATIONS = [
     "CC 使用已公开的 AST 判定计数口径，尚未完成与 radon 的全量对拍。",
     "A3-IO 仅检查内置 open 的局部 OSError 捕获；上层异常处理需人工复核。",
     "A4 仅检查敏感变量名与非占位字符串赋值；不验证凭据有效性，不能覆盖所有敏感信息。",
-    "facts.py 提供的基本块 CFG 与 def-use 已可用于表达层解释，但尚未纳入 findings 判定，也未做时序图。",
-    "SOLID 只由 rules.py 在 AI 表达层补充 S/O/D 三条的可复算计数，engine 本身不产出 SOLID 结论；重复代码与综合健康度评分未实现。",
+    "facts.py 提供基本块 CFG 与 def-use；静态调用序列不代表运行时执行顺序。",
+    "analyze() 返回基础事实；工作台由 rules/quality/health/sequence 补充 SOLID 五项、类指标、结构重复、健康度及静态调用序列。",
 ]
 
 

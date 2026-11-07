@@ -237,10 +237,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
 
+        # If the browser aborts mid-review, keep the job running server-side:
+        # per-batch checkpoints let a later retry resume (see ai.explanation.review).
+        disconnected = False
+
         def emit(event):
-            line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
-            self.wfile.write(line)
-            self.wfile.flush()
+            nonlocal disconnected
+            if disconnected:
+                return
+            try:
+                line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+                self.wfile.write(line)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                disconnected = True
 
         try:
             result = explanation.review(payload, progress=emit)

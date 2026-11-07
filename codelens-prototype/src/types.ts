@@ -289,7 +289,7 @@ export interface AiReviewResult {
 }
 
 export interface AiReviewProgress {
-  stage: 'analyze' | 'read' | 'review';
+  stage: 'analyze' | 'read' | 'review' | 'resume';
   done: number;
   total: number;
   label: string;

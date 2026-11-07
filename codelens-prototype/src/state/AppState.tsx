@@ -337,9 +337,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return review;
       } catch (error) {
         if (isAbortError(error)) {
-          setReviewError('已取消本次 AI 审查。');
+          setReviewError('已中断。服务端已保留已完成的批次，点击「重新生成」将从断点续跑，不会重复消耗已读内容。');
         } else {
-          setReviewError(errorText(error, 'AI 审查失败，请检查模型配置后重试。'));
+          const message = errorText(error, 'AI 审查失败，请检查模型配置后重试。');
+          setReviewError(`${message}（已完成的批次已保存在服务端，重试将从断点继续）`);
         }
         return null;
       } finally {

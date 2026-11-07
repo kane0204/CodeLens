@@ -1,12 +1,16 @@
-# 本地分析工作台（当前实现）
+# 本地分析工作台（旧版 HTML 界面，已归档）
 
-Python 3.11+，运行服务只使用标准库。在项目根目录执行 `python -B code/backend/server.py`，打开终端显示的地址（默认 18766）。Windows 可双击 start-codelens.cmd。修改后端后需停止旧进程并重启；前端依据 API revision 与能力清单识别不兼容后台。
+> 归档说明：本文记录已删除的 `code/frontend/` 旧版 HTML 工作台（2026-11-07 移除）。当前界面是
+> `codelens-prototype/`（Vite + React，5173），后端 18766 只提供 JSON API；启动方式见仓库根 README。
+> 下文关于「页面」的描述仅对旧版有效，不作为当前界面依据。
+
+Python 3.11+，运行服务只使用标准库。在项目根目录执行 `python -B code/backend/server.py` 启动 JSON API（默认 18766）。Windows 可双击 start-codelens.cmd。修改后端后需停止旧进程并重启；前端依据 API revision 与能力清单识别不兼容后台。
 
 ## 架构与数据流
 
 `engine.analyze` 负责 Python AST 基础事实；`rules` 补充 SOLID 五项及风险规则；`quality` 补充类指标、重复和类关系；`health` 与 `sequence` 补充评分及静态调用序列。`server.enrich` 组装工作台结果。
 
-页面仅加载 app.js 与 styles.css，无 npm/CDN 运行依赖。lib/layout.js 的确定性布局仍有独立回归测试；其他 lib/views/features 文件是旧版实现，不是当前页面的加载依赖。当前页面路由、导入、展示和导出在 app.js 中。
+界面是独立的 `codelens-prototype/`，通过 18766 的 `/api/*` 消费上述结果；后端不再托管任何静态页面。
 
 ## 当前页面
 
@@ -45,10 +49,6 @@ POST 使用本机 Host、Origin 和 X-CodeLens-Token 校验。请求体上限 12
 
 ```sh
 python -B -m unittest discover -s tests -p 'test_*.py' -v
-node tests/integration/test_logic_frontend.cjs
-node tests/integration/test_solid_frontend.cjs
-node tests/integration/test_frontend.cjs
 python -B tests/evaluate_solid.py
+cd codelens-prototype && npm ci && npm run build
 ```
-
-浏览器测试需 Node.js 22+ 和本机 Chromium/Edge，可用 CODELENS_BROWSER 指定可执行路径。测试会启动独立临时服务、假模型与无头浏览器，不调用真实模型、不使用真实密钥，覆盖目录导入、分页拖拽排除、分析、解读、引用、导出、失败/取消及后台不兼容。

@@ -27,12 +27,12 @@ jobs:
           node-version: '22'
       - name: Python 引擎与本机接口回归
         run: python -B -m unittest discover -s tests -p 'test_*.py' -v
-      - name: 前端语法与真实数据链路
+      - name: React 界面类型检查与构建
+        if: matrix.python-version == '3.13'
+        working-directory: codelens-prototype
         run: |
-          node --check code/frontend/app.js
-          node tests/integration/test_logic_frontend.cjs
-          node tests/integration/test_solid_frontend.cjs
-          node tests/integration/test_frontend.cjs
+          npm ci
+          npm run build
 
   repo-check:
     name: 仓库结构与文档检查
@@ -53,8 +53,8 @@ jobs:
             docs/mgmt
             docs/retrospection
             code/backend
-            code/frontend
             code/core_engine
+            codelens-prototype
             tests/unit
             tests/integration
             .github/workflows

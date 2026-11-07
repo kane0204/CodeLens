@@ -79,10 +79,12 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code,403)
         ctx.exception.close()
 
-    def test_static_allowlist(self):
-        with urllib.request.urlopen(self.origin+'/') as response:
-            self.assertIn('CodeLens',response.read().decode())
-        for path in ['/engine.py','/../engine.py','/test_server.py']:
+    def test_no_legacy_ui_served(self):
+        # 旧 HTML 界面已移除：18766 只应答 /api/*，任何页面/静态路径都必须 404。
+        with urllib.request.urlopen(self.origin+'/api/status') as response:
+            self.assertTrue(json.load(response)['ready'])
+        for path in ['/','/index.html','/app.js','/styles.css','/lib/dom.js',
+                     '/engine.py','/../engine.py','/test_server.py']:
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 urllib.request.urlopen(self.origin+path)
             self.assertEqual(ctx.exception.code,404)

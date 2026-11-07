@@ -8,7 +8,7 @@ echo "============================================================"
 echo "  CodeLens - React workbench"
 echo "  OPEN THIS ADDRESS : $UIURL"
 echo "  Backend API       : http://127.0.0.1:18766"
-echo "  NOTE: the page on 18766 is the OLD HTML interface. Do not use it."
+echo "  NOTE: 18766 serves JSON API only. The UI is at 5173."
 echo "============================================================"
 
 # New React workbench (codelens-prototype)

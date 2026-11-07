@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { analyzeProject, errorText, fetchStatus, isAbortError, reviewProject } from '../api/client';
 import { filesFromDataTransfer, prepareSelection, type RawFile } from '../lib/files';
 import { exportReport, type ExportFormat } from '../lib/export';
+import { logger } from '../lib/logger';
 import type {
   AiReviewProgress,
   AiReviewResult,
@@ -143,6 +144,7 @@ function loadSettings(): LlmSettings {
       apiKey: '',
     };
   } catch {
+    logger.debug('settings', 'localStorage.unreadable');
     return { baseUrl: '', model: '', apiKey: '' };
   }
 }
@@ -239,7 +241,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setToken(info.token);
       setVersion(info.engine_version);
       setCapabilities(info.capabilities);
-    } catch {
+    } catch (error) {
+      logger.warn('app', 'backend.offline', {
+        type: error instanceof Error ? error.name : typeof error,
+      });
       setStatus('offline');
       setToken('');
       setErrors(['分析服务未连接，请在项目根目录启动 python -B code/backend/server.py']);
@@ -336,6 +341,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setAiReview(review);
         return review;
       } catch (error) {
+        logger.warn('review', 'review.stopped', {
+          aborted: isAbortError(error),
+          message: errorText(error, ''),
+        });
         if (isAbortError(error)) {
           setReviewError('已中断。服务端已保留已完成的批次，点击「重新生成」将从断点续跑，不会重复消耗已读内容。');
         } else {
@@ -415,6 +424,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setRoute('overview');
         toast(message, kind);
       } catch (error) {
+        logger.warn('analyze', 'analysis.stopped', {
+          aborted: isAbortError(error),
+          message: errorText(error, ''),
+        });
         if (isAbortError(error)) {
           setErrors(['已中止分析。']);
         } else {
@@ -440,9 +453,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const raw = await filesFromDataTransfer(transfer, new AbortController().signal);
         await runWithRaw(raw);
-      } catch (error) {
-        setErrors([errorText(error, '读取拖拽目录失败，请重试。')]);
-      }
+    } catch (error) {
+      logger.warn('analyze', 'drop.read_failed', { message: errorText(error, '') });
+      setErrors([errorText(error, '读取拖拽目录失败，请重试。')]);
+    }
     },
     [runWithRaw],
   );
@@ -480,6 +494,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           document.execCommand('copy');
           toast('已复制到剪贴板', 'success');
         } catch {
+          logger.warn('app', 'clipboard.fallback_failed');
           toast('复制失败，请手动选择内容', 'warning');
         } finally {
           textarea.remove();
@@ -573,6 +588,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (baseUrl || model) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ baseUrl, model }));
       else localStorage.removeItem(SETTINGS_KEY);
     } catch {
+      logger.debug('settings', 'localStorage.write_unavailable');
       // 浏览器禁止本地存储时仅在当前页面生效
     }
     return true;
@@ -593,6 +609,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (baseUrl || model) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ baseUrl, model }));
         else localStorage.removeItem(SETTINGS_KEY);
       } catch {
+        logger.debug('settings', 'localStorage.save_unavailable');
         persisted = false;
       }
       setSettingsOpen(false);

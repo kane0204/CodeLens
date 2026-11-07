@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../state/AppState';
 import { Button, Modal } from './Ui';
+import { logger } from '../lib/logger';
 
 export function SettingsDialog() {
   const { settingsOpen, settings, settingsError, closeSettings, saveSettings } = useApp();
@@ -102,7 +103,13 @@ export function SettingsDialog() {
           </p>
         ) : null}
 
-        <div className="mt-5 flex justify-end border-t border-line pt-3">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => logger.download()}>
+              下载诊断日志
+            </Button>
+            <span className="text-[10px] leading-relaxed text-faint">仅本机记录，不含源码与密钥</span>
+          </div>
           <Button
             size="sm"
             variant="ghost"

@@ -8,6 +8,7 @@ import type {
   SelectedFile,
   StatusInfo,
 } from '../types';
+import { logger } from '../lib/logger';
 
 const STATUS_TIMEOUT = 5000;
 const B64_CHUNK = 0x8000;
@@ -15,12 +16,14 @@ const B64_CHUNK = 0x8000;
 export class ApiError extends Error {
   status: number;
   code?: string;
+  requestId?: string;
 
-  constructor(message: string, status = 0, code?: string) {
+  constructor(message: string, status = 0, code?: string, requestId?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.requestId = requestId;
   }
 }
 
@@ -68,15 +71,75 @@ function messageFromError(data: unknown, fallback: string): string {
   return fallback;
 }
 
+function requestIdFromError(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const record = data as Record<string, unknown>;
+  return typeof record.request_id === 'string' ? record.request_id : undefined;
+}
+
+function nestedErrorCode(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const error = (data as Record<string, unknown>).error;
+  if (error && typeof error === 'object') {
+    const code = (error as Record<string, unknown>).code;
+    if (typeof code === 'string') return code;
+  }
+  return undefined;
+}
+
+function apiErrorFrom(data: unknown, fallback: string, status: number, code?: string): ApiError {
+  return new ApiError(
+    messageFromError(data, fallback),
+    status,
+    code ?? nestedErrorCode(data),
+    requestIdFromError(data),
+  );
+}
+
+/** Uniform timing + failure logging. Never logs payloads, file names or source. */
+async function withLogging<T>(
+  scope: string,
+  endpoint: string,
+  meta: Record<string, unknown>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const started = performance.now();
+  logger.debug(scope, 'request.start', { endpoint, ...meta });
+  try {
+    const value = await fn();
+    logger.info(scope, 'request.ok', {
+      endpoint,
+      duration_ms: Math.round(performance.now() - started),
+    });
+    return value;
+  } catch (error) {
+    const detail = {
+      endpoint,
+      duration_ms: Math.round(performance.now() - started),
+      status: error instanceof ApiError ? error.status : 0,
+      type: error instanceof Error ? error.name : typeof error,
+      request_id: error instanceof ApiError ? error.requestId : undefined,
+    };
+    if (isAbortError(error)) logger.debug(scope, 'request.cancelled', detail);
+    else logger.warn(scope, 'request.failed', detail);
+    throw error;
+  }
+}
+
 async function parseJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch {
+    logger.debug('api', 'response.not_json', { status: response.status });
     return null;
   }
 }
 
-export async function fetchStatus(): Promise<StatusInfo> {
+export function fetchStatus(): Promise<StatusInfo> {
+  return withLogging('api', '/api/status', {}, fetchStatusInner);
+}
+
+async function fetchStatusInner(): Promise<StatusInfo> {
   const request = fetch('/api/status', { cache: 'no-store' }).then(async (response) => {
     if (!response.ok) throw new ApiError('服务未就绪', response.status);
     const data = (await response.json()) as Partial<StatusInfo>;
@@ -112,7 +175,18 @@ export interface AnalyzeRequest {
   files: SelectedFile[];
 }
 
-export async function analyzeProject(
+export function analyzeProject(
+  request: AnalyzeRequest,
+  token: string,
+  onProgress: (progress: AnalyzeProgress) => void,
+  signal: AbortSignal,
+): Promise<AnalyzeResult> {
+  return withLogging('api', '/api/analyze', { files: request.files.length }, () =>
+    analyzeProjectInner(request, token, onProgress, signal),
+  );
+}
+
+async function analyzeProjectInner(
   request: AnalyzeRequest,
   token: string,
   onProgress: (progress: AnalyzeProgress) => void,
@@ -125,7 +199,12 @@ export async function analyzeProject(
   for (let index = 0; index < request.files.length; index += 1) {
     if (signal.aborted) throw abortError();
     const item = request.files[index];
-    const buffer = await item.file.arrayBuffer();
+    let buffer: ArrayBuffer;
+    try {
+      buffer = await item.file.arrayBuffer();
+    } catch {
+      throw new ApiError(`读取文件失败（第 ${index + 1} 个），请检查文件是否被占用或已移除`);
+    }
     encoded.push({ path: item.path, content_base64: toBase64(buffer) });
     onProgress({ phase: 'read', done: index + 1, total: request.files.length });
   }
@@ -146,7 +225,7 @@ export async function analyzeProject(
   });
   const data = await parseJson(response);
   if (!response.ok) {
-    throw new ApiError(messageFromError(data, `分析请求失败（${response.status}）`), response.status);
+    throw apiErrorFrom(data, `分析请求失败（${response.status}）`, response.status);
   }
   if (!data || typeof data !== 'object') throw new ApiError('分析服务返回的数据为空');
   const result = data as Partial<AnalyzeResult>;
@@ -164,7 +243,15 @@ export interface ExplainRequest {
   settings: LlmSettings;
 }
 
-export async function explainCode(
+export function explainCode(
+  request: ExplainRequest,
+  token: string,
+  signal: AbortSignal,
+): Promise<ExplainResult> {
+  return withLogging('api', '/api/explain', {}, () => explainCodeInner(request, token, signal));
+}
+
+async function explainCodeInner(
   request: ExplainRequest,
   token: string,
   signal: AbortSignal,
@@ -195,7 +282,7 @@ export async function explainCode(
   });
   const data = await parseJson(response);
   if (!response.ok) {
-    throw new ApiError(messageFromError(data, `AI 解读失败（${response.status}）`), response.status);
+    throw apiErrorFrom(data, `AI 解读失败（${response.status}）`, response.status);
   }
   if (!data || typeof data !== 'object') throw new ApiError('模型未返回有效解读');
   const result = data as Partial<ExplainResult>;
@@ -231,9 +318,21 @@ interface ReviewStreamEvent {
   label?: string;
   result?: AiReviewResult;
   error?: string;
+  error_id?: string;
 }
 
-export async function reviewProject(
+export function reviewProject(
+  request: ReviewRequest,
+  token: string,
+  onProgress: (progress: AiReviewProgress) => void,
+  signal: AbortSignal,
+): Promise<AiReviewResult> {
+  return withLogging('api', '/api/review', {}, () =>
+    reviewProjectInner(request, token, onProgress, signal),
+  );
+}
+
+async function reviewProjectInner(
   request: ReviewRequest,
   token: string,
   onProgress: (progress: AiReviewProgress) => void,
@@ -264,7 +363,7 @@ export async function reviewProject(
   });
   if (!response.ok) {
     const data = await parseJson(response);
-    throw new ApiError(messageFromError(data, `AI 审查失败（${response.status}）`), response.status);
+    throw apiErrorFrom(data, `AI 审查失败（${response.status}）`, response.status);
   }
   if (!response.body) throw new ApiError('浏览器不支持读取 AI 审查进度');
 
@@ -279,6 +378,7 @@ export async function reviewProject(
     try {
       event = JSON.parse(line) as ReviewStreamEvent;
     } catch {
+      logger.warn('api', 'review.invalid_ndjson');
       throw new ApiError('AI 审查进度数据格式无效');
     }
     if (event.type === 'progress' && event.stage && typeof event.done === 'number' && typeof event.total === 'number') {
@@ -290,20 +390,25 @@ export async function reviewProject(
       return;
     }
     if (event.type === 'error') {
-      throw new ApiError(event.error || 'AI 审查失败', 502);
+      throw new ApiError(event.error || 'AI 审查失败', 502, undefined, event.error_id);
     }
+    logger.warn('api', 'review.unknown_event', { type: event.type });
   };
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) handleLine(line);
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) handleLine(line);
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) handleLine(buffer);
+  } finally {
+    reader.releaseLock();
   }
-  buffer += decoder.decode();
-  if (buffer.trim()) handleLine(buffer);
   if (!finalResult) throw new ApiError('AI 审查未返回结果');
   return finalResult;
 }
@@ -313,7 +418,9 @@ export function isAbortError(error: unknown): boolean {
 }
 
 export function errorText(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return error.message;
+  if (error instanceof ApiError) {
+    return error.requestId ? `${error.message}（错误编号 ${error.requestId}）` : error.message;
+  }
   if (error instanceof TypeError) return '连接中断或分析服务未启动，请在项目根目录启动后端服务';
   if (error instanceof Error && error.message) return error.message;
   return fallback;

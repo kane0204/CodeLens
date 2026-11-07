@@ -1,0 +1,10 @@
+{
+  "description": "逐类源码审查标注的静态设计复核线索（尚未经独立人工复核）；包含三个教学项目和当前仓库真实源码。用于回归，不代表未知项目的准确率。未列出的原则在该类上标为未发现对应线索。",
+  "projects": [
+    {"name": "contracts", "root": "tests/fixtures/projects/contracts", "positive": {"devices.ReadOnlyDevice": ["LSP-01", "ISP-01"]}, "rationale": "read 将可选参数改为必选，write 拒绝父类已实现的能力；CompatibleDevice 保留原调用契约。"},
+    {"name": "dispatch", "root": "tests/fixtures/projects/dispatch", "positive": {"shipping.Dispatcher": ["OCP-01", "DIP-01"]}, "rationale": "策略按三种具体运输类型分派，并自行构造多种实现；注入版本不应命中相同线索。"},
+    {"name": "responsibilities", "root": "tests/fixtures/projects/responsibilities", "positive": {"workbench.Workbench": ["SRP-01"]}, "rationale": "同一类公开承担存储、鉴权、呈现、通知和调度职责；Repository 提供内聚的存储操作。"},
+    {"name": "real-provider", "files": ["code/ai/provider.py"], "positive": {}, "rationale": "实际 provider 实现通过替换 produce/available 接口工作，无本数据集五项规则所述的直接设计线索；不表示完整行为契约已证明。"},
+    {"name": "real-server", "files": ["code/backend/server.py"], "positive": {}, "rationale": "实际 Handler 以 HTTP 适配为职责，未出现所标五项线索；外部父类导致 L/I 覆盖缺口，必须在评估中保留。"}
+  ]
+}

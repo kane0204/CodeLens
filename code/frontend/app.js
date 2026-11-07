@@ -6,12 +6,12 @@
   const val = value => value == null ? '—' : esc(value);
   const arr = value => Array.isArray(value) ? value : [];
   const pages = {overview:'总览',structure:'项目结构',logic:'逻辑说明',graphs:'关系图谱',metrics:'质量体检',solid:'设计检查',risks:'风险清单',export:'导出报告'};
-  const ruleNames={'CC-01':'圈复杂度','LEN-01':'函数长度','DEPTH-01':'嵌套深度','A4':'硬编码密钥','A3-IO':'边界输入','CYCLE-01':'循环依赖','SRP-01':'单一职责','OCP-01':'开闭原则','DIP-01':'依赖倒置','A5-DEAD':'死代码','A8-DEFENSIVE':'过宽异常捕获'};
+  const ruleNames={'CC-01':'圈复杂度','LEN-01':'函数长度','DEPTH-01':'嵌套深度','A4':'硬编码密钥','A3-IO':'边界输入','CYCLE-01':'循环依赖','SRP-01':'单一职责','OCP-01':'开闭原则','LSP-01':'里氏替换','ISP-01':'接口隔离','DIP-01':'依赖倒置','A5-DEAD':'死代码','A8-DEFENSIVE':'过宽异常捕获','DUP-01':'结构重复'};
   const ruleLabel=id=>Object.hasOwn(ruleNames,id)?ruleNames[id]:id;
   const severity = {critical:'高',warning:'中',info:'低'};
   const weight = {critical:3,warning:2,info:1};
   const colors = {critical:'#b91c1c',warning:'#c2410c',info:'#a8a29e'};
-  const state = {result:null,ready:false,connecting:true,token:'',version:'',importing:true,busy:false,phase:'',read:0,error:[],ignored:{},route:'overview',file:'',fn:'',treeSearch:'',logicSort:'cc',logicTab:'trace',line:null,graphTab:'calls',graph:null,drawer:null,graphEntry:'',chainEntry:'',graphLayoutMode:'layered',graphGranularity:'function',graphDirection:'TD',graphQuery:'',graphVisible:null,barsExpanded:false,metricSort:'cc',metricAsc:false,overOnly:false,packageSort:false,expanded:new Set(),risk:{severities:[],evidence:'',rule:'',file:'',query:'',page:1},controller:null};
+  const state = {result:null,ready:false,connecting:true,token:'',version:'',aiCompatible:false,exportAi:true,exportSource:false,importing:true,busy:false,phase:'',read:0,error:[],ignored:{},route:'overview',file:'',fn:'',treeSearch:'',logicSort:'cc',logicTab:'trace',line:null,graphTab:'calls',graph:null,drawer:null,graphEntry:'',chainEntry:'',graphLayoutMode:'layered',graphGranularity:'function',graphDirection:'TD',graphQuery:'',graphVisible:null,barsExpanded:false,metricSort:'cc',metricAsc:false,overOnly:false,packageSort:false,expanded:new Set(),risk:{severities:[],evidence:'',rule:'',file:'',query:'',page:1},controller:null};
   const app = $('#app');
   const placeholder = label => `<div class="placeholder">${label ? `<div>${esc(label)}</div>` : ''}引擎未产出此结果</div>`;
   const button = (label, action, data = '', cls = '') => `<button class="${cls}" data-action="${action}" ${data} aria-label="${esc(label)}">${esc(label)}</button>`;
@@ -60,11 +60,20 @@
   function download(content, type, extension) {
     const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.setAttribute('aria-label','下载分析报告');a.download=`codelens-${extension==='svg'?'graph':'report'}.${extension}`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('已生成下载文件','success');
   }
+  function reportData() {
+    const r=state.result;
+    return {...r,files:files().map(f=>{const copy={...f};if(!state.exportSource)delete copy.source;return copy;}),ai_explanations:state.exportAi?[...aiLogic.cache.values()]:[]};
+  }
+  function reportAppendix(safe) {
+    const r=state.result;
+    const health=r.health;
+    return `\n\n## 健康度\n\n${health?`${safe(health.score)} · ${safe(health.grade)}\n\n${safe(health.formula)}`:'无'}\n\n## 类级指标\n\n${arr(r.class_metrics).map(c=>`- ${safe(c.id)}：WMC=${c.wmc} DIT=${c.dit??'未知'} CBO=${c.cbo} LCOM1=${c.lcom}`).join('\n')||'无'}\n\n## 结构重复\n\n${arr(r.duplicates).map(g=>'- '+g.occurrences.map(o=>`${safe(o.file)}:${o.line}`).join(' / ')).join('\n')||'无'}\n\n## 类关系\n\n${arr(r.graph?.class_relations).map(e=>`- ${safe(e.source)} → ${safe(e.target)}：${safe(e.kind)}（${safe(e.file)}:${e.line}）`).join('\n')||'无'}\n\n## AI 逻辑解读\n\n${state.exportAi?[...aiLogic.cache.values()].map(a=>`### ${safe(a.function||a.file)}\n\n模型：${safe(a.model)}；AI 生成内容，需人工复核。\n\n范围：${arr(a.context).map(c=>`${safe(c.file)}:${c.line}-${c.end_line}`).join('、')}\n\n${String(a.text).split('\n').map(safe).join('\n')}\n`).join('\n')||'本次尚未生成 AI 解读。':'用户选择不包含 AI 解读。'}\n`;
+  }
   function markdown() {
     const r=state.result,s=r.summary||{};
     const names={files:'文件数',parsed:'已解析',failed:'解析失败',excluded:'已排除',functions:'函数数',classes:'类数',code_lines:'代码行数',findings:'风险条目',average_cc:'平均圈复杂度',max_cc:'最大圈复杂度'};
     const safe=v=>String(v??'—').replace(/[\\`*_{}\[\]<>#|]/g,'\\$&').replaceAll('\n',' ');
-    return `# CodeLens 分析报告\n\n## 项目概览\n\n项目：${safe(r.project)}\n\n引擎版本：${safe(r.engine_version)}\n\n${Object.entries(names).map(([k,n])=>`- ${n}：${s[k]??'—'}`).join('\n')}\n\n## 风险清单\n\n${findings().map(f=>`### ${safe(f.rule_id)} · ${severity[f.severity]||'—'}\n\n- 位置：${safe(f.file)}:${f.line??'—'}\n- 证据等级：${f.evidence_type==='fact'?'事实':'推断'}\n- 实际值 / 阈值：${safe(f.actual)} / ${safe(f.threshold)}\n- 置信度：${f.confidence??'—'}\n\n${safe(f.message)}\n\n复核建议：${safe(f.suggestion)}\n`).join('\n')||'没有风险条目。'}\n\n## 分析边界 / 未执行项\n\n${arr(r.limitations).map(x=>`- ${safe(x)}`).join('\n')||'引擎未提供分析边界说明。'}\n\n## 解析错误\n\n${arr(r.errors).map(x=>`- ${safe(x.file)}:${x.line??'—'} ${safe(x.message)}`).join('\n')||'无'}\n\n## 警告\n\n${arr(r.warnings).map(x=>`- ${safe(x.file)}:${x.line??'—'} ${safe(x.message)}`).join('\n')||'无'}\n`;
+    return `# CodeLens 分析报告\n\n## 项目概览\n\n项目：${safe(r.project)}\n\n引擎版本：${safe(r.engine_version)}\n\n${Object.entries(names).map(([k,n])=>`- ${n}：${s[k]??'—'}`).join('\n')}\n\n## 风险清单\n\n${findings().map(f=>`### ${safe(f.rule_id)} · ${severity[f.severity]||'—'}\n\n- 位置：${safe(f.file)}:${f.line??'—'}\n- 证据等级：${f.evidence_type==='fact'?'事实':'推断'}\n- 实际值 / 阈值：${safe(f.actual)} / ${safe(f.threshold)}\n- 置信度：${f.confidence??'—'}\n\n${safe(f.message)}\n\n复核建议：${safe(f.suggestion)}\n`).join('\n')||'没有风险条目。'}\n\n## 分析边界 / 未执行项\n\n${arr(r.limitations).map(x=>`- ${safe(x)}`).join('\n')||'引擎未提供分析边界说明。'}\n\n## SOLID 分析边界\n\n${arr(r.solid?.limitations).map(x=>`- ${safe(x)}`).join('\n')}\n\n${arr(r.solid?.coverage_gaps).map(x=>`- ${safe(x.class)}（${safe(x.file)}:${x.line}）：${safe(x.reason)}`).join('\n')}\n\n## 解析错误\n\n${arr(r.errors).map(x=>`- ${safe(x.file)}:${x.line??'—'} ${safe(x.message)}`).join('\n')||'无'}\n\n## 警告\n\n${arr(r.warnings).map(x=>`- ${safe(x.file)}:${x.line??'—'} ${safe(x.message)}`).join('\n')||'无'}\n${reportAppendix(safe)}`;
   }
   function csv() {
     const keys=['id','rule_id','severity','evidence_type','file','line','message','suggestion','actual','threshold','confidence'];
@@ -73,7 +82,7 @@
   }
   function exportReport(format) {
     if(!state.result)return;
-    if(format==='json')download(JSON.stringify(state.result,null,2),'application/json;charset=utf-8','json');
+    if(format==='json')download(JSON.stringify(reportData(),null,2),'application/json;charset=utf-8','json');
     if(format==='csv')download(csv(),'text/csv;charset=utf-8','csv');
     if(format==='md')download(markdown(),'text/markdown;charset=utf-8','md');
     $$('.dropdown[open]').forEach(x=>x.open=false);
@@ -88,7 +97,7 @@
   function importView() {
     const errors=state.error.length?`<div class="error-box" role="alert"><ul>${state.error.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:'';
     const stats=Object.entries(state.ignored).map(([k,v])=>`${esc(k)}：${v}`).join('；');
-    return `<main id="main" tabindex="-1" aria-label="主要内容" class="import-page"><section class="import-card"><div class="import-settings">${settingsButton()}</div><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>CodeLens</span></div><h1>CodeLens 代码分析</h1><p class="muted">检查 Python 项目的结构、逻辑与代码风险，依据分析结果进行复核。</p>${state.connecting?'<p role="status">正在连接分析服务</p><div class="skeleton"></div>':!state.ready?`${errors}${button('重新连接','connect','', 'primary')}`:`<div id="dropzone" class="dropzone" aria-label="项目文件夹上传区">${state.busy?`<div class="progress-area" role="status"><p>${esc(state.phase)}</p><progress ${state.phase.startsWith('读取')?`value="${state.read}" max="200"`:''} aria-label="分析进度"></progress><p class="muted">${state.phase.startsWith('读取')?`已读 ${state.read}/200`:'分析中，最多等待 120 秒'}</p>${button('中止','abort','','danger')}</div>`:`<div class="drop-symbol" aria-hidden="true"></div><p>将项目文件夹拖到此处</p><small>读取 Python 源码，由本机服务完成静态分析</small>${button('选择文件夹','choose','','primary')}`}${errors}</div><small>最多 200 个 .py 文件，单文件 1MB，总量 8MB</small>${stats?`<p class="footnote">其他类型文件（未上传）：${stats}</p>`:''}`}${state.result?`<p style="margin-top:16px">${button('查看上一次结果','return-result','','text')}</p>`:''}<p class="footnote">源码仅在本机内存中解析，不上传、不保存副本。</p><div class="import-footer"><span>${state.ready?'<i class="status-dot"></i>本机服务已连接':'等待服务连接'}</span><span class="mono">${esc(state.version)}</span></div></section></main>`;
+    return `<main id="main" tabindex="-1" aria-label="主要内容" class="import-page"><section class="import-card"><div class="import-settings">${settingsButton()}</div><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>CodeLens</span></div><h1>CodeLens 代码分析</h1><p class="muted">检查 Python 项目的结构、逻辑与代码风险，依据分析结果进行复核。</p>${state.connecting?'<p role="status">正在连接分析服务</p><div class="skeleton"></div>':!state.ready?`${errors}${button('重新连接','connect','', 'primary')}`:`<div id="dropzone" class="dropzone" aria-label="项目文件夹上传区">${state.busy?`<div class="progress-area" role="status"><p>${esc(state.phase)}</p><progress ${state.phase.startsWith('读取')?`value="${state.read}" max="200"`:''} aria-label="分析进度"></progress><p class="muted">${state.phase.startsWith('读取')?`已读 ${state.read}/200`:'分析中，最多等待 120 秒'}</p>${button('中止','abort','','danger')}</div>`:`<div class="drop-symbol" aria-hidden="true"></div><p>将项目文件夹拖到此处</p><small>读取 Python 源码，由本机服务完成静态分析</small>${button('选择文件夹','choose','','primary')}`}${errors}</div><small>最多 200 个 .py 文件，单文件 1MB，总量 8MB</small>${stats?`<p class="footnote">其他类型文件（未上传）：${stats}</p>`:''}`}${state.result?`<p style="margin-top:16px">${button('查看上一次结果','return-result','','text')}</p>`:''}<p class="footnote">静态分析在本机内存中完成；使用 AI 解读时，所选源码会发送到配置的模型服务。</p><div class="import-footer"><span>${state.ready?'<i class="status-dot"></i>本机服务已连接':'等待服务连接'}</span><span class="mono">${esc(state.version)}</span></div></section></main>`;
   }
   function render() {
     const focused=document.activeElement;
@@ -103,7 +112,7 @@
   }
   async function connect() {
     state.connecting=true;state.error=[];render();const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),10000);
-    try {const response=await fetch('/api/status',{signal:controller.signal});if(!response.ok)throw Error();const data=await response.json();if(!data.ready||!data.token)throw Error();state.ready=true;state.token=data.token;state.version=data.engine_version;}
+    try {const response=await fetch('/api/status',{signal:controller.signal});if(!response.ok)throw Error();const data=await response.json();if(!data.ready||!data.token)throw Error();state.ready=true;state.token=data.token;state.version=data.engine_version;state.aiCompatible=data.api_revision>=2&&arr(data.capabilities).includes('explain-context');}
     catch {state.ready=false;state.error=['分析服务未连接，请在项目根目录运行 python -B code/backend/server.py'];}
     finally {clearTimeout(timer);state.connecting=false;render();}
   }
@@ -122,6 +131,7 @@
       if(dropped){for(const item of input){if(item.entry)selected.push(...await entries(item.entry,'',controller.signal));else if(item.file)selected.push({file:item.file,path:item.file.name});}}
       else selected=input.map(file=>({file,path:file.webkitRelativePath||file.name}));
       if(controller.signal.aborted)throw new DOMException('Aborted','AbortError');
+      const excluded=new Set(['.git','.venv','venv','__pycache__','node_modules','build','dist','tests']);selected=selected.filter(x=>!x.path.replaceAll('\\','/').split('/').slice(0,-1).some(part=>excluded.has(part)));
       const py=[];for(const item of selected){if(/\.py$/i.test(item.path))py.push(item);else {const ext=item.file.name.includes('.')?'.'+item.file.name.split('.').pop().toLowerCase():'无扩展名';state.ignored[ext]=(state.ignored[ext]||0)+1;}}
       const errors=[];
       if(!py.length)errors.push('所选目录没有未被排除的 .py 文件');
@@ -137,7 +147,7 @@
       const response=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json','X-CodeLens-Token':state.token},body:JSON.stringify(payload),signal:controller.signal});
       const result=await response.json();if(!response.ok)throw Error(result.error||`分析请求失败（${response.status}）`);
       if(!result.summary||!Array.isArray(result.files)||!Array.isArray(result.findings))throw Error('分析服务返回的数据格式不完整，请重试。');
-      state.result=result;state.importing=false;state.file=result.files[0]?.path||'';state.fn='';state.line=null;state.treeSearch='';state.graph=null;state.graphVisible=null;state.graphEntry='';state.chainEntry='';state.graphQuery='';state.barsExpanded=false;state.drawer=null;state.expanded.clear();state.risk={severities:[],evidence:'',rule:'',file:'',query:'',page:1};go('overview');toast('分析完成','success');
+      resetAiLogic();state.result=result;state.importing=false;state.file=result.files[0]?.path||'';state.fn='';state.line=null;state.treeSearch='';state.graph=null;state.graphVisible=null;state.graphEntry='';state.chainEntry='';state.graphQuery='';state.barsExpanded=false;state.drawer=null;state.expanded.clear();state.risk={severities:[],evidence:'',rule:'',file:'',query:'',page:1};go('overview');toast('分析完成','success');
     } catch(error) {state.error=[error.name==='AbortError'?(timedOut?'分析超时，已超过 120 秒。请缩小项目范围后重试。':'已中止分析。'):error instanceof TypeError?'连接中断或分析服务未启动，请在项目根目录运行 python -B code/backend/server.py':error.message||'读取或分析失败，请重试。'];}
     finally {clearTimeout(timer);state.busy=false;state.controller=null;render();}
   }
@@ -177,11 +187,11 @@
       try {const url=new URL(baseUrl);valid=['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&!url.search&&!url.hash;}catch {}
       if(!valid){const error=$('#settings-error');error.textContent='请输入 HTTP 或 HTTPS 基础地址，不要在地址中包含账号、密码、查询参数或片段。';error.hidden=false;$('#llm-base-url').focus();return;}
     }
-    llmSettings={baseUrl,model,apiKey};
+    resetAiLogic();llmSettings={baseUrl,model,apiKey};
     let persisted=true;
     try {if(baseUrl||model)localStorage.setItem(SETTINGS_KEY,JSON.stringify({baseUrl,model}));else localStorage.removeItem(SETTINGS_KEY);}catch {persisted=false;}
     closeSettings();
-    toast(persisted?'设置已保存，尚未调用模型':'浏览器无法保存设置，本次配置仅在当前页面有效',persisted?'success':'warning');
+    toast(persisted?'设置已保存，可在逻辑说明中生成 AI 解读':'浏览器无法保存设置，本次配置仅在当前页面有效',persisted?'success':'warning');
   }
   document.addEventListener('submit',event=>{if(event.target.id==='llm-settings-form')saveSettings(event);});
   // Escape closes a native dialog without saving draft values.
@@ -219,16 +229,54 @@
     return `<p class="page-intro">按文件检查分析范围、模块依赖与解析异常。</p><div class="structure-grid">${card('项目文件',treeView())}<div>${card('模块 / 包结构',table(['包路径','文件数','符号数（函数 / 类）',button('被依赖次数','package-sort','','text')],rows.map(x=>`<tr><td class="mono">${esc(x.name)}</td><td class="number">${x.files}</td><td class="number">${x.symbols}</td><td class="number">${x.dependencies}</td></tr>`).join(''))+'<p class="footnote">被依赖次数按依赖目标所属包聚合；符号数包含函数与类。</p>')}${symbols}${card('解析异常',errors.length?table(['文件路径','错误行号','错误类型','证据等级','说明'],errors.map(e=>`<tr><td class="mono">${esc(e.file)}</td><td class="number">${val(e.line)}</td><td>${val(e.type)}</td><td>${evidence('fact')}</td><td>${val(e.message)}</td></tr>`).join('')):files().length?'<p class="success">全部文件解析成功</p>':empty('当前结果没有文件'))}</div></div>`;
   }
   function tabs(items, active, action) { return `<div class="tabs" role="tablist" aria-label="视图切换">${items.map(([key,label])=>`<button role="tab" aria-selected="${active===key}" aria-label="${label}" data-action="${action}" data-tab="${key}">${label}</button>`).join('')}</div>`; }
+  const aiLogic = {cache:new Map(), busy:false, key:'', error:'', controller:null};
+  function resetAiLogic() {
+    aiLogic.controller?.abort();aiLogic.controller=null;aiLogic.busy=false;aiLogic.key='';aiLogic.error='';aiLogic.cache.clear();
+  }
+  const logicKey = () => JSON.stringify([state.file,state.fn]);
+  async function explainLogic() {
+    if(aiLogic.busy||!state.result)return;
+    if(state.aiCompatible===false){toast('后台版本不兼容，请重启服务后刷新页面','warning');return;}
+    const file=files().find(f=>f.path===state.file);if(!file||file.status!=='ok')return;
+    const key=logicKey(),project=state.result,controller=new AbortController();
+    aiLogic.busy=true;aiLogic.key=key;aiLogic.error='';aiLogic.controller=controller;render();
+    let timedOut=false;
+    const timer=setTimeout(()=>{timedOut=true;controller.abort();},60000);
+    try {
+      const configured=Boolean(llmSettings.baseUrl||llmSettings.model||llmSettings.apiKey);
+      const payload={project:project.project,files:files().filter(f=>f.status==='ok').map(f=>({path:f.path,content:f.source})),include_context:true,target:{file:file.path,function:state.fn||null}};
+      if(configured)payload.provider={base_url:llmSettings.baseUrl,model:llmSettings.model,api_key:llmSettings.apiKey};
+      const response=await fetch('/api/explain',{method:'POST',headers:{'Content-Type':'application/json','X-CodeLens-Token':state.token},body:JSON.stringify(payload),signal:controller.signal});
+      const data=await response.json();if(!response.ok)throw Error(typeof data.error==='string'?data.error:'AI 解读失败，请重试');
+      if(typeof data.text!=='string'||!data.text.trim())throw Error('模型未返回有效解读');
+      if(state.result===project&&aiLogic.controller===controller)aiLogic.cache.set(key,data);
+    } catch(error) {
+      if(aiLogic.controller===controller)aiLogic.error=error.name==='AbortError'?(timedOut?'解读超时，请缩小范围后重试。':'已取消本次解读。'):error instanceof TypeError?'无法连接解读服务，请检查本机服务后重试。':error.message;
+    } finally {
+      clearTimeout(timer);if(aiLogic.controller===controller){aiLogic.busy=false;aiLogic.controller=null;render();}
+    }
+  }
+  function renderExplanation(result) {
+    const chars=Array.from(result.text);let cursor=0,html='';
+    for(const citation of arr(result.citations)){
+      html+=esc(chars.slice(cursor,citation.start).join(''));
+      const label=chars.slice(citation.start,citation.end).join('');
+      html+=citation.valid?button(label,'ai-citation',`data-path="${esc(citation.file)}" data-line="${citation.line}" data-end="${citation.end_line}"`,'text citation'):`<span class="citation-invalid" title="引用超出已发送的源码范围">${esc(label)}（引用未验证）</span>`;
+      cursor=citation.end;
+    }
+    return html+esc(chars.slice(cursor).join(''));
+  }
   function logicView() {
-    let file=files().find(f=>f.path===state.file)||files()[0];if(file)state.file=file.path;
-    const ids=new Set(arr(file?.functions).map(functionId));let list=functions().filter(f=>ids.has(f.id));
-    if(state.logicSort==='cc')list.sort((a,b)=>b.cc-a.cc);else if(state.logicSort==='length')list.sort((a,b)=>b.length-a.length);else {const order=arr(file?.functions).map(functionId);list.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));}
-    let fn=list.find(f=>f.id===state.fn)||list[0];state.fn=fn?.id||'';
-    const fnList=`<label class="muted" for="logic-sort">排序</label><select id="logic-sort" data-change="logic-sort" aria-label="函数排序">${[['cc','圈复杂度'],['length','函数长度'],['order','定义顺序']].map(([k,v])=>`<option value="${k}" ${state.logicSort===k?'selected':''}>${v}</option>`).join('')}</select><div class="function-list">${list.map(f=>`<button class="function-item ${f.id===state.fn?'selected':''}" data-action="select-function" data-id="${esc(f.id)}" aria-label="查看函数 ${esc(f.id)}"><span class="mono">${esc(f.id)}</span><span class="tag ${ccClass(f.cc)}">${val(f.cc)}</span></button>`).join('')||'<p class="empty">此文件没有函数定义</p>'}</div>`;
-    const trace=fn?table(['行号','AST 类型','语句说明'],arr(fn.statements).map((s,i)=>`<tr class="statement ${state.line?.index===i?'selected':''}" tabindex="0" role="button" aria-label="定位源码第 ${esc(s.line)} 行" data-action="statement" data-index="${i}"><td class="number">${val(s.line)}${s.end_line!==s.line?`–${val(s.end_line)}`:''}</td><td><span class="tag mono">${esc(s.ast_type)}</span></td><td class="mono">${esc(s.description)}</td></tr>`).join('')):'';
-    const source=file?.source!=null?`<div class="source" tabindex="0" aria-label="${esc(file.path)} 源码">${file.source.split('\n').map((line,i)=>`<div class="source-line" data-line="${i+1}"><span class="line-number">${i+1}</span><code>${esc(line)||' '}</code></div>`).join('')}</div>`:placeholder();
-    const detail=`${fn?`<h2 class="logic-title">${esc(fn.id)}</h2><p class="mono muted">${esc(file.path)}</p><div class="actions"><span class="tag">圈复杂度 <span class="number">${val(fn.cc)}</span></span><span class="tag">函数长度 <span class="number">${val(fn.length)}</span></span>${button('复制 ID','copy-id','','text')}${button('定位风险','file-risks',`data-path="${esc(file.path)}"`,'text')}</div>${tabs([['trace','语句轨迹'],['cfg','控制流图'],['dataflow','数据流'],['exceptions','异常与假设']],state.logicTab,'logic-tab')}<div role="tabpanel">${state.logicTab==='trace'?trace:placeholder()}</div>`:empty('当前文件没有可展示的函数')}<div class="heading" style="margin-top:20px"><h2>源码</h2><small class="mono">${esc(file?.path)}</small></div>${source}`;
-    return `<div class="logic-grid">${card('项目文件',treeView())}${card('函数列表',fnList)}<section class="card logic-detail">${detail}</section></div>`;
+    const file=files().find(f=>f.path===state.file)||files()[0];if(file)state.file=file.path;
+    const list=functions().filter(f=>f.file===file?.path);
+    if(state.fn&&!list.some(f=>f.id===state.fn))state.fn='';
+    const key=logicKey(),result=aiLogic.cache.get(key),pending=aiLogic.busy&&aiLogic.key===key;
+    const selector=`<label for="ai-logic-target">解读范围</label><select id="ai-logic-target" data-change="ai-logic-target" aria-label="解读范围"><option value="">整个文件</option>${list.map(f=>`<option value="${esc(f.id)}" ${state.fn===f.id?'selected':''}>${esc(f.id)}</option>`).join('')}</select>`;
+    const controls=`<div class="ai-logic-toolbar">${selector}<button class="primary" data-action="ai-explain" ${aiLogic.busy||file?.status!=='ok'||state.aiCompatible===false?'disabled':''}>${result?'重新生成解读':'生成 AI 解读'}</button>${aiLogic.busy?button('取消解读','ai-explain-cancel','','text'):''}${result?button('复制解读','ai-explain-copy','','text'):''}</div>`;
+    const body=pending?'<div class="ai-reading-state" role="status"><div class="skeleton"></div><p>AI 正在阅读源码并梳理实现逻辑…</p><small>最多等待 60 秒，可取消本次请求。</small></div>':result?`<div class="ai-explanation">${renderExplanation(result)}</div><p class="footnote">模型：${esc(result.model)} · ${esc(result.file)}:${val(result.line)}–${val(result.end_line)}</p>${arr(result.context).length?`<details class="ai-context"><summary>本次发送的源码范围（${result.context.length} 段）</summary><ul>${result.context.map(c=>`<li class="mono">${esc(c.file)}:${c.line}–${c.end_line}</li>`).join('')}</ul></details>`:''}${result.omitted_context?'<p class="notice">部分依赖超过上下文上限，未发送。</p>':''}${result.truncated?'<p class="notice">模型输出达到长度限制，解读可能不完整。请缩小范围后重新生成。</p>':''}`:'<div class="ai-reading-state"><h3>用自然语言读懂这段实现</h3><p>选择文件或函数，点击生成后，AI 将说明它的用途、输入输出、关键步骤、分支与异常，以及依赖和边界。</p><p class="muted">请先在设置中配置模型，或使用服务端模型配置。</p></div>';
+    const error=aiLogic.key===key&&aiLogic.error?`<div class="error-box" role="alert">${esc(aiLogic.error)}</div>`:'';
+    const source=file?.source!=null?`<details class="ai-source" ${state.line?'open':''}><summary>查看原始源码 · ${esc(file.path)}</summary><div class="source" tabindex="0" aria-label="${esc(file.path)} 源码">${file.source.split('\n').map((line,i)=>`<div class="source-line" data-line="${i+1}"><span class="line-number">${i+1}</span><code>${esc(line)||' '}</code></div>`).join('')}</div></details>`:'';
+    return `<p class="page-intro">让 AI 解释代码如何实现功能，并结合行号回到源码核对。</p><div class="ai-logic-grid">${card('项目文件',treeView())}<section class="card ai-logic-reader"><div class="heading"><div><h2>AI 逻辑解读</h2><p class="mono muted">${esc(file?.path||'未选择文件')}</p></div>${button('配置模型','settings-open','','text')}</div>${controls}<p class="footnote">点击生成后，所选源码及最多两层已解析调用的相关函数将发送到你配置的模型服务。AI 解读需结合源码复核；不会自动调用或用模板代替模型结果。</p>${state.aiCompatible===false?'<div class="error-box" role="alert">后台版本不兼容，请停止旧服务，重新运行 python -B code/backend/server.py 后刷新页面。</div>':''}${error}${body}${aiLogic.busy&&!pending?'<p role="status">其他范围正在解读，请等待或取消后再生成。</p>':''}${source}</section></div>`;
   }
   function highlightSource() {
     if(!state.line)return;
@@ -248,17 +296,17 @@
     const metrics=table(['函数 ID','文件',header('cc','圈复杂度'),header('length','函数长度'),header('nesting','最大 nesting')],fs.map(f=>`<tr><td class="mono">${button(f.id,'function',`data-id="${esc(f.id)}"`,'text mono')}</td><td class="mono">${esc(fileFor(f.id)?.path||'—')}</td><td class="number ${f.cc>10?'over':''}">${val(f.cc)}</td><td class="number ${f.length>50?'over':''}">${val(f.length)}</td><td class="number ${f.nesting>4?'over':''}">${val(f.nesting)}</td></tr>`).join(''));
     const groups=groupedFindings().map(([key,hits])=>[key,state.overOnly?hits.filter(f=>typeof f.actual==='number'&&typeof f.threshold==='number'&&f.actual>f.threshold):hits]).filter(([,hits])=>hits.length);
     const summary=table(['规则 ID','命中次数','涉及文件数','最高严重度','位置'],groups.map(([key,hits])=>`<tr><td class="mono">${esc(key)}</td><td class="number">${hits.length}</td><td class="number">${new Set(hits.map(f=>f.file)).size}</td><td>${tag([...hits].sort((a,b)=>weight[b.severity]-weight[a.severity])[0].severity)}</td><td><details><summary aria-label="展开规则 ${esc(key)} 命中位置">展开位置</summary><ul>${hits.map(f=>`<li class="mono">${esc(f.file)}:${val(f.line)}</li>`).join('')}</ul></details></td></tr>`).join(''));
-    return `<div class="heading"><p class="muted">依据有效代码行数和函数指标检查复杂区域。</p><label><input type="checkbox" aria-label="只看超阈值" data-change="over-only" ${state.overOnly?'checked':''}> 只看超阈值</label></div>${healthCard()}${card('文件有效代码行数',`<div class="file-bars">${bars}</div>${listed.length>8?button(state.barsExpanded?'收起':'展开全部','bars-toggle',`aria-expanded="${state.barsExpanded}"`,'text'):''}<p class="footnote">超阈值筛选显示含 cc &gt; 10、length &gt; 50 或 nesting &gt; 4 函数的文件；文件行数未设阈值。</p>`)}<details class="card rule-summary" ${groups.length?'open':''}><summary aria-label="展开或折叠规则命中汇总">规则命中汇总</summary>${groups.length?summary:'<p class="muted">当前条件下没有规则命中</p>'}</details>${card('函数级指标',fs.length?metrics:empty('当前条件下没有函数','metrics-reset','显示全部'))}<p class="footnote">红色数值 = 超出默认阈值，阈值可在配置中调整</p><p class="footnote">未执行：类级指标 WMC / DIT / CBO / LCOM。</p>`;
+    return `<div class="heading"><p class="muted">依据有效代码行数和函数指标检查复杂区域。</p><label><input type="checkbox" aria-label="只看超阈值" data-change="over-only" ${state.overOnly?'checked':''}> 只看超阈值</label></div>${healthCard()}${card('文件有效代码行数',`<div class="file-bars">${bars}</div>${listed.length>8?button(state.barsExpanded?'收起':'展开全部','bars-toggle',`aria-expanded="${state.barsExpanded}"`,'text'):''}<p class="footnote">超阈值筛选显示含 cc &gt; 10、length &gt; 50 或 nesting &gt; 4 函数的文件；文件行数未设阈值。</p>`)}<details class="card rule-summary" ${groups.length?'open':''}><summary aria-label="展开或折叠规则命中汇总">规则命中汇总</summary>${groups.length?summary:'<p class="muted">当前条件下没有规则命中</p>'}</details>${card('函数级指标',fs.length?metrics:empty('当前条件下没有函数','metrics-reset','显示全部'))}<p class="footnote">红色数值 = 超出默认阈值，阈值可在配置中调整</p>${card('类级指标',table(['类','WMC','DIT','CBO','LCOM1'],arr(state.result.class_metrics).map(c=>`<tr><td class="mono">${esc(c.id)}</td><td>${c.wmc}</td><td>${c.dit??'未知'}</td><td>${c.cbo}</td><td>${c.lcom}</td></tr>`).join('')))}${card('结构重复',arr(state.result.duplicates).length?`<ul>${state.result.duplicates.map(g=>`<li>${g.occurrences.map(o=>`${esc(o.file)}:${o.line}`).join(' / ')}</li>`).join('')}</ul>`:'<p>未发现符合检测口径的重复函数体。</p>')}<details><summary>指标与重复检测口径</summary><ul>${arr(state.result.quality_notes).map(n=>`<li>${esc(n)}</li>`).join('')}</ul></details>`;
   }
   function findingDetail(f,solid=false) {
     return `<div class="detail-grid"><div><h3>实际值 vs 阈值</h3><dl><dt>实际值</dt><dd class="mono">${val(f.actual)}</dd><dt>阈值</dt><dd class="mono">${val(f.threshold)}</dd><dt>置信度</dt><dd class="mono">${f.confidence==null?'—':val(f.confidence)}</dd></dl></div><div><h3>详细信息</h3><p>${esc(f.message)}</p><h3>人工复核建议</h3><p>${val(f.suggestion)}</p>${solid?button('定位风险','finding-risk',`data-id="${esc(f.id)}"`,'text'):button('定位代码','locate-code',`data-id="${esc(f.id)}"`,'text')}</div></div>`;
   }
   function solidView() {
-    const executed=rules().filter(r=>/(?:SRP|OCP|DIP)/i.test(r));const hits=findings().filter(f=>executed.includes(f.rule_id));
+    const executed=rules().filter(r=>/(?:SRP|OCP|LSP|ISP|DIP)/i.test(r));const hits=findings().filter(f=>executed.includes(f.rule_id));
     if(!executed.length)return '<div class="notice">SOLID 判定基于启发式规则，结论为推断，需人工确认</div>'+card('设计检查','<div class="empty">未执行 SOLID 检查</div>');
-    const cards=executed.map(id=>{const n=hits.filter(f=>f.rule_id===id).length;return `<section class="card"><h3 class="mono">${esc(id)}</h3>${n?`<span class="tag warning">命中 ${n}</span>`:'<span class="success">通过</span>'}</section>`;}).join('');
-    const missing=['SRP','OCP','DIP'].filter(p=>!executed.some(r=>r.toUpperCase().includes(p)));
-    return `<div class="notice">SOLID 判定基于启发式规则，结论为推断，需人工确认</div><div class="rule-cards">${cards}</div>${missing.length?`<p class="muted">${missing.map(x=>`${x}：未执行`).join(' · ')}</p>`:''}${card('设计规则命中',hits.length?table(['规则 ID','位置','严重度','证据等级','描述','操作'],hits.map(f=>`<tr><td class="mono">${esc(f.rule_id)}</td><td class="mono">${esc(f.file)}:${val(f.line)}</td><td>${tag(f.severity)}</td><td>${evidence(f.evidence_type)}</td><td>${esc(f.message)}</td><td>${button(state.expanded.has(f.id)?'收起':'详情','expand-finding',`data-id="${esc(f.id)}" aria-expanded="${state.expanded.has(f.id)}"`,'text')}</td></tr>${state.expanded.has(f.id)?`<tr class="detail-row"><td colspan="6">${findingDetail(f,true)}</td></tr>`:''}`).join('')):'<p class="success">已执行的设计规则没有命中条目</p>')}`;
+    const cards=executed.map(id=>{const n=hits.filter(f=>f.rule_id===id).length;return `<section class="card"><h3 class="mono">${esc(id)}</h3>${n?`<span class="tag warning">命中 ${n}</span>`:'<span class="success">未发现静态风险</span>'}</section>`;}).join('');
+    const missing=['SRP','OCP','LSP','ISP','DIP'].filter(p=>!executed.some(r=>r.toUpperCase().includes(p)));
+    return `<div class="notice">SOLID 判定基于启发式规则，结论为推断，需人工确认</div><div class="rule-cards">${cards}</div>${missing.length?`<p class="muted">${missing.map(x=>`${x}：未执行`).join(' · ')}</p>`:''}${card('分析覆盖范围',`<p>已检查 ${val(state.result.solid?.checked_overrides)} 个覆盖方法</p><ul>${arr(state.result.solid?.limitations).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>${arr(state.result.solid?.coverage_gaps).length?table(['类','位置','未检查原因'],state.result.solid.coverage_gaps.map(x=>`<tr><td>${esc(x.class)}</td><td>${esc(x.file)}:${val(x.line)}</td><td>${esc(x.reason)}</td></tr>`).join('')):''}${state.result.solid?.truncated?'<p class="warning">规则条目达到上限，部分发现未展示。</p>':''}`)}${card('设计规则命中',hits.length?table(['规则 ID','位置','严重度','证据等级','描述','操作'],hits.map(f=>`<tr><td class="mono">${esc(f.rule_id)}</td><td class="mono">${esc(f.file)}:${val(f.line)}</td><td>${tag(f.severity)}</td><td>${evidence(f.evidence_type)}</td><td>${esc(f.message)}</td><td>${button(state.expanded.has(f.id)?'收起':'详情','expand-finding',`data-id="${esc(f.id)}" aria-expanded="${state.expanded.has(f.id)}"`,'text')}</td></tr>${state.expanded.has(f.id)?`<tr class="detail-row"><td colspan="6">${findingDetail(f,true)}</td></tr>`:''}`).join('')):'<p class="success">已执行的设计规则没有命中条目</p>')}`;
   }
   function filteredRisks() {
     const r=state.risk;return findings().filter(f=>(!r.severities.length||r.severities.includes(f.severity))&&(!r.evidence||f.evidence_type===r.evidence)&&(!r.rule||f.rule_id===r.rule)&&(!r.file||f.file===r.file)&&(!r.query||`${f.message} ${f.file}`.toLowerCase().includes(r.query.toLowerCase()))).sort((a,b)=>(weight[b.severity]||0)-(weight[a.severity]||0));
@@ -267,14 +315,14 @@
     const r=state.risk;const list=filteredRisks();const pagesCount=Math.max(1,Math.ceil(list.length/10));r.page=Math.min(r.page,pagesCount);const visible=list.slice((r.page-1)*10,r.page*10);
     const options=(items,selected)=>'<option value="">全部</option>'+items.map(([value,label])=>`<option value="${esc(value)}" ${selected===value?'selected':''}>${esc(label)}</option>`).join('');
     const filters=`<div class="filters"><details class="dropdown"><summary aria-label="严重度多选">严重度${r.severities.length?' · '+r.severities.map(x=>severity[x]).join('/'):' · 全部'}</summary><div class="dropdown-menu">${Object.keys(severity).map(k=>`<label><input type="checkbox" data-change="risk-severity" aria-label="筛选${severity[k]}严重度" value="${k}" ${r.severities.includes(k)?'checked':''}> ${severity[k]}</label>`).join('')}</div></details><label>证据等级<select data-change="risk-evidence" aria-label="筛选证据等级">${options([['fact','事实'],['inference','推断']],r.evidence)}</select></label><label>规则类型<select data-change="risk-rule" aria-label="筛选规则类型">${options(rules().map(x=>[x,ruleLabel(x)]),r.rule)}</select></label><label>文件<select data-change="risk-file" aria-label="筛选文件">${options(files().map(x=>[x.path,x.path]),r.file)}</select></label><label>关键字<input id="risk-query" type="search" placeholder="搜索描述或文件路径" value="${esc(r.query)}" aria-label="搜索描述或文件路径"></label>${button('重置','risk-reset','','text')}<div class="filter-stats">${Object.keys(severity).map(k=>`<span class="tag ${k}">${severity[k]} ${list.filter(f=>f.severity===k).length}</span>`).join('')}</div></div>`;
-    const body=visible.map(f=>`<tr id="finding-${findings().indexOf(f)}"><td><span class="tag mono">${esc(ruleLabel(f.rule_id))}</span></td><td>${tag(f.severity)}</td><td>${evidence(f.evidence_type)}</td><td class="mono truncate" title="${esc(f.file)}:${val(f.line)}">${esc(f.file)}:${val(f.line)}</td><td>${esc(f.message)}</td><td class="number">${f.evidence_type==='inference'&&f.confidence!=null?`${Number.isFinite(Number(f.confidence))?Math.round(Number(f.confidence)*100):'—'}%`:'—'}</td><td>${button(state.expanded.has(f.id)?'收起':'详情','expand-finding',`data-id="${esc(f.id)}" aria-expanded="${state.expanded.has(f.id)}"`,'text')}</td></tr>${state.expanded.has(f.id)?`<tr class="detail-row"><td colspan="7">${findingDetail(f)}</td></tr>`:''}`).join('');
+    const body=visible.map(f=>`<tr id="finding-${findings().indexOf(f)}"><td><span class="tag mono">${esc(ruleLabel(f.rule_id))}</span></td><td>${tag(f.severity)}</td><td>${evidence(f.evidence_type)}</td><td class="mono truncate" title="${esc(f.file)}:${val(f.line)}">${esc(f.file)}:${val(f.line)}</td><td>${esc(f.message)}</td><td class="number">${f.evidence_type==='inference'&&f.confidence!=null?(Number.isFinite(Number(f.confidence))?`${Math.round(Number(f.confidence)*100)}%`:esc(({high:'高',medium:'中',low:'低'})[f.confidence]||f.confidence)):'—'}</td><td>${button(state.expanded.has(f.id)?'收起':'详情','expand-finding',`data-id="${esc(f.id)}" aria-expanded="${state.expanded.has(f.id)}"`,'text')}</td></tr>${state.expanded.has(f.id)?`<tr class="detail-row"><td colspan="7">${findingDetail(f)}</td></tr>`:''}`).join('');
     return `<div class="heading"><p class="muted">按证据复核风险，推断条目需要人工确认。</p><div class="actions">${button('导出 JSON','export','data-format="json"')}${button('导出 CSV','export','data-format="csv"')}</div></div><section class="card">${filters}${visible.length?table(['规则类型','严重度','证据等级','位置','描述','置信度','操作'],body):empty('当前筛选条件下没有命中的风险条目','risk-reset','重置筛选')}<div class="pagination"><span class="muted">共 <span class="number">${list.length}</span> 条 · 每页 10 条</span>${button('上一页','risk-page',`data-page="${r.page-1}" ${r.page<=1?'disabled':''}`)}<span class="number">${r.page} / ${pagesCount}</span>${button('下一页','risk-page',`data-page="${r.page+1}" ${r.page>=pagesCount?'disabled':''}`)}</div></section>`;
   }
   function exportView() {
     const limits=arr(state.result.limitations);
     const preview=card('Markdown 报告预览',`<pre class="report" tabindex="0" aria-label="Markdown 报告预览">${esc(markdown())}</pre>`);
     const limitations=card('分析限制',limits.length?`<ul class="raw-list">${limits.map(note=>`<li>${esc(note)}</li>`).join('')}</ul>`:'<p class="muted">引擎未提供分析限制说明。</p>');
-    const downloads=card('下载报告',[['md','Markdown','项目概览、全部风险、解析错误与分析边界。'],['json','JSON','完整分析结果，保留 API 返回的数据和源码。'],['csv','CSV','全部风险条目，包含位置、证据等级与复核建议。']].map(([format,label,description])=>`<div class="export-option">${button('导出 '+label,'export',`data-format="${format}"`,format==='md'?'primary':'')}<p>${description}</p></div>`).join(''));
+    const downloads=card('下载报告',`<label><input type="checkbox" data-change="export-ai" ${state.exportAi?'checked':''}> 包含已生成的 AI 解读</label><br><label><input type="checkbox" data-change="export-source" ${state.exportSource?'checked':''}> JSON 包含源码</label>`+[['md','Markdown','项目概览、全部风险、解析错误与分析边界。'],['json','JSON','完整指标、关系、风险与可选 AI 解读；源码默认不导出。'],['csv','CSV','全部风险条目，包含位置、证据等级与复核建议。']].map(([format,label,description])=>`<div class="export-option">${button('导出 '+label,'export',`data-format="${format}"`,format==='md'?'primary':'')}<p>${description}</p></div>`).join(''));
     return `<div class="notice">报告由当前分析结果生成，未包含引擎未产出的项目</div><div class="split"><div>${preview}${limitations}</div><div>${downloads}</div></div>`;
   }
   const compareText=(a,b)=>String(a??'')<String(b??'')?-1:String(a??'')>String(b??'')?1:0;
@@ -290,7 +338,7 @@
     const matches=functions().filter(f=>functionFile(f)===path&&Number.isFinite(f.line)&&Number.isFinite(f.end_line)&&f.line<=line&&line<=f.end_line);
     return matches.sort((a,b)=>(a.end_line-a.line)-(b.end_line-b.line)||compareText(a.id,b.id))[0];
   }
-  function graphData() {return arr(state.result.graph?.[state.graphTab==='chain'?'calls':state.graphTab]);}
+  function graphData() {return arr(state.result.graph?.[state.graphTab==='chain'?'calls':state.graphTab==='inheritance'?'class_relations':state.graphTab]);}
   function selectedEntry(key) {return functions().find(f=>f.id===state[key])||functions()[0];}
   function entrySelector(key,label) {
     const current=selectedEntry(key);
@@ -386,7 +434,7 @@
   }
   function graphsView() {
     const isCall=state.graphTab==='calls';const select=(action,label,options,current,disabled=false)=>`<label>${label}<select data-change="${action}" aria-label="${label}" ${disabled?'disabled':''}>${options.map(([key,text])=>`<option value="${key}" ${key===current?'selected':''}>${text}</option>`).join('')}</select></label>`;
-    return `<div class="notice">静态调用链表示可能的调用顺序，非实际执行顺序。</div><section class="card">${tabs([['calls','函数调用图'],['dependencies','模块依赖图'],['inheritance','类与继承图'],['chain','调用链']],state.graphTab,'graph-tab')}${state.graphTab==='chain'?callChainView():`<div class="graph-controls">${isCall?entrySelector('graphEntry','图谱入口函数'):''}<label>节点搜索<input id="graph-search" type="search" value="${esc(state.graphQuery)}" placeholder="输入节点名" aria-label="搜索图谱节点"></label>${select('graph-layout','布局',isCall?[['layered','分层'],['radial','放射']]:[['layered','分层']],isCall?state.graphLayoutMode:'layered')}${isCall?select('graph-granularity','粒度',[['function','函数级'],['file','文件级']],state.graphGranularity):''}${select('graph-direction','方向',[['TD','TD（从上到下）'],['LR','LR（从左到右）']],state.graphDirection,isCall&&state.graphLayoutMode==='radial')}</div><div class="heading"><span class="muted">${isCall?'入口展开：默认显示上下游各 2 层；点击 +N 展开下一层。':'拖动节点调整位置；聚焦节点后可用方向键移动。'}</span><div class="actions">${button('导出 SVG','graph-export')}${button('复制图数据','graph-copy')}${button('全屏','graph-fullscreen')}${button('重置布局','graph-reset')}</div></div><p id="graph-search-status" class="footnote" role="status" aria-live="polite"></p><div id="graph-host"></div><details class="graph-legend"><summary aria-label="展开图例说明">图例说明</summary><p class="footnote">import：棕色；call：灰色；inherit：绿色。循环边优先显示红色。虚线表示跨文件调用。悬停或聚焦连线可查看调用表达式；未解析调用不绘制目标节点。</p></details>`}</section><p class="footnote">未执行：类图的组合/关联/依赖关系、规范时序图（静态分析无法确定执行顺序，以调用链替代）。</p>`;
+    return `<div class="notice">静态调用链表示可能的调用顺序，非实际执行顺序。</div><section class="card">${tabs([['calls','函数调用图'],['dependencies','模块依赖图'],['inheritance','类与继承图'],['chain','调用链']],state.graphTab,'graph-tab')}${state.graphTab==='chain'?callChainView():`<div class="graph-controls">${isCall?entrySelector('graphEntry','图谱入口函数'):''}<label>节点搜索<input id="graph-search" type="search" value="${esc(state.graphQuery)}" placeholder="输入节点名" aria-label="搜索图谱节点"></label>${select('graph-layout','布局',isCall?[['layered','分层'],['radial','放射']]:[['layered','分层']],isCall?state.graphLayoutMode:'layered')}${isCall?select('graph-granularity','粒度',[['function','函数级'],['file','文件级']],state.graphGranularity):''}${select('graph-direction','方向',[['TD','TD（从上到下）'],['LR','LR（从左到右）']],state.graphDirection,isCall&&state.graphLayoutMode==='radial')}</div><div class="heading"><span class="muted">${isCall?'入口展开：默认显示上下游各 2 层；点击 +N 展开下一层。':'拖动节点调整位置；聚焦节点后可用方向键移动。'}</span><div class="actions">${button('导出 SVG','graph-export')}${button('复制图数据','graph-copy')}${button('全屏','graph-fullscreen')}${button('重置布局','graph-reset')}</div></div><p id="graph-search-status" class="footnote" role="status" aria-live="polite"></p><div id="graph-host"></div><details class="graph-legend"><summary aria-label="展开图例说明">图例说明</summary><p class="footnote">import：棕色；call：灰色；inherit：绿色。循环边优先显示红色。虚线表示跨文件调用。悬停或聚焦连线可查看调用表达式；未解析调用不绘制目标节点。</p></details>`}</section><p class="footnote">类关系覆盖可解析的继承、组合、注解关联与依赖；悬停连线查看关系类型。静态调用链不代表运行时执行顺序。</p>`;
   }
   function edgeInCycle(edge,cycles) {
     return cycles.some(group=>{
@@ -414,7 +462,7 @@
       else if(b.y>a.y&&b.y-a.y<=150){const mid=(a.y+36+b.y)/2;path=`M ${a.x+75} ${a.y+36} C ${a.x+75} ${mid}, ${b.x+75} ${mid}, ${b.x+75} ${b.y}`;}
       else {const right=model.width+20+(i%6)*8,exit=a.y+66,entry=b.y-30;path=`M ${a.x+75} ${a.y+36} C ${a.x+75} ${exit}, ${right} ${exit}, ${right} ${exit} C ${right} ${exit}, ${right} ${entry}, ${right} ${entry} C ${right} ${entry}, ${b.x+75} ${entry}, ${b.x+75} ${b.y}`;}
       const cycle=edgeInCycle(e,model.cycles),cross=state.graphTab==='calls'&&e.targetFile&&e.sourceFile!==e.targetFile;
-      const label=e.expression||`${e.rawSource} → ${e.rawTarget}`;
+      const label=e.kind?`${e.kind}: ${e.rawSource} → ${e.rawTarget}`:e.expression||`${e.rawSource} → ${e.rawTarget}`;
       return `<path class="graph-edge ${cycle?'cycle':''} ${cross?'cross':''}" d="${path}" stroke="${cycle?'#b91c1c':base}" marker-end="url(#${prefix}${cycle?'-red':''})" tabindex="0" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title></path>`;
     }).join('');
     const name=state.graphTab==='calls'?'函数调用图':state.graphTab==='inheritance'?'类与继承图':'模块依赖图';
@@ -456,6 +504,10 @@
     const action=target.dataset.action;
     if(action==='graph-node'&&suppressClick){suppressClick=false;return;}
     switch(action){
+      case 'ai-citation': {const file=files().find(f=>f.path===target.dataset.path);if(file){modal('源码引用',`<p class="mono">${esc(file.path)}:${target.dataset.line}–${target.dataset.end}</p><div class="source">${file.source.split('\n').slice(Math.max(0,Number(target.dataset.line)-3),Number(target.dataset.end)+2).map((line,i)=>{const n=Math.max(1,Number(target.dataset.line)-2)+i;return `<div class="source-line ${n>=Number(target.dataset.line)&&n<=Number(target.dataset.end)?'highlight':''}"><span class="line-number">${n}</span><code>${esc(line)||' '}</code></div>`;}).join('')}</div>`);}break;}
+      case 'ai-explain': explainLogic();break;
+      case 'ai-explain-cancel': aiLogic.controller?.abort();break;
+      case 'ai-explain-copy': {const result=aiLogic.cache.get(logicKey());if(result)copy(result.text);break;}
       case 'settings-open': openSettings();break;
       case 'settings-close': closeSettings();break;
       case 'settings-clear': $('#llm-settings-form').reset();$('#settings-error').hidden=true;$('#llm-base-url').focus();break;
@@ -503,11 +555,14 @@
   document.addEventListener('change',event=>{
     const el=event.target;if(el.id==='folder-input'){analyze([...el.files]);return;}
     const key=el.dataset.change;if(!key)return;
-    if(key==='logic-sort')state.logicSort=el.value;
+    if(key==='export-ai'){state.exportAi=el.checked;}
+    else if(key==='export-source'){state.exportSource=el.checked;}
+    else if(key==='logic-sort')state.logicSort=el.value;
     else if(key==='over-only')state.overOnly=el.checked;
     else if(key==='chain-entry')state.chainEntry=el.value;
     else if(key.startsWith('graph-')){const keys={'graph-entry':'graphEntry','graph-layout':'graphLayoutMode','graph-granularity':'graphGranularity','graph-direction':'graphDirection'};if(keys[key])state[keys[key]]=el.value;state.graph=null;state.drawer=null;if(key==='graph-entry'||key==='graph-granularity')state.graphVisible=null;}
     else if(key==='risk-severity'){state.risk.severities=el.checked?[...state.risk.severities,el.value]:state.risk.severities.filter(x=>x!==el.value);state.risk.page=1;}
+    else if(key==='ai-logic-target'){state.fn=el.value;state.line=null;}
     else if(key.startsWith('risk-')){state.risk[key.slice(5)]=el.value;state.risk.page=1;}
     render();
     if(key==='risk-severity'){const details=$('.filters details');if(details){details.open=true;$(`input[value="${el.value}"]`,details)?.focus();}}

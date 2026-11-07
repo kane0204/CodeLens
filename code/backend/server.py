@@ -15,14 +15,18 @@ from core_engine.engine import analyze, VERSION
 from core_engine import health
 from core_engine import rules as extra_rules
 from core_engine import sequence
+from core_engine import quality
 from core_engine.ir import build_index
 from ai import contract as ai_contract
 from ai import provider as ai_provider
 from ai import runner as ai_runner
 from ai import skills as ai_skills
+from ai import explanation
 
 ROOT = CODE_ROOT / "frontend"
 TOKEN = secrets.token_urlsafe(32)
+API_REVISION = 2
+CAPABILITIES = ["analyze", "explain", "explain-context", "class-metrics", "duplicates", "class-relations"]
 MAX_BODY = 12 * 1024 * 1024
 MAX_AI_TARGETS = ai_runner.MAX_TARGETS
 STATIC = {"/":("index.html","text/html"),"/index.html":("index.html","text/html"),
@@ -39,7 +43,7 @@ def ai_error(code, message):
 
 # 补充规则单列在这里：引擎 config.rules 仍然只列引擎自己执行的规则，
 # 前端靠这份清单判断「设计检查」页该展示哪几条。
-EXTRA_RULE_IDS = ("SRP-01", "OCP-01", "DIP-01", "A5-DEAD", "A8-DEFENSIVE")
+EXTRA_RULE_IDS = ("SRP-01", "OCP-01", "LSP-01", "ISP-01", "DIP-01", "A5-DEAD", "A8-DEFENSIVE")
 
 
 def merge_extra(result):
@@ -74,6 +78,8 @@ def enrich(result):
     if not isinstance(result, dict) or result.get("status") in ("empty", "failed"):
         return result
     merged, _ = merge_extra(result)
+    merged = quality.apply(merged)
+    merged["limitations"] = ["静态分析不执行源码；动态调用与运行时行为无法完整还原。", *extra_rules.NOTES, *quality.NOTES]
     merged = health.apply(merged)
     merged["sequence"] = sequence.build(merged)
     return merged
@@ -211,7 +217,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'")
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass  # The browser cancelled; do not retry writing a response.
 
     def allowed_host(self):
         return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
@@ -221,7 +230,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_data(403,{"error":"只允许本机访问"})
         path = urlsplit(self.path).path
         if path == "/api/status":
-            return self.send_data(200,{"ready":True,"engine_version":VERSION,"token":TOKEN})
+            return self.send_data(200,{"ready":True,"engine_version":VERSION,"api_revision":API_REVISION,
+                                      "capabilities":CAPABILITIES,"token":TOKEN})
         if path == "/api/ai/status":
             return self.send_data(200, ai_status())
         asset = resolve_asset(path)
@@ -238,7 +248,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed_host() or origin not in origins or self.headers.get("X-CodeLens-Token") != TOKEN:
             return self.send_data(403,{"error":"请从本机 CodeLens 页面发起分析"})
         path = urlsplit(self.path).path
-        if path not in ("/api/analyze", "/api/ai"):
+        if path not in ("/api/analyze", "/api/ai", "/api/explain"):
             return self.send_data(404,{"error":"接口不存在"})
         is_ai = path == "/api/ai"
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
@@ -252,9 +262,13 @@ class Handler(BaseHTTPRequestHandler):
             if len(data) != length:
                 raise ValueError("请求数据不完整")
             payload = json.loads(data)
+            if path == "/api/explain":
+                return self.send_data(200, explanation.explain(payload))
             if is_ai:
                 return self.send_data(200, ai_analyze(payload))
             return self.send_data(200, enrich(analyze(payload)))
+        except explanation.ExplanationError as exc:
+            return self.send_data(502, {"error": str(exc)})
         except ai_contract.SkillError as exc:
             if is_ai:
                 return self.send_data(400, ai_error(exc.kind, str(exc)[:200]))
@@ -277,7 +291,7 @@ def main():
         server = ThreadingHTTPServer(("127.0.0.1",args.port),Handler)
     except OSError as exc:
         raise SystemExit(f"无法启动端口 {args.port}，可使用 --port 更换端口：{exc}")
-    print(f"CodeLens {VERSION}: http://127.0.0.1:{args.port}",flush=True)
+    print(f"CodeLens {VERSION}: http://127.0.0.1:{server.server_port}",flush=True)
     print("Select a project folder in your browser. Ctrl+C to stop.",flush=True)
     try:
         server.serve_forever()

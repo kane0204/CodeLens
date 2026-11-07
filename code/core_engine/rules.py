@@ -1,31 +1,9 @@
-"""补充规则：SOLID 的 S/O/D 三条，以及两条 AI 代码风险。
-
-`engine.analyze()` 里的六条规则（CC-01/LEN-01/DEPTH-01/A4/A3-IO/CYCLE-01）是默认
-分析路径，每次分析都跑。本模块的五条规则只在"需要 AI 表达层解释这些结论"时才跑，
-所以不塞进 engine：
-
-- 它们会让默认报告变长，而默认报告的第一原则是"短且确定"；
-- 它们只在 `POST /api/ai` 里被消费，默认路径不跑，就不会改变既有输出与既有测试。
-
-## 为什么规则在这边、文字在那边
-
-SOLID 判断与"有没有循环依赖""是不是裸 except"这类结论属于**事实层**：必须可复算、
-可解释、能给出行号。模型擅长的是把这些结论讲成人话、给建议，不擅长也不该负责
-"判断这里到底符不符合 SRP"。所以：
-
-- 本模块负责判定，输出与 `engine.findings` 完全同构的记录；
-- `code/ai/` 下的 skill 只负责解释，每条解释都挂 `finding:<id>` 作证据。
-
-## 口径
-
-五条规则的口径都偏保守（宁可漏报，不要误报），而且把"为什么可能误报"写进
-`finding["confidence"]` 与返回值的 `notes` 里，不做"看起来很准"的判断。
-
-本模块是纯函数：同一份 `analyze()` 结果必须得到逐字节相同的输出。
-"""
+"""Deterministic SOLID and supplementary risk rules, shared by both API paths."""
 from __future__ import annotations
 
 import ast
+
+from . import solid
 
 #: SRP-01：一个类的方法数达到多少算"承担了太多事"。
 MAX_METHODS_PER_CLASS = 12
@@ -45,7 +23,7 @@ DUNDER = ("__",)
 ENTRY_NAMES = {"main", "run", "cli", "app"}
 
 NOTES = [
-    "SOLID 三条只做 S/O/D，口径是「可复算的计数」，不是规范判定：命中说明值得复核，不说明违反。",
+    *solid.LIMITATIONS,
     "A5-DEAD 只看本次分析范围内的调用，外部调用、反射调用与测试调用都可能漏计。",
     "A8-DEFENSIVE 只看 except 处理体是否只有 pass/.../continue，不判断该异常是否真的可忽略。",
 ]
@@ -63,7 +41,7 @@ def _parse_files(result):
             continue
         try:
             trees[path] = ast.parse(source, feature_version=(3, 11))
-        except (SyntaxError, ValueError):
+        except (SyntaxError, ValueError, RecursionError):
             continue
     return trees
 
@@ -153,20 +131,14 @@ def evaluate(result):
     metrics = {"classes": 0, "functions": 0, "type_branches": 0, "concrete_deps": 0,
                "dead_functions": 0, "silent_handlers": 0}
 
-    # 内部定义的具体类名 → 全限定 id，用于 DIP-01 判定"构造的是不是本项目里的类"。
-    internal_classes = {}
-    for cls in result.get("classes") or []:
-        name = cls.get("name")
-        ident = cls.get("id")
-        if isinstance(name, str) and isinstance(ident, str):
-            internal_classes.setdefault(name, []).append(ident)
-
     def add(rule, severity, file, line, message, suggestion, actual=None, threshold=None, confidence=None):
         if len(findings) >= MAX_EXTRA_FINDINGS:
             return
         findings.append({"rule_id": rule, "severity": severity, "file": file, "line": line,
                          "message": message, "suggestion": suggestion, "evidence_type": "fact",
                          "actual": actual, "threshold": threshold, "confidence": confidence})
+        if rule in solid.RULE_IDS:
+            findings[-1]["evidence_type"] = "inference"
 
     # ---- SRP-01 / OCP-01 / DIP-01：逐类 ---------------------------------
     for cls in result.get("classes") or []:
@@ -179,7 +151,7 @@ def evaluate(result):
         metrics["classes"] += 1
         methods = [item for item in node.body
                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))]
-        public = [item for item in methods if not item.name.startswith(DUNDER)]
+        public = [item for item in methods if not item.name.startswith("_")]
         if len(public) > MAX_METHODS_PER_CLASS:
             add("SRP-01", "info", path, line,
                 "类 {} 定义了 {} 个公开方法，超过口径 {}；方法数多不等于违反单一职责，但值得确认它是否只承担一件事。".format(
@@ -190,12 +162,24 @@ def evaluate(result):
         type_names, constructed = set(), set()
         for method in methods:
             for item in _body_walk(method):
-                if isinstance(item, ast.Call) and isinstance(item.func, ast.Name):
-                    if item.func.id in internal_classes:
-                        constructed.add(item.func.id)
                 name = _is_type_test(item)
                 if name:
                     type_names.add(name)
+        # Use resolved constructor edges, so imports/aliases work and unrelated
+        # same-named functions do not become invented concrete dependencies.
+        method_ids = set(cls.get("methods") or [])
+        for call in (result.get("graph") or {}).get("calls") or []:
+            target = call.get("target")
+            if call.get("status") != "resolved" or call.get("source") not in method_ids:
+                continue
+            target_cls = next((c for c in result.get("classes") or [] if c.get("id") == target), None)
+            if target_cls is None:
+                continue
+            target_node = nodes.get((target_cls.get("file"), target_cls.get("line")))
+            if target_node and any(solid._abstract(m) for m in target_node.body
+                                   if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))):
+                continue
+            constructed.add(target)
         metrics["type_branches"] += len(type_names)
         metrics["concrete_deps"] += len(constructed)
         if len(type_names) >= MAX_TYPE_BRANCHES:
@@ -210,6 +194,12 @@ def evaluate(result):
                     cls.get("name"), len(constructed), "、".join(sorted(constructed)[:6])),
                 "核对这几处构造是否需要可替换：需要就把协作对象改为由调用方传入。无需替换时直接构造是更简单的选择。",
                 actual=len(constructed), threshold=MAX_CONCRETE_DEPS, confidence="low")
+
+    solid_result = solid.evaluate(result, nodes)
+    for item in solid_result["findings"]:
+        if len(findings) < MAX_EXTRA_FINDINGS:
+            findings.append(item)
+    metrics["checked_overrides"] = solid_result["checked_overrides"]
 
     # ---- A5-DEAD：未被本次分析内任何已解析调用指向的函数 ---------------
     calls = (result.get("graph") or {}).get("calls") or []
@@ -254,7 +244,12 @@ def evaluate(result):
                     "至少记录日志或缩小捕获类型；确实可忽略时在注释里写明为什么可忽略。",
                     actual="silent-broad-except", threshold=None, confidence="medium")
 
-    return {"findings": findings, "metrics": metrics, "notes": list(NOTES)}
+    return {"findings": findings, "metrics": metrics, "notes": list(NOTES),
+            "solid": {"rules": list(solid.RULE_IDS),
+                      "checked_overrides": solid_result["checked_overrides"],
+                      "coverage_gaps": solid_result["coverage_gaps"],
+                      "limitations": solid_result["limitations"],
+                      "truncated": len(findings) >= MAX_EXTRA_FINDINGS}}
 
 
 ORDER = {"critical": 0, "warning": 1, "info": 2}
@@ -284,4 +279,8 @@ def merge(base, extra):
     if holder is None:
         return combined
     holder["findings"] = combined
+    if isinstance(holder.get("summary"), dict):
+        holder["summary"] = {**holder["summary"], "findings": len(combined)}
+    if isinstance(extra, dict) and "solid" in extra:
+        holder["solid"] = extra["solid"]
     return holder

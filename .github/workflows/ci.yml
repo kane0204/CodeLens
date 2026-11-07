@@ -30,6 +30,8 @@ jobs:
       - name: 前端语法与真实数据链路
         run: |
           node --check code/frontend/app.js
+          node tests/integration/test_logic_frontend.cjs
+          node tests/integration/test_solid_frontend.cjs
           node tests/integration/test_frontend.cjs
 
   repo-check:

@@ -46,7 +46,7 @@ ACCEPTED_PREFIXES = {
 LIMITATIONS = [
     "表达层不产出事实：每条 claim 都挂在 IR 能解析的引用上，解析不到的引用与整条 claim 一起丢弃。",
     "默认使用确定性模板，同一输入得到逐字节相同的输出；配置外部模型后文本会随模型变化，但校验规则不变。",
-    "SOLID 只复核 S、O、D 三条，L 与 I 需要完整的类型层级与接口使用图，当前事实层不提供。",
+    "SOLID 提供五项静态检查；L/I 仅覆盖可解析的继承方法，无法证明运行时行为契约。",
     "缓存 key 由 skill 版本、prompt 版本、provider/model 与目标指纹构成，不含时间与随机数。",
 ]
 
@@ -174,7 +174,7 @@ class Runner:
             "provider": self.provider.id,
             "model": self.provider.model,
             "target": ref,
-            "fingerprint": self._fingerprint(ref),
+            "fingerprint": self.env["index"].fingerprint("all"),
         })[:32]
 
     def _slice_stats(self, ctx):

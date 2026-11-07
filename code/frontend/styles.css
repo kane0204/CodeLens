@@ -21,3 +21,12 @@
 
 /* Deterministic graph controls and module call-chain list. */
 .graph-controls{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin-bottom:16px}.graph-controls label{font-size:12px;color:var(--muted);max-width:100%;min-width:0}.graph-controls select,.graph-controls input{max-width:min(260px,100%);width:100%}.graph-legend{margin-top:16px}.graph-expand{cursor:pointer}.graph-expand text{pointer-events:none}.graph-edge:hover,.graph-edge:focus{stroke-width:3;outline:none}.call-chain{list-style:none;padding:0;margin:20px 0}.call-chain li{position:relative;display:flex;align-items:start;gap:12px;padding:0 0 20px 20px;border-left:2px solid var(--line);margin-left:6px}.call-chain li:before{content:'';position:absolute;left:-5px;top:9px;width:8px;height:8px;background:var(--primary);border-radius:50%}.chain-location{text-align:left;display:grid;gap:4px;min-width:0;overflow-wrap:anywhere}.chain-location span{white-space:normal;word-break:break-word}.graph-node.matched rect{fill:var(--tint);stroke:var(--primary);stroke-width:3}.graph-controls select:disabled{color:var(--muted)}
+
+/* AI natural-language logic reader */
+.ai-logic-grid{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:20px;align-items:start}
+.ai-logic-reader{min-width:0}.ai-logic-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:20px 0 12px}.ai-logic-toolbar select{flex:1;min-width:180px;max-width:100%}
+.ai-explanation{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.95;font-size:15px;max-width:900px;margin:28px 0;color:var(--text,#292524)}
+.ai-reading-state{padding:42px 24px;margin:20px 0;background:#faf8f4;border:1px dashed #ddd4c8;border-radius:10px;line-height:1.8}.ai-reading-state h3{margin-top:0}.ai-source{margin-top:28px;border-top:1px solid #e7e0d6;padding-top:18px}.ai-source summary{cursor:pointer;margin-bottom:14px}.ai-source .source{max-height:420px}
+@media(max-width:800px){.ai-logic-grid{grid-template-columns:1fr}.ai-logic-grid>.card:first-child{max-height:260px;overflow:auto}.ai-logic-toolbar{align-items:stretch}.ai-logic-toolbar select{flex-basis:100%}}
+
+.citation{font:inherit;white-space:normal;text-decoration:underline;text-underline-offset:3px}.citation-invalid{color:#b45309}.ai-context{margin:12px 0}.ai-context ul{line-height:1.8}

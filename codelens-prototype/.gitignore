@@ -1,3 +1,4 @@
 node_modules
 dist
 .check/shots
+.check/

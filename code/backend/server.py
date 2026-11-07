@@ -2,6 +2,7 @@
 import argparse
 import json
 import logging
+import os
 import secrets
 import sys
 import time
@@ -233,6 +234,11 @@ class Handler(BaseHTTPRequestHandler):
 
         def emit(event):
             nonlocal disconnected
+            if event.get("type") == "progress":
+                # Long-running jobs: know which batch the process died on.
+                obs.log_event(logger, logging.INFO, "review.progress", request_id=rid,
+                              stage=event.get("stage"), done=event.get("done"),
+                              total=event.get("total"))
             if disconnected:
                 return
             try:
@@ -248,9 +254,12 @@ class Handler(BaseHTTPRequestHandler):
         def fail(message):
             emit({"type": "error", "error": message, "error_id": rid})
 
+        obs.log_event(logger, logging.INFO, "review.start", request_id=rid)
         try:
             result = explanation.review(payload, progress=emit)
             emit({"type": "result", "result": result})
+            batches = result.get("batch_count") if isinstance(result, dict) else None
+            obs.log_event(logger, logging.INFO, "review.done", request_id=rid, batches=batches)
         except explanation.ExplanationError as exc:
             obs.log_event(logger, logging.WARNING, "review_refused", request_id=rid,
                           type=type(exc).__name__)
@@ -379,11 +388,15 @@ def main():
     parser.add_argument("--log-level", choices=sorted(obs.LEVELS), default=None,
                         help="日志级别；默认取 CODELENS_LOG_LEVEL 或 INFO")
     parser.add_argument("--log-file", default=None,
-                        help="可选的轮转日志文件路径；默认取 CODELENS_LOG_FILE，仅记录元数据")
+                        help="覆盖默认日志路径；默认 logs/codelens.log，也可用 CODELENS_LOG_FILE")
+    parser.add_argument("--no-log-file", action="store_true",
+                        help="只输出到控制台，不写文件日志")
     args = parser.parse_args()
     if sys.version_info < (3,11):
         raise SystemExit("需要 Python 3.11 或更高版本")
-    logger = obs.configure_logging(args.log_level, args.log_file)
+    logger = obs.configure_logging(args.log_level, args.log_file,
+                                   enable_file=not args.no_log_file)
+    obs.install_crash_hooks(logger)
     try:
         server = ThreadingHTTPServer(("127.0.0.1",args.port),Handler)
     except OSError as exc:
@@ -392,7 +405,11 @@ def main():
         raise SystemExit(f"无法启动端口 {args.port}，可使用 --port 更换端口：{exc}")
     print(f"CodeLens {VERSION} API: http://127.0.0.1:{server.server_port} (JSON only)",flush=True)
     print("Open the UI at http://localhost:5173 (see README). Ctrl+C to stop.",flush=True)
-    obs.log_event(logger, logging.INFO, "startup", version=VERSION, port=server.server_port)
+    active = obs.active_log_file()
+    print(f"Logs: {active} (rotating, metadata only)" if active
+          else "Logs: console only (file logging disabled)", flush=True)
+    obs.log_event(logger, logging.INFO, "startup", version=VERSION,
+                  port=server.server_port, pid=os.getpid())
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -403,6 +420,7 @@ def main():
     finally:
         server.server_close()
         obs.log_event(logger, logging.INFO, "stopped", port=server.server_port)
+        obs.flush_all(logger)
 
 
 if __name__ == "__main__":

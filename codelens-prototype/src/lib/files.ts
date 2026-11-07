@@ -82,12 +82,12 @@ export function prepareSelection(raw: RawFile[]): PreparedSelection {
   }
   for (const item of supported) {
     if (item.file.size > LIMITS.maxFileBytes) {
-      errors.push(`${item.path}：单文件 ${(item.file.size / 1024 / 1024).toFixed(2)}MB，超过 1MB`);
+      errors.push(`${item.path}：单文件 ${formatBytes(item.file.size)}，超过 ${formatBytes(LIMITS.maxFileBytes)}`);
     }
   }
   const totalBytes = supported.reduce((sum, item) => sum + item.file.size, 0);
   if (totalBytes > LIMITS.maxTotalBytes) {
-    errors.push(`源码总量 ${(totalBytes / 1024 / 1024).toFixed(2)}MB，超过 8MB；请缩小目录范围。`);
+    errors.push(`源码总量 ${formatBytes(totalBytes)}，超过 ${formatBytes(LIMITS.maxTotalBytes)}；请缩小目录范围。`);
   }
 
   const roots = new Set(supported.map((item) => (item.path.includes('/') ? item.path.split('/')[0] : '')));

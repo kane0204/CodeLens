@@ -32,7 +32,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="w-full max-w-[520px] rounded-[8px] border border-[#e7dfd3] bg-white px-6 py-7 shadow-[0_2px_10px_#00000012]">
           <h1 className="serif text-[18px] font-semibold text-[#292524]">界面遇到问题</h1>
           <p className="mt-2 text-[12px] leading-relaxed text-[#78716c]">
-            当前操作已停止。日志只记录在本机浏览器内存中，不会上传；可下载后定位问题，再重新加载界面。
+            当前操作已停止。运行与异常记录保存在本机浏览器，不会上传；下载日志可用于排查，再重新加载界面。
           </p>
           <p className="num mt-3 text-[11px] text-[#a8a29e]">错误编号：{this.state.errorId}</p>
           <div className="mt-5 flex gap-2">

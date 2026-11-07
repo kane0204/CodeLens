@@ -1663,7 +1663,7 @@ dialog {
 
 dialog::backdrop {
   background: rgba(10, 32, 36, 0.62);
-  backdrop-filter: blur(4px);
+  backdrop-filter: none;
 }
 
 dialog .actions {
@@ -1712,6 +1712,7 @@ dialog .actions {
   color: var(--text);
   font-family: var(--mono);
   padding: 10px 11px;
+  contain: layout paint;
 }
 
 .settings-dialog small {
@@ -1735,6 +1736,20 @@ dialog .actions {
 
 #settings-error {
   margin-top: 12px;
+}
+
+body.modal-open .topbar,
+body.modal-open .workspace-nav,
+body.modal-open .settings-button {
+  backdrop-filter: none;
+}
+
+body.modal-open .content {
+  animation: none;
+}
+
+body.modal-open #app {
+  visibility: hidden;
 }
 
 .logic-detail [role="tabpanel"] {
@@ -1793,13 +1808,14 @@ dialog .actions {
 
 .ai-logic-grid {
   display: grid;
-  grid-template-columns: minmax(210px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
   align-items: start;
-  gap: 18px;
+  gap: 14px;
 }
 
 .ai-logic-reader {
   min-width: 0;
+  min-height: 0;
 }
 
 .ai-logic-toolbar {
@@ -1807,7 +1823,7 @@ dialog .actions {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin: 20px 0 12px;
+  margin: 12px 0;
 }
 
 .ai-logic-toolbar select {
@@ -1816,22 +1832,28 @@ dialog .actions {
 }
 
 .ai-explanation {
-  max-width: 82ch;
-  margin: 28px 0;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
   color: var(--text);
   font-size: 15px;
   line-height: 1.9;
   overflow-wrap: anywhere;
+  padding: 22px 24px;
   white-space: pre-wrap;
 }
 
 .ai-reading-state {
-  border: 1px dashed #bfd4d2;
-  border-radius: 14px;
-  background: #f4fbf9;
-  margin: 20px 0;
-  padding: 34px 24px;
+  display: grid;
+  min-height: 100%;
+  place-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin: 0;
+  padding: 28px 24px;
   line-height: 1.8;
+  text-align: center;
 }
 
 .ai-reading-state .skeleton {
@@ -1852,6 +1874,118 @@ dialog .actions {
 
 .ai-source .source {
   max-height: 420px;
+}
+
+.ai-output-frame {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fbfdfc;
+  scrollbar-width: none;
+}
+
+.ai-output-frame::-webkit-scrollbar {
+  display: none;
+}
+
+.ai-output-frame > .footnote,
+.ai-output-frame > .notice {
+  margin: 0;
+  border-top: 1px solid var(--line);
+  padding: 9px 16px;
+}
+
+.batch-analysis {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.batch-analysis__status {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 9px 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.batch-analysis__status strong {
+  color: var(--primary);
+  font: 600 12px var(--mono);
+}
+
+.batch-analysis__results {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.batch-result {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.batch-result > h3 {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+  margin: 0;
+  padding: 9px 13px;
+  font-size: 11px;
+}
+
+.batch-result .ai-explanation {
+  padding: 16px;
+  font-size: 14px;
+}
+
+.source-editor-dialog[open] {
+  display: flex;
+  width: min(1400px, 97vw);
+  max-width: none;
+  height: 92vh;
+  max-height: 92vh;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.source-editor-dialog > .heading {
+  flex: none;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 14px 18px;
+}
+
+.source-editor {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  background: #10292f;
+  color: #d7e8e6;
+  scrollbar-color: #426568 #10292f;
+}
+
+.source-editor__lines {
+  min-width: max-content;
+  padding: 14px 0 28px;
+}
+
+.source-editor .source-line {
+  min-height: 21px;
+}
+
+.source-editor .source-line code {
+  min-width: 1px;
 }
 
 .citation {
@@ -2581,8 +2715,7 @@ dialog .actions {
 
 @media (min-width: 981px) {
   .content[data-route="structure"],
-  .content[data-route="logic"],
-  .content[data-route="graphs"] {
+  .content[data-route="logic"] {
     display: flex;
     height: calc(100vh - 74px);
     min-height: 0;
@@ -2591,8 +2724,7 @@ dialog .actions {
   }
 
   .content[data-route="structure"] > .structure-grid,
-  .content[data-route="logic"] > .ai-logic-grid,
-  .content[data-route="graphs"] > .graph-page {
+  .content[data-route="logic"] > .ai-logic-grid {
     min-height: 0;
     flex: 1;
   }
@@ -2623,8 +2755,7 @@ dialog .actions {
 
   .content[data-route="structure"] .tree--flat::-webkit-scrollbar,
   .content[data-route="logic"] .tree--flat::-webkit-scrollbar,
-  .content[data-route="logic"] .ai-explanation::-webkit-scrollbar,
-  .content[data-route="graphs"] .call-chain::-webkit-scrollbar {
+  .content[data-route="logic"] .ai-output-frame::-webkit-scrollbar {
     display: none;
   }
 
@@ -2664,18 +2795,13 @@ dialog .actions {
 
   .ai-logic-reader > .heading,
   .ai-logic-reader > .ai-logic-toolbar,
-  .ai-logic-reader > .ai-source,
-  .ai-logic-reader > .footnote,
   .ai-logic-reader > .error-box {
     flex: none;
   }
 
-  .ai-logic-reader > .ai-reading-state,
-  .ai-logic-reader > .ai-explanation {
+  .ai-logic-reader > .ai-output-frame {
     min-height: 0;
     flex: 1;
-    overflow: auto;
-    scrollbar-width: none;
   }
 
   .graph-page {

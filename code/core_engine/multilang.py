@@ -368,13 +368,17 @@ def analyze(payload):
             })
 
         try_block = bool(re.search(r"\b(?:try|catch|except|recover|defer)\b", masked))
+        masked_lines = masked.splitlines()
         for match in _CALL.finditer(masked):
             name = match.group(1)
             if name in _NOT_FUNCTIONS:
                 continue
             line_no = masked.count("\n", 0, match.start()) + 1
             expression = match.group(0)[:-1].strip()
-            if _RISKY_CALL.search(expression):
+            line_text = masked_lines[line_no - 1] if 0 < line_no <= len(masked_lines) else ""
+            risky = _RISKY_CALL.search(line_text) or _RISKY_CALL.search(expression)
+            if risky:
+                expression = risky.group(0)
                 calls.append({
                     "source": record["module"], "target": None, "expression": expression,
                     "file": path, "line": line_no, "status": "unresolved",

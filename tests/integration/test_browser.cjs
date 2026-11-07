@@ -11,7 +11,7 @@ async function main(){
   const fixture=path.join(work,'project'),downloads=path.join(work,'downloads');fs.mkdirSync(fixture);fs.mkdirSync(downloads);
   fs.writeFileSync(path.join(fixture,'a.py'),'from dep import increment, Worker\ndef run(x):\n    return increment(x)\nclass Pipeline:\n    def __init__(self): self.worker = Worker()\n');
   fs.writeFileSync(path.join(fixture,'dep.py'),'def increment(x):\n    return x + 1\nclass Worker:\n    def work(self): return 1\n');
-  fs.writeFileSync(path.join(fixture,'Worker.java'),'class Worker {\n  static int work(int value) {\n    if (value > 0) { return value + 1; }\n    return 0;\n  }\n}\n');
+  fs.writeFileSync(path.join(fixture,'Worker.java'),'class Worker {\n  static String token = "REAL_SECRET_12345";\n  static int work(int value) {\n    if (value > 0) { Runtime.getRuntime().exec("worker.exe"); return value + 1; }\n    return 0;\n  }\n}\n');
   let mode='ok',modelCalls=0,lastPrompt='';
   const model=http.createServer((req,res)=>{let body='';req.on('data',b=>body+=b);req.on('end',()=>{
     modelCalls++;lastPrompt=JSON.parse(body).messages[1].content;
@@ -46,14 +46,22 @@ async function main(){
     await click('a[href="#logic"]');
     await poll(async()=>(await text()).includes('AI 逻辑解读'),'logic page');
     await click('[data-action="settings-open"]');
+    assert.ok(await evaluate('document.body.classList.contains("modal-open")'));
+    assert.equal(await evaluate('getComputedStyle(document.querySelector("#app")).visibility'),'hidden');
+    assert.equal(await evaluate('getComputedStyle(document.querySelector("#settings-dialog"),"::backdrop").backdropFilter'),'none');
     await evaluate(`document.querySelector('#llm-base-url').value=${JSON.stringify(`http://127.0.0.1:${model.address().port}/v1`)};document.querySelector('#llm-model').value='browser-test';document.querySelector('#llm-api-key').value='browser-secret';document.querySelector('#llm-settings-form').requestSubmit();`);
     assert.ok(!(await evaluate('JSON.stringify(localStorage)')).includes('browser-secret'));
     await evaluate(`document.querySelector('#ai-logic-target').value='a.run';document.querySelector('#ai-logic-target').dispatchEvent(new Event('change',{bubbles:true}));`);
     await click('[data-action="ai-explain"]');
     await poll(async()=>(await text()).includes('先调用 increment'),'model explanation');
     assert.ok(lastPrompt.includes('def increment'),'cross-file context missing');
+    assert.ok(!(await text()).includes('源码范围'));
     assert.equal(await evaluate('document.querySelectorAll("[data-action=ai-citation]").length'),2);
     assert.ok((await text()).includes('引用未验证'));
+    await click('[data-action="source-editor"]');
+    assert.ok(await evaluate('document.querySelector("#detail-dialog").open && !!document.querySelector(".source-editor")'));
+    assert.ok(await evaluate('document.querySelector(".source-editor").clientHeight > 300'));
+    await click('#detail-dialog [data-action="close-dialog"]');
     await click('[data-action="ai-citation"][data-path="dep.py"]');
     assert.ok((await text()).includes('return x + 1'));
     await click('#detail-dialog [data-action="close-dialog"]');
@@ -73,17 +81,22 @@ async function main(){
     await poll(()=>fs.existsSync(path.join(downloads,'codelens-report.json')),'optional source export');
     const withoutAi=JSON.parse(fs.readFileSync(path.join(downloads,'codelens-report.json'),'utf8'));
     assert.equal(withoutAi.ai_explanations.length,0);assert.ok(withoutAi.files.every(f=>typeof f.source==='string'));
+    await click('a[href="#logic"]');
+    await click('[data-action="ai-explain-all"]');
+    await poll(async()=>(await text()).includes('批量解读完成'),'batch explanation');
+    assert.equal(await evaluate('document.querySelectorAll(".batch-result").length'),3);
     await click('a[href="#solid"]');assert.ok((await text()).includes('ISP-01'));
     await click('a[href="#metrics"]');assert.ok((await text()).includes('规则命中汇总'));
     assert.ok(!(await text()).includes('LCOM1'));assert.ok(!(await text()).includes('结构重复'));
     assert.equal(await evaluate('document.querySelectorAll(".rule-group[open]").length'),0);
     await click('a[href="#risks"]');
-    for(const label of ['可疑依赖调用','重复实现','未处理异常','硬编码敏感信息','死代码','假设未校验','注释与实现不一致','过度防御'])assert.ok((await text()).includes(label),label);
+    const riskText=await text();
+    for(const label of ['可疑依赖调用','未处理异常','硬编码敏感信息'])assert.ok(riskText.includes(label),label+'\n'+riskText);
+    for(const label of ['重复实现','死代码','假设未校验','注释与实现不一致','过度防御'])assert.ok(!(await text()).includes(label),label);
     assert.equal(await evaluate('document.querySelectorAll(".risk-row[open]").length'),0);
     await evaluate('document.querySelector(".risk-row > summary").click()');
     assert.equal(await evaluate('document.querySelectorAll(".risk-row[open]").length'),1);
-    await click('a[href="#graphs"]');await click('[data-action="graph-tab"][data-tab="inheritance"]');
-    assert.ok(await evaluate('Array.from(document.querySelectorAll(".graph-edge title")).some(e=>e.textContent.includes("composition"))'));
+    assert.equal(await evaluate('!!document.querySelector(".workspace-link[href=\\"#graphs\\"]")'),false);
     await click('a[href="#logic"]');mode='error';await click('[data-action="ai-explain"]');
     await poll(async()=>(await text()).includes('HTTP 401'),'provider error');
     mode='slow';await click('[data-action="ai-explain"]');await click('[data-action="ai-explain-cancel"]');
@@ -94,7 +107,7 @@ async function main(){
     await evaluate(`(()=>{
       const file=(name,content)=>({name,isFile:true,isDirectory:false,file:ok=>queueMicrotask(()=>ok(new File([content],name)))});
       const dir=(name,children)=>({name,isDirectory:true,isFile:false,createReader(){let i=0;return {readEntries(ok){queueMicrotask(()=>ok(i<children.length?[children[i++]]:[]));}};}});
-      const root=dir('dropped',[file('a.py','from dep import increment\\ndef run(x):\\n    return increment(x)\\n'),file('dep.py','def increment(x):\\n    return x + 1\\n'),file('Worker.java','class Worker { static int work(int value) { if (value > 0) { return value + 1; } return 0; } }\\n'),dir('tests',[file('excluded.py','def never_import(): pass')])]);
+      const root=dir('dropped',[file('a.py','from dep import increment\\ndef run(x):\\n    return increment(x)\\n'),file('dep.py','def increment(x):\\n    return x + 1\\n'),file('Worker.java','class Worker { static String token = "REAL_SECRET_12345"; static int work(int value) { if (value > 0) { Runtime.getRuntime().exec("worker.exe"); return value + 1; } return 0; } }\\n'),dir('tests',[file('excluded.py','def never_import(): pass')])]);
       const event=new Event('drop',{bubbles:true,cancelable:true});Object.defineProperty(event,'dataTransfer',{value:{items:[{kind:'file',webkitGetAsEntry:()=>root,getAsFile:()=>null}],files:[]}});document.querySelector('#dropzone').dispatchEvent(event);
     })()`);
     await poll(async()=>(await text()).includes('健康度总分'),'paged drag import');

@@ -2,7 +2,7 @@
 
 前端使用 Vite + React。`src/main.jsx` 负责挂载应用，`src/App.jsx`
 提供全局页面骨架、弹窗、文件输入和运行时生命周期；原有静态分析视图通过
-`app.js` 导出的 `mountLegacyWorkbench()` 接入，保留图谱、AI 解读、
+`app.js` 导出的 `mountLegacyWorkbench()` 接入，保留 AI 解读、
 专项风险评估与报告导出的既有行为。Python 使用 AST 深度分析；
 C/C++、Java、JavaScript、TypeScript、C#、Go、Rust 等使用确定性启发式分析。
 

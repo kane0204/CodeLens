@@ -72,15 +72,20 @@ cd codelens-prototype && npm install && npm run dev   # 终端 2：界面，loca
 
 新版界面地址是 [http://localhost:5173](http://localhost:5173)。旧版 HTML 界面仍在 `code/frontend/`，由后端 18766 直接提供，仅作保留不推荐使用。若后端端口被占用，用 `--port 18767` 启动并给前端设置 `VITE_API_TARGET=http://127.0.0.1:18767`。
 
+> **双击后看到的还是旧界面？** 基本是下面三种情况之一：
+> 1. 打开的是 `http://127.0.0.1:18766`（后端静态页永远是旧版）——请认准 5173；
+> 2. 运行的是另一个克隆里的旧 `start-codelens.cmd`（旧脚本只启动 18766，还会 `npm run build`）——确认脚本里有 `codelens-prototype`，或先 `git pull --ff-only` 同步到最新；
+> 3. 5173 已被别的 Vite 进程占用——脚本用 `--strictPort` 会直接报错，关掉那个窗口再重试。
+
 在初始化页选择项目文件夹即可导入，支持 Python、C/C++、Java、JavaScript/TypeScript、Go；可在同页配置模型接口，导入时自动完成静态分析与 AI 项目审查（逻辑说明、设计检查、风险评估共享一份结果）。
 
 SOLID 检查覆盖 S（方法数线索）、O（类型分派线索）、L（覆盖方法签名/绑定/同步异步/显式拒绝）、I（多方法继承契约中显式拒绝成员）、D（已解析的具体类构造依赖）。未命中不等于符合原则；外部父类、多继承、自定义装饰器等覆盖缺口会单独展示。详细规则见 [SOLID 分析说明](docs/software/solid-analysis.md)。
 
 当前已提供文件/符号统计、函数复杂度与健康度、WMC/DIT/CBO/LCOM1 类指标、SOLID 五项静态检查、结构重复检测、模块依赖与循环、调用图和类关系图（继承/组合/关联/依赖）。逻辑说明支持跨文件 AI 解读及已校验行号跳转；报告支持 Markdown/JSON/CSV，图支持 SVG。没有预置项目或模拟结果。静态分析不能证明完整运行时行为契约，也不覆盖所有语义等价重复。
 
-静态分析仅在本机服务内存中完成，不执行或导入目标项目。使用“逻辑说明 → 生成 AI 解读”时，所选文件或函数源码及最多两层已解析调用的相关上下文会发送到配置的模型服务；模型解读按需触发，不使用模板替代失败结果。最多 200 个 Python 文件、单文件 1 MB、总计 8 MB；默认排除测试、虚拟环境和构建目录。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
+静态分析仅在本机服务内存中完成，不执行或导入目标项目。导入时选择的项目源码会分批发送到配置的模型服务用于 AI 项目审查；未配置模型或审查失败时静态结果照常可用，不使用模板替代失败结果。最多 200 个文件、请求体 12 MB；默认排除测试、虚拟环境和构建目录。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
 
-AI 逻辑解读：打开右上角设置，填写兼容 chat/completions 的 Base URL、模型名称和 API Key；进入“逻辑说明”选择整个文件或函数，点击“生成 AI 解读”。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。详细范围见 [AI 逻辑解读说明](docs/software/ai-logic-explanation.md)。
+AI 项目审查：在初始化页填写兼容 chat/completions 的 Base URL、模型名称和 API Key，选择项目文件夹后自动完成「静态分析 → AI 审查」。审查结果分为逻辑说明、设计检查、风险评估三段并共享同一份阅读记录；审查意外中断后重新生成会从服务端断点续跑。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。详细范围见 [AI 逻辑解读说明](docs/software/ai-logic-explanation.md)。
 
 检查命令（前端检查另需 Node.js 22+ 与本机 Chromium/Edge；可用 `CODELENS_BROWSER` 指定浏览器程序）：
 

@@ -39,6 +39,49 @@ def _participant_of(target, module):
     return head or module
 
 
+def _group_calls(calls):
+    grouped = {}
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        path = call.get("file")
+        line = call.get("line")
+        if not isinstance(path, str) or not isinstance(line, int):
+            continue
+        grouped.setdefault(path, []).append(call)
+    return grouped
+
+
+def _build_file_steps(path, module, ordered, functions_by_file, max_steps):
+    steps = []
+    for call in ordered[:max_steps]:
+        steps.append({
+            "line": call.get("line"),
+            "expression": call.get("expression"),
+            "target": call.get("target"),
+            "status": call.get("status"),
+            "evidence_type": call.get("evidence_type"),
+            "enclosing": _enclosing(functions_by_file.get(path, []), call.get("line")),
+            "participant": _participant_of(call.get("target"), module),
+        })
+    return {
+        "file": path,
+        "module": module,
+        "steps": steps,
+        "total": len(ordered),
+        "truncated": len(ordered) > len(steps),
+    }
+
+
+def _collect_participants(files):
+    participants = []
+    for entry in files:
+        for name in [entry["module"]] + [s["participant"] for s in entry["steps"]]:
+            if name and name not in participants:
+                participants.append(name)
+    return participants
+
+
 def build(result, max_steps=MAX_STEPS_PER_FILE):
     """从引擎结果生成按文件分组的调用序列。"""
     graph = result.get("graph") if isinstance(result, dict) else None
@@ -58,46 +101,13 @@ def build(result, max_steps=MAX_STEPS_PER_FILE):
     for function in result.get("functions") or []:
         if isinstance(function, dict):
             functions_by_file.setdefault(function.get("file"), []).append(function)
-    grouped = {}
-    for call in calls:
-        if not isinstance(call, dict):
-            continue
-        path = call.get("file")
-        line = call.get("line")
-        if not isinstance(path, str) or not isinstance(line, int):
-            continue
-        grouped.setdefault(path, []).append(call)
+    grouped = _group_calls(calls)
     files = []
     for path in sorted(grouped):
         module = modules.get(path) or ""
         ordered = sorted(grouped[path], key=lambda c: (c.get("line"), str(c.get("expression"))))
-        steps = []
-        for call in ordered[:max_steps]:
-            steps.append(
-                {
-                    "line": call.get("line"),
-                    "expression": call.get("expression"),
-                    "target": call.get("target"),
-                    "status": call.get("status"),
-                    "evidence_type": call.get("evidence_type"),
-                    "enclosing": _enclosing(functions_by_file.get(path, []), call.get("line")),
-                    "participant": _participant_of(call.get("target"), module),
-                }
-            )
-        files.append(
-            {
-                "file": path,
-                "module": module,
-                "steps": steps,
-                "total": len(ordered),
-                "truncated": len(ordered) > len(steps),
-            }
-        )
-    participants = []
-    for entry in files:
-        for name in [entry["module"]] + [s["participant"] for s in entry["steps"]]:
-            if name and name not in participants:
-                participants.append(name)
+        files.append(_build_file_steps(path, module, ordered, functions_by_file, max_steps))
+    participants = _collect_participants(files)
     return {
         "available": True,
         "files": files,

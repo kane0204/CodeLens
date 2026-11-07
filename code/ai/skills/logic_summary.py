@@ -90,6 +90,33 @@ class LogicSummary(Skill):
             return rows, False
         return rows[:MAX_STEPS - 2] + rows[-2:], True
 
+    def _flow_claim(self, ctx, rows):
+        flow = ctx["flow"]
+        if not flow.get("available"):
+            return None
+        branches = sum(1 for edge in flow.get("edges") or []
+                       if edge[-1] in ("true", "false", "loop", "except"))
+        if not branches:
+            return None
+        evidence = [base.statement_ref(ctx["ident"], rows[0].get("line")) if rows else "def:" + ctx["ident"],
+                    "def:" + ctx["ident"]]
+        return contract.claim(
+            "控制流切成 {} 个基本块、{} 条分支或循环边；也就是说它有 {} 处「走另一条路」的地方。".format(
+                len(flow.get("blocks") or []), len(flow.get("edges") or []), branches),
+            evidence, kind="branch", confidence="high")
+
+    def _callers_claim(self, ctx):
+        if not ctx["callers"]:
+            return None
+        callers = [str(item.get("source")) for item in ctx["callers"][:3] if item.get("source")]
+        evidence = ["def:" + ctx["ident"]]
+        if ctx["module"]:
+            evidence.append("module:" + ctx["module"])
+        return contract.claim(
+            "它被 {} 处调用引用，调用方来自 {}；改动签名前先看这些位置。".format(
+                len(ctx["callers"]), base.join_limited(callers, 3)),
+            evidence, kind="advice", confidence="medium")
+
     def render(self, ctx):
         piece = ctx["slice"]
         name = piece.get("name") or ctx["ident"].rsplit(".", 1)[-1]
@@ -118,16 +145,9 @@ class LogicSummary(Skill):
                 [base.statement_ref(ctx["ident"], rows[-1].get("line")), "def:" + ctx["ident"]],
                 kind="step", confidence="medium"))
 
-        flow = ctx["flow"]
-        if flow.get("available"):
-            branches = sum(1 for edge in flow.get("edges") or []
-                           if edge[-1] in ("true", "false", "loop", "except"))
-            if branches:
-                claims.append(contract.claim(
-                    "控制流切成 {} 个基本块、{} 条分支或循环边；也就是说它有 {} 处「走另一条路」的地方。".format(
-                        len(flow.get("blocks") or []), len(flow.get("edges") or []), branches),
-                    [base.statement_ref(ctx["ident"], rows[0].get("line")) if rows else "def:" + ctx["ident"],
-                     "def:" + ctx["ident"]], kind="branch", confidence="high"))
+        flow_claim = self._flow_claim(ctx, rows)
+        if flow_claim:
+            claims.append(flow_claim)
 
         for call in ctx["side_effects"][:2]:
             claims.append(contract.claim(
@@ -136,17 +156,12 @@ class LogicSummary(Skill):
                 ["call:{}#{}".format(call.get("file"), call.get("line")), "def:" + ctx["ident"]],
                 kind="side_effect", confidence="high"))
 
-        if ctx["callers"]:
-            callers = [str(item.get("source")) for item in ctx["callers"][:3] if item.get("source")]
-            evidence = ["def:" + ctx["ident"]]
-            if ctx["module"]:
-                evidence.append("module:" + ctx["module"])
-            claims.append(contract.claim(
-                "它被 {} 处调用引用，调用方来自 {}；改动签名前先看这些位置。".format(
-                    len(ctx["callers"]), base.join_limited(callers, 3)),
-                evidence, kind="advice", confidence="medium"))
+        callers_claim = self._callers_claim(ctx)
+        if callers_claim:
+            claims.append(callers_claim)
 
         steps = ["第 {} 行：{}".format(item.get("line"), item.get("description")) for item in rows]
+        flow = ctx["flow"]
         headline = base.short("{}：{} 条语句{}".format(
             name, len(ctx["statements"]),
             "，{} 处分支".format(len(flow.get("blocks") or []) - 1) if flow.get("available") and len(flow.get("blocks") or []) > 1 else ""), 120)

@@ -103,8 +103,8 @@ def ai_status():
     }
 
 
-def ai_analyze(payload):
-    """跑一次 AI 表达层。事实层仍然是 `analyze()`，这里只做"把事实讲清楚"。"""
+def _validate_ai_payload(payload):
+    """校验 AI 表达层请求的信封字段，非法时抛 SkillError。"""
     if not isinstance(payload, dict):
         raise ai_contract.SkillError("refused", "请求必须是 JSON 对象")
     skills = payload.get("skills")
@@ -114,11 +114,17 @@ def ai_analyze(payload):
     if unknown:
         raise ai_contract.SkillError("refused", "未注册的 skill：" + "、".join(str(x)[:40] for x in unknown[:4]))
     targets = payload.get("targets")
-    if targets is not None:
-        if not isinstance(targets, list) or not all(isinstance(item, str) for item in targets):
-            raise ai_contract.SkillError("refused", "targets 必须是字符串数组或 null")
-        if len(targets) > MAX_AI_TARGETS:
-            raise ai_contract.SkillError("refused", "targets 超过上限 " + str(MAX_AI_TARGETS))
+    if targets is not None and (not isinstance(targets, list) or not all(isinstance(item, str) for item in targets)):
+        raise ai_contract.SkillError("refused", "targets 必须是字符串数组或 null")
+    if targets is not None and len(targets) > MAX_AI_TARGETS:
+        raise ai_contract.SkillError("refused", "targets 超过上限 " + str(MAX_AI_TARGETS))
+
+
+def ai_analyze(payload):
+    """跑一次 AI 表达层。事实层仍然是 `analyze()`，这里只做"把事实讲清楚"。"""
+    _validate_ai_payload(payload)
+    skills = payload.get("skills")
+    targets = payload.get("targets")
     options = payload.get("options") or {}
     if not isinstance(options, dict):
         raise ai_contract.SkillError("refused", "options 必须是对象")

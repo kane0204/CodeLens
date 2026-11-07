@@ -83,6 +83,16 @@ class Index:
         self.inheritance = []
         self.unaddressable = []
 
+        self._index_files(result)
+        self._index_defs(result)
+        self._index_findings(result)
+        self._index_graph(result)
+
+        for bucket in (self.calls_by_source, self.calls_by_file_line, self.findings_by_file):
+            for key in bucket:
+                bucket[key].sort(key=_call_key)
+
+    def _index_files(self, result):
         for record in result.get("files") or []:
             path = record.get("path")
             if not isinstance(path, str):
@@ -94,6 +104,7 @@ class Index:
             if "#" in path or "->" in path:
                 self.unaddressable.append(path)
 
+    def _index_defs(self, result):
         for entry in (result.get("functions") or []) + (result.get("classes") or []):
             ident = entry.get("id")
             if not isinstance(ident, str):
@@ -108,6 +119,7 @@ class Index:
                 if isinstance(line, int):
                     self.statements[(ident, line)] = stmt
 
+    def _index_findings(self, result):
         for finding in result.get("findings") or []:
             ident = finding.get("id")
             if isinstance(ident, str):
@@ -116,6 +128,7 @@ class Index:
             if isinstance(path, str):
                 self.findings_by_file[path].append(finding)
 
+    def _index_graph(self, result):
         graph = result.get("graph") or {}
         for call in graph.get("calls") or []:
             source = call.get("source")
@@ -130,10 +143,6 @@ class Index:
         for edge in graph.get("inheritance") or []:
             self.inheritance.append(edge)
         self.cycles = list(graph.get("cycles") or [])
-
-        for bucket in (self.calls_by_source, self.calls_by_file_line, self.findings_by_file):
-            for key in bucket:
-                bucket[key].sort(key=_call_key)
 
     # ---- 基础查询 -----------------------------------------------------
 
@@ -277,105 +286,130 @@ class Index:
         kind, payload, error = _parts(ref)
         if error:
             return {"ok": False, "error": error}
+        handler = self._resolvers.get(kind)
+        if handler is None:
+            return {"ok": False, "error": "未知的引用类型：" + kind[:24]}
+        return handler(self, payload)
 
-        if kind == "summary":
-            if payload != "project":
-                return {"ok": False, "error": "summary 引用只支持 summary:project"}
-            return {"ok": True, "kind": kind, "payload": payload}
+    # -- per-kind resolvers (was one long if/elif chain; now a dispatch table) --
 
-        if kind == "file":
-            if payload not in self.files:
-                return {"ok": False, "error": "文件不在本次分析范围内：" + payload}
-            return {"ok": True, "kind": kind, "path": payload,
-                    "sha256": self.files[payload].get("sha256")}
+    def _resolve_summary(self, payload):
+        if payload != "project":
+            return {"ok": False, "error": "summary 引用只支持 summary:project"}
+        return {"ok": True, "kind": "summary", "payload": payload}
 
-        if kind == "module":
-            if payload not in self.modules:
-                return {"ok": False, "error": "模块不在本次分析范围内：" + payload}
-            return {"ok": True, "kind": kind, "module": payload, "path": self.modules[payload]}
+    def _resolve_file(self, payload):
+        if payload not in self.files:
+            return {"ok": False, "error": "文件不在本次分析范围内：" + payload}
+        return {"ok": True, "kind": "file", "path": payload,
+                "sha256": self.files[payload].get("sha256")}
 
-        if kind == "def":
-            if payload not in self.defs:
-                return {"ok": False, "error": "符号不在本次分析结果中：" + payload}
-            return {"ok": True, "kind": kind, "id": payload,
-                    "symbol_kind": self.defs[payload].get("kind")}
+    def _resolve_module(self, payload):
+        if payload not in self.modules:
+            return {"ok": False, "error": "模块不在本次分析范围内：" + payload}
+        return {"ok": True, "kind": "module", "module": payload, "path": self.modules[payload]}
 
-        if kind in ("function", "class"):
-            table = self.functions if kind == "function" else self.classes
-            if payload not in table:
-                return {"ok": False, "error": "没有这个{}：{}".format("函数" if kind == "function" else "类", payload)}
-            return {"ok": True, "kind": kind, "id": payload}
+    def _resolve_def(self, payload):
+        if payload not in self.defs:
+            return {"ok": False, "error": "符号不在本次分析结果中：" + payload}
+        return {"ok": True, "kind": "def", "id": payload,
+                "symbol_kind": self.defs[payload].get("kind")}
 
-        if kind == "line":
-            parts = _split(payload, "#", 2)
-            if not parts:
-                return {"ok": False, "error": "line 引用必须形如 line:path#行号"}
-            path, raw_line = parts
-            if path not in self.files:
-                return {"ok": False, "error": "文件不在本次分析范围内：" + path}
-            line = _line_number(raw_line)
-            if line is None:
-                return {"ok": False, "error": "行号非法：" + raw_line}
-            record = self.files[path]
-            if line < 1 or line > (record.get("line_count") or 0):
-                return {"ok": False, "error": "行号超出文件范围：{}#{}".format(path, line)}
-            return {"ok": True, "kind": kind, "path": path, "line": line}
+    def _resolve_function(self, payload):
+        return self._resolve_symbol_table("function", self.functions, payload)
 
-        if kind == "stmt":
-            parts = _split(payload, "#", 2)
-            if not parts:
-                return {"ok": False, "error": "stmt 引用必须形如 stmt:符号#行号"}
-            ident, raw_line = parts
-            line = _line_number(raw_line)
-            if line is None:
-                return {"ok": False, "error": "行号非法：" + raw_line}
-            if (ident, line) not in self.statements:
-                return {"ok": False, "error": "该函数第 {} 行不是已抽取的语句：{}".format(line, ident)}
-            return {"ok": True, "kind": kind, "id": ident, "line": line,
-                    "ast_type": self.statements[(ident, line)].get("ast_type")}
+    def _resolve_class(self, payload):
+        return self._resolve_symbol_table("class", self.classes, payload)
 
-        if kind == "finding":
-            if payload not in self.findings:
-                return {"ok": False, "error": "没有这条 finding：" + payload}
-            return {"ok": True, "kind": kind, "id": payload,
-                    "rule_id": self.findings[payload].get("rule_id")}
+    def _resolve_symbol_table(self, kind, table, payload):
+        if payload not in table:
+            return {"ok": False, "error": "没有这个{}：{}".format("函数" if kind == "function" else "类", payload)}
+        return {"ok": True, "kind": kind, "id": payload}
 
-        if kind == "dep":
-            parts = _split(payload, "->", 2)
-            if not parts:
-                return {"ok": False, "error": "dep 引用必须形如 dep:源->目标"}
-            if tuple(parts) not in self.deps:
-                return {"ok": False, "error": "没有这条内部依赖：" + payload}
-            return {"ok": True, "kind": kind, "source": parts[0], "target": parts[1]}
+    def _resolve_line(self, payload):
+        parts = _split(payload, "#", 2)
+        if not parts:
+            return {"ok": False, "error": "line 引用必须形如 line:path#行号"}
+        path, raw_line = parts
+        if path not in self.files:
+            return {"ok": False, "error": "文件不在本次分析范围内：" + path}
+        line = _line_number(raw_line)
+        if line is None:
+            return {"ok": False, "error": "行号非法：" + raw_line}
+        record = self.files[path]
+        if line < 1 or line > (record.get("line_count") or 0):
+            return {"ok": False, "error": "行号超出文件范围：{}#{}".format(path, line)}
+        return {"ok": True, "kind": "line", "path": path, "line": line}
 
-        if kind == "call":
-            parts = _split(payload, "#", 2)
-            if not parts:
-                return {"ok": False, "error": "call 引用必须形如 call:path#行号"}
-            path, raw_line = parts
-            line = _line_number(raw_line)
-            if line is None:
-                return {"ok": False, "error": "行号非法：" + raw_line}
-            if (path, line) not in self.calls_by_file_line:
-                return {"ok": False, "error": "该位置没有已记录的调用：{}#{}".format(path, line)}
-            return {"ok": True, "kind": kind, "path": path, "line": line}
+    def _resolve_stmt(self, payload):
+        parts = _split(payload, "#", 2)
+        if not parts:
+            return {"ok": False, "error": "stmt 引用必须形如 stmt:符号#行号"}
+        ident, raw_line = parts
+        line = _line_number(raw_line)
+        if line is None:
+            return {"ok": False, "error": "行号非法：" + raw_line}
+        if (ident, line) not in self.statements:
+            return {"ok": False, "error": "该函数第 {} 行不是已抽取的语句：{}".format(line, ident)}
+        return {"ok": True, "kind": "stmt", "id": ident, "line": line,
+                "ast_type": self.statements[(ident, line)].get("ast_type")}
 
-        if kind == "inherit":
-            parts = _split(payload, "->", 2)
-            if not parts:
-                return {"ok": False, "error": "inherit 引用必须形如 inherit:子类->父类"}
-            for edge in self.inheritance:
-                if edge.get("source") == parts[0] and edge.get("target") == parts[1]:
-                    return {"ok": True, "kind": kind, "source": parts[0], "target": parts[1]}
-            return {"ok": False, "error": "没有这条继承关系：" + payload}
+    def _resolve_finding(self, payload):
+        if payload not in self.findings:
+            return {"ok": False, "error": "没有这条 finding：" + payload}
+        return {"ok": True, "kind": "finding", "id": payload,
+                "rule_id": self.findings[payload].get("rule_id")}
 
-        if kind == "cycle":
-            index = _line_number(payload)
-            if index is None or index < 0 or index >= len(self.cycles):
-                return {"ok": False, "error": "没有这个循环依赖组：" + payload}
-            return {"ok": True, "kind": kind, "index": index, "modules": list(self.cycles[index])}
+    def _resolve_dep(self, payload):
+        parts = _split(payload, "->", 2)
+        if not parts:
+            return {"ok": False, "error": "dep 引用必须形如 dep:源->目标"}
+        if tuple(parts) not in self.deps:
+            return {"ok": False, "error": "没有这条内部依赖：" + payload}
+        return {"ok": True, "kind": "dep", "source": parts[0], "target": parts[1]}
 
-        return {"ok": False, "error": "未知的引用类型：" + kind[:24]}
+    def _resolve_call(self, payload):
+        parts = _split(payload, "#", 2)
+        if not parts:
+            return {"ok": False, "error": "call 引用必须形如 call:path#行号"}
+        path, raw_line = parts
+        line = _line_number(raw_line)
+        if line is None:
+            return {"ok": False, "error": "行号非法：" + raw_line}
+        if (path, line) not in self.calls_by_file_line:
+            return {"ok": False, "error": "该位置没有已记录的调用：{}#{}".format(path, line)}
+        return {"ok": True, "kind": "call", "path": path, "line": line}
+
+    def _resolve_inherit(self, payload):
+        parts = _split(payload, "->", 2)
+        if not parts:
+            return {"ok": False, "error": "inherit 引用必须形如 inherit:子类->父类"}
+        for edge in self.inheritance:
+            if edge.get("source") == parts[0] and edge.get("target") == parts[1]:
+                return {"ok": True, "kind": "inherit", "source": parts[0], "target": parts[1]}
+        return {"ok": False, "error": "没有这条继承关系：" + payload}
+
+    def _resolve_cycle(self, payload):
+        index = _line_number(payload)
+        if index is None or index < 0 or index >= len(self.cycles):
+            return {"ok": False, "error": "没有这个循环依赖组：" + payload}
+        return {"ok": True, "kind": "cycle", "index": index, "modules": list(self.cycles[index])}
+
+    _resolvers = {
+        "summary": _resolve_summary,
+        "file": _resolve_file,
+        "module": _resolve_module,
+        "def": _resolve_def,
+        "function": _resolve_function,
+        "class": _resolve_class,
+        "line": _resolve_line,
+        "stmt": _resolve_stmt,
+        "finding": _resolve_finding,
+        "dep": _resolve_dep,
+        "call": _resolve_call,
+        "inherit": _resolve_inherit,
+        "cycle": _resolve_cycle,
+    }
 
     def check(self, refs):
         """批量解析，返回 (保留的 refs, 失败原因列表)。"""

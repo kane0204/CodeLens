@@ -220,6 +220,55 @@ def _normalize_outputs(outputs, schema):
     return clean
 
 
+def _resolve_evidence(evidence, resolve):
+    """逐条解析证据引用；返回 (有效 refs, 失败原因)。"""
+    refs, ref_reason = [], None
+    total_refs = resolved_refs = 0
+    for ref in evidence[:MAX_EVIDENCE_PER_CLAIM]:
+        total_refs += 1
+        if not isinstance(ref, str):
+            ref_reason = "证据引用不是字符串"
+            continue
+        outcome = resolve(ref)
+        if isinstance(outcome, dict) and outcome.get("ok"):
+            resolved_refs += 1
+            refs.append(ref)
+        else:
+            ref_reason = (outcome or {}).get("error") if isinstance(outcome, dict) else "无法解析引用"
+    return refs, ref_reason, total_refs, resolved_refs
+
+
+def _validate_claim(item, allowed, resolve):
+    """校验单条 claim，返回 (kept_item, dropped_reason, 统计增量)。"""
+    stats = {"total_refs": 0, "resolved_refs": 0}
+    if not isinstance(item, dict):
+        return None, {"reason": "claim 不是对象", "text": str(item)[:80]}, stats
+    text = item.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None, {"reason": "claim 缺少正文", "text": ""}, stats
+    text = " ".join(text.split())
+    if len(text) > MAX_CLAIM_CHARS:
+        return None, {"reason": "正文超过 {} 字".format(MAX_CLAIM_CHARS), "text": text[:80]}, stats
+    kind = item.get("kind")
+    if kind not in CLAIM_KINDS:
+        return None, {"reason": "未知的 claim 类型：" + str(kind)[:20], "text": text[:80]}, stats
+    confidence = item.get("confidence")
+    if confidence not in CONFIDENCES:
+        return None, {"reason": "未知的置信度：" + str(confidence)[:20], "text": text[:80]}, stats
+    reason = _check_banned(text) or _check_rule_tokens(text, allowed)
+    if reason:
+        return None, {"reason": reason, "text": text[:80]}, stats
+    evidence = item.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return None, {"reason": "claim 没有证据引用", "text": text[:80]}, stats
+    refs, ref_reason, total_refs, resolved_refs = _resolve_evidence(evidence, resolve)
+    stats["total_refs"] = total_refs
+    stats["resolved_refs"] = resolved_refs
+    if not refs:
+        return None, {"reason": ref_reason or "证据引用全部无法解析", "text": text[:80]}, stats
+    return {"kind": kind, "text": text, "evidence": refs, "confidence": confidence}, None, stats
+
+
 def validate_skill_result(raw, resolve, *, allowed_rule_ids=(), output_schema=None,
                           max_claims=MAX_CLAIMS_PER_RESULT):
     """三层校验，返回可直接下发的 SkillResult。
@@ -259,49 +308,13 @@ def validate_skill_result(raw, resolve, *, allowed_rule_ids=(), output_schema=No
     total_refs = resolved_refs = 0
 
     for item in claims_in[:max_claims]:
-        if not isinstance(item, dict):
-            dropped.append({"reason": "claim 不是对象", "text": str(item)[:80]})
-            continue
-        text = item.get("text")
-        if not isinstance(text, str) or not text.strip():
-            dropped.append({"reason": "claim 缺少正文", "text": ""})
-            continue
-        text = " ".join(text.split())
-        if len(text) > MAX_CLAIM_CHARS:
-            dropped.append({"reason": "正文超过 {} 字".format(MAX_CLAIM_CHARS), "text": text[:80]})
-            continue
-        kind = item.get("kind")
-        if kind not in CLAIM_KINDS:
-            dropped.append({"reason": "未知的 claim 类型：" + str(kind)[:20], "text": text[:80]})
-            continue
-        confidence = item.get("confidence")
-        if confidence not in CONFIDENCES:
-            dropped.append({"reason": "未知的置信度：" + str(confidence)[:20], "text": text[:80]})
-            continue
-        reason = _check_banned(text) or _check_rule_tokens(text, allowed)
-        if reason:
-            dropped.append({"reason": reason, "text": text[:80]})
-            continue
-        evidence = item.get("evidence")
-        if not isinstance(evidence, list) or not evidence:
-            dropped.append({"reason": "claim 没有证据引用", "text": text[:80]})
-            continue
-        refs, ref_reason = [], None
-        for ref in evidence[:MAX_EVIDENCE_PER_CLAIM]:
-            total_refs += 1
-            if not isinstance(ref, str):
-                ref_reason = "证据引用不是字符串"
-                continue
-            outcome = resolve(ref)
-            if isinstance(outcome, dict) and outcome.get("ok"):
-                resolved_refs += 1
-                refs.append(ref)
-            else:
-                ref_reason = (outcome or {}).get("error") if isinstance(outcome, dict) else "无法解析引用"
-        if not refs:
-            dropped.append({"reason": ref_reason or "证据引用全部无法解析", "text": text[:80]})
-            continue
-        kept.append({"kind": kind, "text": text, "evidence": refs, "confidence": confidence})
+        kept_item, drop_reason, stats = _validate_claim(item, allowed, resolve)
+        total_refs += stats["total_refs"]
+        resolved_refs += stats["resolved_refs"]
+        if kept_item is not None:
+            kept.append(kept_item)
+        else:
+            dropped.append(drop_reason)
 
     coverage = round(resolved_refs / total_refs, 4) if total_refs else 0.0
     result = new_result(

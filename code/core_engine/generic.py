@@ -9,6 +9,7 @@ Design constraints:
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from pathlib import PurePosixPath
 
 LANGUAGES = {
@@ -55,6 +56,21 @@ PLACEHOLDER_RE = re.compile(r"demo|example|sample|test|placeholder|changeme|your
 TODO_RE = re.compile(r"(?:\btodo\b|\bfixme\b|\bhack\b|\bxxx\b|待实现|临时方案|未完成)", re.I)
 EMPTY_CATCH_RE = re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}")
 BROAD_CATCH_RE = re.compile(r"catch\s*\(\s*(?:Exception|Throwable|\.\.\.)\b")
+CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+CC_TOKEN_RE = re.compile(r"\b(?:if|for|foreach|while|case|catch)\b|&&|\|\||\?(?![.:])")
+MAX_CALLS_PER_FILE = 4000
+
+
+class _LineIndex:
+    """Precomputed newline offsets: O(log n) line lookups instead of O(n) scans."""
+
+    __slots__ = ("offsets",)
+
+    def __init__(self, source):
+        self.offsets = [index for index, ch in enumerate(source) if ch == "\n"]
+
+    def line_at(self, index):
+        return bisect_left(self.offsets, index) + 1
 
 
 def language_of(path):
@@ -131,10 +147,6 @@ def _brace_pairs(clean):
         elif ch == "}" and stack:
             pairs[stack.pop()] = index
     return pairs
-
-
-def _line_at(source, index):
-    return source.count("\n", 0, index) + 1
 
 
 def _segment_before(clean, index, limit=400):
@@ -254,16 +266,33 @@ def _resolve_include(current_path, target, known):
     return None
 
 
-def analyze_record(record, known_paths):
-    """Return functions/classes/findings/edges for one non-Python record."""
-    source = record["source"]
-    path = record["path"]
-    module = record["module"]
-    clean = _sanitize(source)
-    pairs = _brace_pairs(clean)
-    functions, classes = [], []
-    class_entries = []
+def _inner_spans(spans):
+    """Map each function span to the spans strictly nested inside it."""
+    ordered = sorted(spans)
+    inner = {span: [] for span in ordered}
+    for outer_start, outer_end in ordered:
+        for start, end in ordered:
+            if outer_start < start and end < outer_end:
+                inner[(outer_start, outer_end)].append((start, end))
+    return inner
 
+
+def _kept_ranges(start, end, inner):
+    """Body ranges with nested-function bodies removed (they are separate units)."""
+    kept, cursor = [], start
+    for span_start, span_end in sorted(inner):
+        if span_start <= start or span_end >= end:
+            continue
+        if span_start > cursor:
+            kept.append((cursor, span_start))
+        cursor = max(cursor, span_end)
+    if cursor < end:
+        kept.append((cursor, end))
+    return kept
+
+
+def _scan_classes(clean, pairs, module, path, lines):
+    classes = []
     for match in CLASS_RE.finditer(clean):
         brace = clean.find("{", match.end())
         if brace < 0 or brace not in pairs:
@@ -274,17 +303,22 @@ def analyze_record(record, known_paths):
             "id": f"{module}.{name}",
             "name": name,
             "file": path,
-            "line": _line_at(source, match.start()),
-            "end_line": _line_at(source, pairs[brace]),
+            "line": lines.line_at(match.start()),
+            "end_line": lines.line_at(pairs[brace]),
             "kind": "class",
             "methods": [],
             "bases": _class_bases(header),
         }
-        if any(item["id"] == entry["id"] for item in class_entries):
+        if any(item["id"] == entry["id"] for item in classes):
             entry["id"] += "@" + str(entry["line"])
-        class_entries.append(entry)
-        class_entries[-1]["_span"] = (brace, pairs[brace])
+        classes.append(entry)
+        classes[-1]["_span"] = (brace, pairs[brace])
+    return classes
 
+
+def _scan_functions(clean, pairs, classes, module, path, lines):
+    """Locate function spans and identities; metrics are applied afterwards."""
+    functions = []
     seen_ids = set()
     for brace in sorted(pairs):
         header = _function_header(clean, brace)
@@ -292,43 +326,17 @@ def analyze_record(record, known_paths):
             continue
         name, text = header
         end = pairs[brace]
-        start_line = _line_at(source, brace - len(text))
-        end_line = _line_at(source, end)
+        start_line = lines.line_at(brace - len(text))
+        end_line = lines.line_at(end)
         if end_line < start_line:
             continue
-        body = clean[brace + 1:end]
-        owner = next((item for item in class_entries if item["_span"][0] < brace < item["_span"][1]), None)
+        owner = next((item for item in classes if item["_span"][0] < brace < item["_span"][1]), None)
         ident = f"{module}.{owner['name']}.{name}" if owner else f"{module}.{name}"
         if ident in seen_ids:
             ident += "@" + str(start_line)
         if ident in seen_ids:
             continue
         seen_ids.add(ident)
-
-        cc = 1
-        cc += len(re.findall(r"\bif\b", body))
-        cc += len(re.findall(r"\bfor\b", body))
-        cc += len(re.findall(r"\bforeach\b", body))
-        cc += len(re.findall(r"\bwhile\b", body))
-        cc += len(re.findall(r"\bcase\b", body))
-        cc += len(re.findall(r"\bcatch\b", body))
-        cc += len(re.findall(r"&&", body))
-        cc += len(re.findall(r"\|\|", body))
-        cc += len(re.findall(r"\?(?![.:])", body))
-
-        depth = maximum = 0
-        stack = []
-        for index, ch in enumerate(body):
-            if ch == "{":
-                control = _control_before(body, index)
-                stack.append(control)
-                if control:
-                    depth += 1
-                    maximum = max(maximum, depth)
-            elif ch == "}" and stack:
-                if stack.pop():
-                    depth -= 1
-
         functions.append({
             "id": ident,
             "name": name,
@@ -336,21 +344,45 @@ def analyze_record(record, known_paths):
             "line": start_line,
             "end_line": end_line,
             "kind": "function",
-            "cc": cc,
-            "nesting": maximum,
-            "length": _effective_lines(source, start_line, end_line),
-            "params": _params_of(text),
-            "statements": [],
-            "_body": (brace + 1, end),
+            "_span": (brace, end),
             "_text": text,
+            "_owner": owner,
         })
-        if owner:
-            owner["methods"].append(ident)
+    return functions
 
-    for entry in class_entries:
-        entry.pop("_span", None)
-        classes.append(entry)
 
+def _apply_metrics(functions, clean, source, lines):
+    """CC / nesting / length / params, excluding nested-function bodies (the Python
+    AST path counts nested definitions separately; this keeps both aligned)."""
+    spans = {tuple(item["_span"]) for item in functions}
+    inner = _inner_spans(spans)
+    for item in functions:
+        span = tuple(item["_span"])
+        start, end = span
+        ranges = _kept_ranges(start + 1, end, inner.get(span) or [])
+        item["cc"] = 1 + sum(len(CC_TOKEN_RE.findall(clean[a:b])) for a, b in ranges)
+        depth = maximum = 0
+        stack = []
+        for a, b in ranges:
+            for index in range(a, b):
+                ch = clean[index]
+                if ch == "{":
+                    control = _control_before(clean, index)
+                    stack.append(control)
+                    if control:
+                        depth += 1
+                        maximum = max(maximum, depth)
+                elif ch == "}" and stack:
+                    if stack.pop():
+                        depth -= 1
+        item["nesting"] = maximum
+        item["length"] = _effective_lines(source, item["line"], item["end_line"])
+        item["params"] = _params_of(item["_text"])
+        item["statements"] = []
+        item["_ranges"] = ranges
+
+
+def _threshold_findings(functions, path):
     findings = []
     for item in functions:
         if item["cc"] > 10:
@@ -365,7 +397,11 @@ def analyze_record(record, known_paths):
             findings.append(_finding("DEPTH-01", "warning", path, item["line"],
                                      f"{item['id']} 的控制结构嵌套深度为 {item['nesting']}，超过阈值 4。",
                                      "优先用提前返回或拆分函数降低嵌套。", actual=item["nesting"], threshold=4))
+    return findings
 
+
+def _line_findings(source, path):
+    findings = []
     for number, line in enumerate(source.splitlines(), 1):
         secret = SECRET_RE.search(line)
         if secret and not PLACEHOLDER_RE.search(secret.group(2)):
@@ -385,32 +421,46 @@ def analyze_record(record, known_paths):
                                      "存在未完成、临时或占位注释，实现可能与注释描述不一致。",
                                      "核对注释与当前实现，补齐未完成部分或删除过期注释。",
                                      evidence="inference", confidence="low"))
+    return findings
 
-    unknown = {item["name"]: item["id"] for item in functions}
-    calls = []
+
+def _build_calls(functions, clean, path, lines):
+    by_name = {}
     for item in functions:
-        start, end = item["_body"]
-        body = clean[start:end]
-        for match in re.finditer(r"\b([A-Za-z_]\w*)\s*\(", body):
-            name = match.group(1)
-            if name in KEYWORDS:
-                continue
-            target = unknown.get(name)
-            resolved = bool(target) and sum(1 for other in functions if other["name"] == name) == 1
-            if len(calls) >= 4000:
+        by_name.setdefault(item["name"], []).append(item["id"])
+    calls = []
+    exhausted = False
+    for item in functions:
+        if exhausted:
+            break
+        for a, b in item["_ranges"]:
+            for match in CALL_RE.finditer(clean[a:b]):
+                name = match.group(1)
+                if name in KEYWORDS:
+                    continue
+                ids = by_name.get(name) or []
+                resolved = len(ids) == 1
+                calls.append({
+                    "source": item["id"],
+                    "target": ids[0] if resolved else None,
+                    "expression": name,
+                    "file": path,
+                    "line": lines.line_at(a + match.start()),
+                    "status": "resolved" if resolved else "unresolved",
+                    "evidence_type": "fact" if resolved else "inference",
+                })
+                if len(calls) >= MAX_CALLS_PER_FILE:
+                    exhausted = True
+                    break
+            if exhausted:
                 break
-            calls.append({
-                "source": item["id"],
-                "target": target if resolved else None,
-                "expression": name,
-                "file": path,
-                "line": _line_at(source, start + match.start()),
-                "status": "resolved" if resolved else "unresolved",
-                "evidence_type": "fact" if resolved else "inference",
-            })
+    return calls
 
-    # Conservative dead-code signal: private/underscored helpers with no inbound use.
+
+def _dead_code_findings(functions, calls, path):
+    """Conservative dead-code signal: private/underscored helpers with no inbound use."""
     inbound = {edge["target"] for edge in calls if edge["status"] == "resolved"}
+    findings = []
     for item in functions:
         private = item["name"].startswith("_") or re.search(r"\bprivate\b", item["_text"])
         if private and item["id"] not in inbound and item["name"] not in {"main", "constructor"}:
@@ -418,11 +468,36 @@ def analyze_record(record, known_paths):
                                      f"{item['id']} 在本次分析范围内没有发现调用方。",
                                      "确认是否被外部、反射或回调使用；确认后再决定删除。",
                                      evidence="inference", confidence="low"))
+    return findings
 
-    dependencies = _dependencies(record, known_paths)
+
+def analyze_record(record, known_paths):
+    """Return functions/classes/findings/edges for one non-Python record."""
+    source = record["source"]
+    path = record["path"]
+    module = record["module"]
+    clean = _sanitize(source)
+    pairs = _brace_pairs(clean)
+    lines = _LineIndex(source)
+
+    classes = _scan_classes(clean, pairs, module, path, lines)
+    functions = _scan_functions(clean, pairs, classes, module, path, lines)
     for item in functions:
-        item.pop("_body", None)
-        item.pop("_text", None)
+        owner = item["_owner"]
+        if owner is not None:
+            owner["methods"].append(item["id"])
+    _apply_metrics(functions, clean, source, lines)
+    calls = _build_calls(functions, clean, path, lines)
+    findings = _threshold_findings(functions, path)
+    findings.extend(_line_findings(source, path))
+    findings.extend(_dead_code_findings(functions, calls, path))
+    dependencies = _dependencies(record, known_paths)
+
+    for entry in classes:
+        entry.pop("_span", None)
+    for item in functions:
+        for key in ("_span", "_text", "_owner", "_ranges"):
+            item.pop(key, None)
     return {"functions": functions, "classes": classes, "findings": findings,
             "calls": calls, "dependencies": dependencies}
 
@@ -432,6 +507,73 @@ def _finding(rule, severity, path, line, message, suggestion, evidence="fact", a
     return {"rule_id": rule, "severity": severity, "file": path, "line": line,
             "message": message, "suggestion": suggestion, "evidence_type": evidence,
             "actual": actual, "threshold": threshold, "confidence": confidence}
+
+
+def _c_cpp_edges(source, path, known, push):
+    for number, line in enumerate(source.splitlines(), 1):
+        match = re.match(r"\s*#\s*include\s+([\"<])([^\">]+)[\">]", line)
+        if not match:
+            continue
+        target = match.group(2)
+        push(target, number, _resolve_include(path, target, known))
+
+
+def _java_edges(source, path, known, push):
+    for number, line in enumerate(source.splitlines(), 1):
+        match = re.match(r"\s*import\s+(?:static\s+)?([\w.]+)\s*;", line)
+        if not match:
+            continue
+        target = match.group(1)
+        guess = target.replace(".", "/") + ".java"
+        push(target, number, next((item for item in known if item.endswith(guess)), None))
+
+
+def _js_edges(source, path, known, push):
+    pattern = re.compile(r"(?:from\s+|require\s*\(\s*)['\"]([^'\"]+)['\"]")
+    for number, line in enumerate(source.splitlines(), 1):
+        for match in pattern.finditer(line):
+            target = match.group(1)
+            internal = None
+            if target.startswith("."):
+                base = PurePosixPath(path).parent
+                raw = str((base / target).as_posix())
+                parts = []
+                for part in raw.split("/"):
+                    if part == "..":
+                        if parts:
+                            parts.pop()
+                    elif part not in ("", "."):
+                        parts.append(part)
+                stem = "/".join(parts)
+                candidates = [stem] + [f"{stem}{ext}" for ext in (".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js")]
+                internal = next((item for item in known if item in candidates), None)
+            push(target, number, internal)
+
+
+def _go_edges(source, path, known, push):
+    in_block = False
+    for number, line in enumerate(source.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("import ("):
+            in_block = True
+            continue
+        if in_block and stripped.startswith(")"):
+            in_block = False
+            continue
+        match = re.search(r"\"([^\"]+)\"", stripped) if (in_block or stripped.startswith("import")) else None
+        if not match:
+            continue
+        target = match.group(1)
+        push(target, number, next((item for item in known if item.rsplit(".", 1)[0].endswith(target)), None))
+
+
+_EDGE_BUILDERS = {
+    ".c": _c_cpp_edges, ".h": _c_cpp_edges, ".cc": _c_cpp_edges, ".cpp": _c_cpp_edges,
+    ".cxx": _c_cpp_edges, ".hpp": _c_cpp_edges,
+    ".java": _java_edges,
+    ".js": _js_edges, ".jsx": _js_edges, ".ts": _js_edges, ".tsx": _js_edges,
+    ".go": _go_edges,
+}
 
 
 def _dependencies(record, known_paths):
@@ -452,57 +594,7 @@ def _dependencies(record, known_paths):
             "evidence_type": "fact",
         })
 
-    if suffix in {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp"}:
-        for number, line in enumerate(source.splitlines(), 1):
-            match = re.match(r"\s*#\s*include\s+([\"<])([^\">]+)[\">]", line)
-            if not match:
-                continue
-            target = match.group(2)
-            internal = _resolve_include(path, target, known)
-            push(target, number, internal)
-    elif suffix == ".java":
-        for number, line in enumerate(source.splitlines(), 1):
-            match = re.match(r"\s*import\s+(?:static\s+)?([\w.]+)\s*;", line)
-            if not match:
-                continue
-            target = match.group(1)
-            guess = target.replace(".", "/") + ".java"
-            internal = next((item for item in known if item.endswith(guess)), None)
-            push(target, number, internal)
-    elif suffix in {".js", ".jsx", ".ts", ".tsx"}:
-        pattern = re.compile(r"(?:from\s+|require\s*\(\s*)['\"]([^'\"]+)['\"]")
-        for number, line in enumerate(source.splitlines(), 1):
-            for match in pattern.finditer(line):
-                target = match.group(1)
-                internal = None
-                if target.startswith("."):
-                    base = PurePosixPath(path).parent
-                    raw = str((base / target).as_posix())
-                    parts = []
-                    for part in raw.split("/"):
-                        if part == "..":
-                            if parts:
-                                parts.pop()
-                        elif part not in ("", "."):
-                            parts.append(part)
-                    stem = "/".join(parts)
-                    candidates = [stem] + [f"{stem}{ext}" for ext in (".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js")]
-                    internal = next((item for item in known if item in candidates), None)
-                push(target, number, internal)
-    elif suffix == ".go":
-        in_block = False
-        for number, line in enumerate(source.splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("import ("):
-                in_block = True
-                continue
-            if in_block and stripped.startswith(")"):
-                in_block = False
-                continue
-            match = re.search(r"\"([^\"]+)\"", stripped) if (in_block or stripped.startswith("import")) else None
-            if not match:
-                continue
-            target = match.group(1)
-            internal = next((item for item in known if item.rsplit(".", 1)[0].endswith(target)), None)
-            push(target, number, internal)
+    builder = _EDGE_BUILDERS.get(suffix)
+    if builder is not None:
+        builder(source, path, known, push)
     return edges

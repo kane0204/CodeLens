@@ -67,21 +67,28 @@ def _body_walk(node):
         stack.extend(reversed(list(ast.iter_child_nodes(item))))
 
 
+def _type_name_of(second):
+    """从 isinstance/type 的第二个参数提取唯一类型名；不是单一 Name 返回 None。"""
+    if isinstance(second, ast.Name):
+        return second.id
+    if isinstance(second, ast.Tuple):
+        names = [item.id for item in second.elts if isinstance(item, ast.Name)]
+        return names[0] if len(names) == 1 else None
+    return None
+
+
 def _is_type_test(node):
     """`isinstance(x, T)` 或 `type(x) is T`，返回被判断的类型名。"""
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "isinstance":
         if len(node.args) >= 2:
-            second = node.args[1]
-            if isinstance(second, ast.Name):
-                return second.id
-            if isinstance(second, ast.Tuple):
-                names = [item.id for item in second.elts if isinstance(item, ast.Name)]
-                return names[0] if len(names) == 1 else None
+            return _type_name_of(node.args[1])
+        return None
     if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Is):
         left, right = node.left, node.comparators[0]
         if isinstance(left, ast.Call) and isinstance(left.func, ast.Name) and left.func.id == "type" and left.args:
             if isinstance(right, ast.Name):
                 return right.id
+            return None
         if isinstance(right, ast.Call) and isinstance(right.func, ast.Name) and right.func.id == "type" and right.args:
             if isinstance(left, ast.Name):
                 return left.id
@@ -115,32 +122,35 @@ def _handler_is_broad(handler):
     return False
 
 
-def evaluate(result):
-    """对一次 `analyze()` 结果补充评估，返回额外 findings 与口径说明。
+def _collect_type_names(methods):
+    type_names = set()
+    for method in methods:
+        for item in _body_walk(method):
+            name = _is_type_test(item)
+            if name:
+                type_names.add(name)
+    return type_names
 
-    返回 `{"findings": [...], "metrics": {...}, "notes": [...]}`；
-    finding 的结构与 `engine.findings` 完全一致（含 rule_id/severity/file/line/
-    message/suggestion/evidence_type/actual/threshold/confidence），只是没有 `id`——
-    合并时由 `merge()` 统一重编号，保证全文 id 唯一且稳定。
-    """
-    if not isinstance(result, dict):
-        raise ValueError("补充规则需要 analyze() 的结果对象")
-    trees = _parse_files(result)
-    nodes = _definition_nodes(trees)
-    findings = []
-    metrics = {"classes": 0, "functions": 0, "type_branches": 0, "concrete_deps": 0,
-               "dead_functions": 0, "silent_handlers": 0}
 
-    def add(rule, severity, file, line, message, suggestion, actual=None, threshold=None, confidence=None):
-        if len(findings) >= MAX_EXTRA_FINDINGS:
-            return
-        findings.append({"rule_id": rule, "severity": severity, "file": file, "line": line,
-                         "message": message, "suggestion": suggestion, "evidence_type": "fact",
-                         "actual": actual, "threshold": threshold, "confidence": confidence})
-        if rule in solid.RULE_IDS:
-            findings[-1]["evidence_type"] = "inference"
+def _collect_constructed(result, cls, nodes, method_ids):
+    constructed = set()
+    for call in (result.get("graph") or {}).get("calls") or []:
+        target = call.get("target")
+        if call.get("status") != "resolved" or call.get("source") not in method_ids:
+            continue
+        target_cls = next((c for c in result.get("classes") or [] if c.get("id") == target), None)
+        if target_cls is None:
+            continue
+        target_node = nodes.get((target_cls.get("file"), target_cls.get("line")))
+        if target_node and any(solid._abstract(m) for m in target_node.body
+                               if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))):
+            continue
+        constructed.add(target)
+    return constructed
 
-    # ---- SRP-01 / OCP-01 / DIP-01：逐类 ---------------------------------
+
+def _evaluate_classes(result, nodes, metrics, add):
+    """SRP-01 / OCP-01 / DIP-01：逐类检查。"""
     for cls in result.get("classes") or []:
         ident = cls.get("id")
         path = cls.get("file")
@@ -159,27 +169,9 @@ def evaluate(result):
                 "按「数据 + 行为」切分：把操作同一组字段的方法聚成一个类，其余迁出。",
                 actual=len(public), threshold=MAX_METHODS_PER_CLASS, confidence="medium")
 
-        type_names, constructed = set(), set()
-        for method in methods:
-            for item in _body_walk(method):
-                name = _is_type_test(item)
-                if name:
-                    type_names.add(name)
-        # Use resolved constructor edges, so imports/aliases work and unrelated
-        # same-named functions do not become invented concrete dependencies.
+        type_names = _collect_type_names(methods)
         method_ids = set(cls.get("methods") or [])
-        for call in (result.get("graph") or {}).get("calls") or []:
-            target = call.get("target")
-            if call.get("status") != "resolved" or call.get("source") not in method_ids:
-                continue
-            target_cls = next((c for c in result.get("classes") or [] if c.get("id") == target), None)
-            if target_cls is None:
-                continue
-            target_node = nodes.get((target_cls.get("file"), target_cls.get("line")))
-            if target_node and any(solid._abstract(m) for m in target_node.body
-                                   if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))):
-                continue
-            constructed.add(target)
+        constructed = _collect_constructed(result, cls, nodes, method_ids)
         metrics["type_branches"] += len(type_names)
         metrics["concrete_deps"] += len(constructed)
         if len(type_names) >= MAX_TYPE_BRANCHES:
@@ -195,18 +187,13 @@ def evaluate(result):
                 "核对这几处构造是否需要可替换：需要就把协作对象改为由调用方传入。无需替换时直接构造是更简单的选择。",
                 actual=len(constructed), threshold=MAX_CONCRETE_DEPS, confidence="low")
 
-    solid_result = solid.evaluate(result, nodes)
-    for item in solid_result["findings"]:
-        if len(findings) < MAX_EXTRA_FINDINGS:
-            findings.append(item)
-    metrics["checked_overrides"] = solid_result["checked_overrides"]
 
-    # ---- A5-DEAD：未被本次分析内任何已解析调用指向的函数 ---------------
+def _evaluate_dead(result, metrics, add):
+    """A5-DEAD：未被本次分析内任何已解析调用指向的函数。"""
     calls = (result.get("graph") or {}).get("calls") or []
     called = {call.get("target") for call in calls
               if call.get("status") == "resolved" and call.get("target")}
     # 未解析的调用虽然给不出目标符号，但它的表达式末段仍是"可能有人在调我"的线索。
-    # 这里用它做保守豁免：宁可漏报一条死代码，也不要凭空断言一个函数没人用。
     hinted = set()
     for call in calls:
         if call.get("status") == "resolved":
@@ -234,7 +221,9 @@ def evaluate(result):
             "确认它是否由框架、命令行或外部模块调用；确认无人使用后再删除。",
             actual=0, threshold=1, confidence="low")
 
-    # ---- A8-DEFENSIVE：吞掉异常的处理分支 ------------------------------
+
+def _evaluate_handlers(trees, metrics, add):
+    """A8-DEFENSIVE：吞掉异常的处理分支。"""
     for path, tree in trees.items():
         for node in ast.walk(tree):
             if not isinstance(node, (ast.Try, ast.TryStar)):
@@ -247,6 +236,43 @@ def evaluate(result):
                     "这里捕获了过宽的异常并且处理体什么都不做，失败会被静默吞掉。",
                     "至少记录日志或缩小捕获类型；确实可忽略时在注释里写明为什么可忽略。",
                     actual="silent-broad-except", threshold=None, confidence="medium")
+
+
+def evaluate(result):
+    """对一次 `analyze()` 结果补充评估，返回额外 findings 与口径说明。
+
+    返回 `{"findings": [...], "metrics": {...}, "notes": [...]}`；
+    finding 的结构与 `engine.findings` 完全一致（含 rule_id/severity/file/line/
+    message/suggestion/evidence_type/actual/threshold/confidence），只是没有 `id`——
+    合并时由 `merge()` 统一重编号，保证全文 id 唯一且稳定。
+    """
+    if not isinstance(result, dict):
+        raise ValueError("补充规则需要 analyze() 的结果对象")
+    trees = _parse_files(result)
+    nodes = _definition_nodes(trees)
+    findings = []
+    metrics = {"classes": 0, "functions": 0, "type_branches": 0, "concrete_deps": 0,
+               "dead_functions": 0, "silent_handlers": 0}
+
+    def add(rule, severity, file, line, message, suggestion, actual=None, threshold=None, confidence=None):
+        if len(findings) >= MAX_EXTRA_FINDINGS:
+            return
+        findings.append({"rule_id": rule, "severity": severity, "file": file, "line": line,
+                         "message": message, "suggestion": suggestion, "evidence_type": "fact",
+                         "actual": actual, "threshold": threshold, "confidence": confidence})
+        if rule in solid.RULE_IDS:
+            findings[-1]["evidence_type"] = "inference"
+
+    _evaluate_classes(result, nodes, metrics, add)
+
+    solid_result = solid.evaluate(result, nodes)
+    for item in solid_result["findings"]:
+        if len(findings) < MAX_EXTRA_FINDINGS:
+            findings.append(item)
+    metrics["checked_overrides"] = solid_result["checked_overrides"]
+
+    _evaluate_dead(result, metrics, add)
+    _evaluate_handlers(trees, metrics, add)
 
     return {"findings": findings, "metrics": metrics, "notes": list(NOTES),
             "solid": {"rules": list(solid.RULE_IDS),

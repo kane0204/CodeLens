@@ -108,68 +108,40 @@ def _narrowed(parent, child):
     return False
 
 
-def evaluate(result, nodes):
-    classes = {c["id"]: c for c in result.get("classes", [])}
-    parents = {}
-    for edge in result.get("graph", {}).get("inheritance", []):
-        parents.setdefault(edge["source"], []).append(edge["target"])
-    methods = {}
-    marker_bases = {}
-    for record in result.get("files", []):
-        aliases = {}
-        try:
-            tree = ast.parse(record.get("source", ""), feature_version=(3, 11))
-        except (SyntaxError, ValueError, RecursionError):
-            continue
-        for statement in tree.body:
-            if isinstance(statement, ast.ImportFrom) and statement.module in {"abc", "typing", "typing_extensions"}:
-                for alias in statement.names:
-                    aliases[alias.asname or alias.name] = statement.module + "." + alias.name
-            elif isinstance(statement, ast.Import):
-                for alias in statement.names:
-                    aliases[alias.asname or alias.name] = alias.name
-        for cls in classes.values():
-            if cls["file"] != record.get("path"):
-                continue
-            marker_bases[cls["id"]] = set()
-            for base in cls.get("bases") or []:
-                head, _, tail = base.partition(".")
-                qualified = aliases.get(head, head) + ("." + tail if tail else "")
-                if qualified in {"abc.ABC", "typing.Protocol", "typing_extensions.Protocol"}:
-                    marker_bases[cls["id"]].add(base)
-    for ident, cls in classes.items():
-        node = nodes.get((cls["file"], cls["line"]))
-        methods[ident] = {m.name: m for m in getattr(node, "body", [])
-                          if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    findings, gaps = [], []
+def _inherited(ident, seen, classes, parents, marker_bases, methods):
+    if ident in seen:
+        return None
+    cls = classes[ident]
+    bases = [b for b in cls.get("bases") or [] if b not in marker_bases.get(ident, set())]
+    if not bases:
+        return {}
+    if len(bases) != 1 or len(parents.get(ident, [])) != 1:
+        return None
+    base_id = parents[ident][0]
+    ancestors = _inherited(base_id, seen | {ident}, classes, parents, marker_bases, methods)
+    if ancestors is None:
+        return None
+    return {**ancestors, **{name: (base_id, m) for name, m in methods[base_id].items()}}
+
+
+def _lsp_reasons(parent, child, witness):
+    reasons = []
+    if _mode(parent) != _mode(child):
+        reasons.append("改变了实例/类/静态方法绑定方式")
+    if isinstance(parent, ast.AsyncFunctionDef) != isinstance(child, ast.AsyncFunctionDef):
+        reasons.append("改变了同步/异步调用契约")
+    if witness:
+        reasons.append("拒绝父方法接受的调用形状（{} 个位置参数，关键字 {}）".format(witness["positional"], ", ".join(witness["keywords"]) or "无"))
+    refused = _refuses(child) and not _abstract(child)
+    if refused and not _abstract(parent) and not _refuses(parent):
+        reasons.append("用 NotImplementedError 拒绝父类已实现的方法")
+    return reasons, refused
+
+
+def _evaluate_overrides(classes, parents, methods, marker_bases, findings, gaps, add):
     checked = 0
-
-    def inherited(ident, seen):
-        if ident in seen:
-            return None
-        cls = classes[ident]
-        bases = [b for b in cls.get("bases") or [] if b not in marker_bases.get(ident, set())]
-        if not bases:
-            return {}
-        if len(bases) != 1 or len(parents.get(ident, [])) != 1:
-            return None
-        base_id = parents[ident][0]
-        ancestors = inherited(base_id, seen | {ident})
-        if ancestors is None:
-            return None
-        return {**ancestors, **{name: (base_id, m) for name, m in methods[base_id].items()}}
-
-    def add(rule, cls, method, base_id, message, actual):
-        findings.append({"rule_id": rule, "severity": "warning", "file": cls["file"],
-                         "line": method.lineno, "message": message,
-                         "suggestion": "核对父类契约与调用方；保持可替换的签名和行为，或拆分接口并使用组合。",
-                         "evidence_type": "inference", "confidence": "medium",
-                         "actual": actual, "threshold": None,
-                         "related": [{"file": classes[base_id]["file"],
-                                      "line": methods[base_id][method.name].lineno}]})
-
     for ident, cls in sorted(classes.items()):
-        inherited_methods = inherited(ident, set())
+        inherited_methods = _inherited(ident, set(), classes, parents, marker_bases, methods)
         if inherited_methods is None:
             gaps.append({"class": ident, "file": cls["file"], "line": cls["line"],
                          "reason": "父类未解析、继承有环或存在多继承，未推断 MRO"})
@@ -189,16 +161,7 @@ def evaluate(result, nodes):
                              "reason": name + " 的签名超出静态检查范围"})
                 continue
             checked += 1
-            reasons = []
-            if _mode(parent) != _mode(child):
-                reasons.append("改变了实例/类/静态方法绑定方式")
-            if isinstance(parent, ast.AsyncFunctionDef) != isinstance(child, ast.AsyncFunctionDef):
-                reasons.append("改变了同步/异步调用契约")
-            if witness:
-                reasons.append("拒绝父方法接受的调用形状（{} 个位置参数，关键字 {}）".format(witness["positional"], ", ".join(witness["keywords"]) or "无"))
-            refused = _refuses(child) and not _abstract(child)
-            if refused and not _abstract(parent) and not _refuses(parent):
-                reasons.append("用 NotImplementedError 拒绝父类已实现的方法")
+            reasons, refused = _lsp_reasons(parent, child, witness)
             if reasons:
                 add("LSP-01", cls, child, base_id,
                     "{}.{} 覆盖 {}.{} 时{}；请复核可替换性。".format(ident, name, base_id, name, "；".join(reasons)), reasons)
@@ -206,5 +169,67 @@ def evaluate(result, nodes):
                 add("ISP-01", cls, child, base_id,
                     "{} 继承的公开契约有 {} 个方法，但 {} 显式抛出 NotImplementedError，可能被迫依赖不需要的成员。".format(ident, len(public_contract), name),
                     {"contract_methods": sorted(public_contract), "refused": name})
+    return checked
+
+
+def _build_marker_bases(result, classes):
+    marker_bases = {}
+    for record in result.get("files", []):
+        aliases = {}
+        tree = _parse_tree(record)
+        if tree is None:
+            continue
+        for statement in tree.body:
+            if isinstance(statement, ast.ImportFrom) and statement.module in {"abc", "typing", "typing_extensions"}:
+                for alias in statement.names:
+                    aliases[alias.asname or alias.name] = statement.module + "." + alias.name
+            elif isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    aliases[alias.asname or alias.name] = alias.name
+        for cls in classes.values():
+            if cls["file"] != record.get("path"):
+                continue
+            marker_bases[cls["id"]] = {
+                base for base in cls.get("bases") or []
+                if _qualified(aliases, base) in {"abc.ABC", "typing.Protocol", "typing_extensions.Protocol"}
+            }
+    return marker_bases
+
+
+def _parse_tree(record):
+    try:
+        return ast.parse(record.get("source", ""), feature_version=(3, 11))
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+
+
+def _qualified(aliases, base):
+    head, _, tail = base.partition(".")
+    return aliases.get(head, head) + ("." + tail if tail else "")
+
+
+def evaluate(result, nodes):
+    classes = {c["id"]: c for c in result.get("classes", [])}
+    parents = {}
+    for edge in result.get("graph", {}).get("inheritance", []):
+        parents.setdefault(edge["source"], []).append(edge["target"])
+    marker_bases = _build_marker_bases(result, classes)
+    methods = {}
+    for ident, cls in classes.items():
+        node = nodes.get((cls["file"], cls["line"]))
+        methods[ident] = {m.name: m for m in getattr(node, "body", [])
+                          if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    findings, gaps = [], []
+
+    def add(rule, cls, method, base_id, message, actual):
+        findings.append({"rule_id": rule, "severity": "warning", "file": cls["file"],
+                         "line": method.lineno, "message": message,
+                         "suggestion": "核对父类契约与调用方；保持可替换的签名和行为，或拆分接口并使用组合。",
+                         "evidence_type": "inference", "confidence": "medium",
+                         "actual": actual, "threshold": None,
+                         "related": [{"file": classes[base_id]["file"],
+                                      "line": methods[base_id][method.name].lineno}]})
+
+    checked = _evaluate_overrides(classes, parents, methods, marker_bases, findings, gaps, add)
     return {"findings": findings, "checked_overrides": checked, "coverage_gaps": gaps,
             "limitations": list(LIMITATIONS)}

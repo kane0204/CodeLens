@@ -36,6 +36,42 @@ def _by_rule(findings, rules):
     return [item for item in findings if item.get("rule_id") in rules]
 
 
+def _suspicious_items(graph):
+    unresolved = [edge for edge in (graph.get("calls") or []) if edge.get("status") == "unresolved"]
+    unresolved.sort(key=lambda edge: (str(edge.get("file")), edge.get("line") or 0))
+    return [
+        {
+            "severity": "info",
+            "file": edge.get("file"),
+            "line": edge.get("line"),
+            "message": f"调用 {edge.get('expression') or edge.get('target') or '未知目标'} 无法在本次分析范围内唯一解析。",
+            "evidence_type": "inference",
+            "confidence": "low",
+            "finding_id": None,
+        }
+        for edge in unresolved
+    ], len(unresolved)
+
+
+def _duplicate_items(duplicates):
+    items = []
+    for group in duplicates:
+        occurrences = group.get("occurrences") or []
+        if not occurrences:
+            continue
+        first = occurrences[0]
+        items.append({
+            "severity": "info",
+            "file": first.get("file"),
+            "line": first.get("line"),
+            "message": f"函数体结构与其他 {max(0, len(occurrences) - 1)} 处实现相同（指纹 {str(group.get('fingerprint'))[:12]}）。",
+            "evidence_type": "fact",
+            "confidence": "high",
+            "finding_id": None,
+        })
+    return items
+
+
 def build(result):
     if not isinstance(result, dict):
         return {"categories": []}
@@ -48,39 +84,11 @@ def build(result):
         return {"id": ident, "covered": covered, "reason": reason,
                 "truncated": truncated, "items": (items or [])[:LIMIT]}
 
-    unresolved = [edge for edge in (graph.get("calls") or []) if edge.get("status") == "unresolved"]
-    unresolved.sort(key=lambda edge: (str(edge.get("file")), edge.get("line") or 0))
-    suspicious = [
-        {
-            "severity": "info",
-            "file": edge.get("file"),
-            "line": edge.get("line"),
-            "message": f"调用 {edge.get('expression') or edge.get('target') or '未知目标'} 无法在本次分析范围内唯一解析。",
-            "evidence_type": "inference",
-            "confidence": "low",
-            "finding_id": None,
-        }
-        for edge in unresolved
-    ]
-
-    duplicate_items = []
-    for group in duplicates:
-        occurrences = group.get("occurrences") or []
-        if not occurrences:
-            continue
-        first = occurrences[0]
-        duplicate_items.append({
-            "severity": "info",
-            "file": first.get("file"),
-            "line": first.get("line"),
-            "message": f"函数体结构与其他 {max(0, len(occurrences) - 1)} 处实现相同（指纹 {str(group.get('fingerprint'))[:12]}）。",
-            "evidence_type": "fact",
-            "confidence": "high",
-            "finding_id": None,
-        })
+    suspicious, unresolved_count = _suspicious_items(graph)
+    duplicate_items = _duplicate_items(duplicates)
 
     categories = [
-        category("suspicious-dependency", True, suspicious, truncated=len(unresolved) > LIMIT),
+        category("suspicious-dependency", True, suspicious, truncated=unresolved_count > LIMIT),
         category("duplicate-implementation", True, duplicate_items),
         category("unhandled-exception", True, [_item(item) for item in _by_rule(findings, {"A3-IO"})],
                  reason=None if "Python" in languages or not languages else "该检测仅覆盖 Python 内置 open 的局部异常处理。"),

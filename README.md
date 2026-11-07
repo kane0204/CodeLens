@@ -59,7 +59,7 @@ CodeLens 的目标是**把 AI 生成的代码从黑盒变成可审查对象**：
 
 ## 快速开始
 
-需要 Python 3.11+ 与 Node 18+。后端服务仅使用 Python 标准库；新版界面是独立的 Vite + React 应用。
+需要 Python 3.11+ 与 Node 18+。后端服务仅使用 Python 标准库；界面是独立的 Vite + React 应用。
 
 **一键启动（推荐）**：Windows 双击 `start-codelens.cmd`，macOS/Linux 运行 `sh start-codelens.sh`。脚本会在首次运行时安装前端依赖，同时启动后端 API（18766）与 React 界面（5173），并自动打开浏览器。
 
@@ -70,10 +70,10 @@ python -B code/backend/server.py          # 终端 1：API，127.0.0.1:18766
 cd codelens-prototype && npm install && npm run dev   # 终端 2：界面，localhost:5173
 ```
 
-新版界面地址是 [http://localhost:5173](http://localhost:5173)。旧版 HTML 界面仍在 `code/frontend/`，由后端 18766 直接提供，仅作保留不推荐使用。若后端端口被占用，用 `--port 18767` 启动并给前端设置 `VITE_API_TARGET=http://127.0.0.1:18767`。
+界面地址是 [http://localhost:5173](http://localhost:5173)；18766 只提供 JSON API，直接打开会返回 404。若后端端口被占用，用 `--port 18767` 启动并给前端设置 `VITE_API_TARGET=http://127.0.0.1:18767`。
 
-> **双击后看到的还是旧界面？** 基本是下面三种情况之一：
-> 1. 打开的是 `http://127.0.0.1:18766`（后端静态页永远是旧版）——请认准 5173；
+> **双击后打不开或地址不对？** 基本是下面三种情况之一：
+> 1. 打开的是 `http://127.0.0.1:18766`——那是 API 端口，请认准 5173；
 > 2. 运行的是另一个克隆里的旧 `start-codelens.cmd`（旧脚本只启动 18766，还会 `npm run build`）——确认脚本里有 `codelens-prototype`，或先 `git pull --ff-only` 同步到最新；
 > 3. 5173 已被别的 Vite 进程占用——脚本用 `--strictPort` 会直接报错，关掉那个窗口再重试。
 
@@ -87,15 +87,12 @@ SOLID 检查覆盖 S（方法数线索）、O（类型分派线索）、L（覆�
 
 AI 项目审查：在初始化页填写兼容 chat/completions 的 Base URL、模型名称和 API Key，选择项目文件夹后自动完成「静态分析 → AI 审查」。审查结果分为逻辑说明、设计检查、风险评估三段并共享同一份阅读记录；审查意外中断后重新生成会从服务端断点续跑。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。详细范围见 [AI 逻辑解读说明](docs/software/ai-logic-explanation.md)。
 
-检查命令（前端检查另需 Node.js 22+ 与本机 Chromium/Edge；可用 `CODELENS_BROWSER` 指定浏览器程序）：
+检查命令（界面构建另需 Node.js 18+）：
 
 ```bash
 python -B -m unittest discover -s tests -p 'test_*.py' -v
-node --check code/frontend/app.js
-node tests/integration/test_logic_frontend.cjs
-node tests/integration/test_solid_frontend.cjs
-node tests/integration/test_frontend.cjs
 python -B tests/evaluate_solid.py
+cd codelens-prototype && npm ci && npm run build
 ```
 
 ## 项目结构
@@ -109,12 +106,12 @@ CodeLens/
 │   ├── mgmt/             # 项目管理：看板说明、迭代计划、Backlog、协作规范
 │   └── retrospection/    # 阶段复盘与经验教训
 ├── code/
-│   ├── backend/          # 服务端 API、任务调度、报告生成
-│   ├── frontend/         # Web 前端：逻辑浏览、图查看、风险定位
+│   ├── backend/          # 本机 JSON API（18766）
 │   └── core_engine/      # 核心引擎：解析、逻辑建模、图、指标、规则
+├── codelens-prototype/   # Vite + React 界面（5173）
 ├── tests/
 │   ├── unit/             # 单元测试（解析、逻辑模型、指标、规则）
-│   └── integration/      # 集成测试（样例项目端到端）
+│   └── integration/      # 集成测试（API 契约与引擎链路）
 └── .github/
     ├── workflows/
     └── ISSUE_TEMPLATE/

@@ -2,9 +2,9 @@
 
 ## 已提供的集成检查
 
-`test_server.py` 通过真实 HTTP 分析引擎与服务源码，验证来源/令牌限制及静态白名单。`test_frontend.cjs` 验证真实源码请求、结果展示控制逻辑、源码定位、导出和失败恢复。
+`test_server.py` 通过真实 HTTP 分析引擎与服务源码，验证来源/令牌限制，以及 18766 不再提供静态页面；`test_explanation.py` 验证 AI 解读接口。
 
-在仓库根目录运行 `python -B -m unittest discover -s tests -p 'test_*.py' -v` 与 `node tests/integration/test_frontend.cjs`。前端使用轻量 DOM 桩，不替代完整浏览器验收。下文保留完整测试规划。
+在仓库根目录运行 `python -B -m unittest discover -s tests -p 'test_*.py' -v`。界面（`codelens-prototype/`）另需 `npm ci && npm run build` 做类型检查与构建。下文保留完整测试规划。
 
 验证「AI 生成的项目文件夹 → 逻辑说明 + 结构图 + 风险报告」的端到端流程。
 

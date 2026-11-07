@@ -24,18 +24,13 @@ from ai import runner as ai_runner
 from ai import skills as ai_skills
 from ai import explanation
 
-ROOT = CODE_ROOT / "frontend"
+# 18766 只提供 JSON API；界面是独立的 codelens-prototype（Vite，5173）。
 TOKEN = secrets.token_urlsafe(32)
 API_REVISION = 2
 CAPABILITIES = ["analyze", "explain", "explain-context", "project-review", "class-metrics",
                 "duplicates", "class-relations", "multi-language", "special-risks"]
 MAX_BODY = 12 * 1024 * 1024
 MAX_AI_TARGETS = ai_runner.MAX_TARGETS
-STATIC = {"/":("index.html","text/html"),"/index.html":("index.html","text/html"),
-          "/app.js":("app.js","text/javascript"),"/styles.css":("styles.css","text/css")}
-# 前端按模块拆成多份静态资源，这里只放行 ROOT 下这几个目录与这几种扩展名。
-ASSET_DIRS = ("lib", "views", "features", "assets")
-ASSET_TYPES = {".js":"text/javascript", ".css":"text/css", ".svg":"image/svg+xml", ".woff2":"font/woff2"}
 
 
 def ai_error(code, message):
@@ -175,36 +170,7 @@ def ai_analyze(payload):
     }
 
 
-def resolve_asset(path):
-    """把请求路径映射到 ROOT 内的真实文件；不在白名单内一律返回 None（含目录穿越）。"""
-    if path in STATIC:
-        name, mime = STATIC[path]
-        return ROOT / name, mime
-    if ".." in path or "\\" in path or "//" in path:
-        return None
-    parts = [seg for seg in path.split("/") if seg]
-    if len(parts) < 2 or parts[0] not in ASSET_DIRS:
-        return None
-    # 最后一段是文件名：允许 stem 与单个后缀；中间目录只允许字母数字/-_。
-    stem, dot, suffix = parts[-1].rpartition(".")
-    if not dot or not stem or stem.startswith("."):
-        return None
-    if not all(ch.isalnum() or ch in "-_" for ch in stem):
-        return None
-    mime = ASSET_TYPES.get("." + suffix)
-    if mime is None:
-        return None
-    for seg in parts[:-1]:
-        if seg.startswith(".") or not all(ch.isalnum() or ch in "-_" for ch in seg):
-            return None
-    root = ROOT.resolve()
-    candidate = root.joinpath(*parts).resolve()
-    if candidate != root and root not in candidate.parents:
-        return None
-    if not candidate.is_file():
-        return None
-    return candidate, mime
-
+# 界面资源由 codelens-prototype 在 5173 提供，本服务不再托管静态文件。
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
@@ -273,13 +239,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "capabilities":CAPABILITIES,"token":TOKEN})
         if path == "/api/ai/status":
             return self.send_data(200, ai_status())
-        asset = resolve_asset(path)
-        if asset is None:
-            return self.send_data(404,{"error":"路径不存在"})
-        try:
-            return self.send_data(200,asset[0].read_bytes(),asset[1])
-        except OSError:
-            return self.send_data(404,{"error":"路径不存在"})
+        return self.send_data(404,{"error":"接口不存在；界面请访问 http://localhost:5173"})
 
     def do_POST(self):
         origin = self.headers.get("Origin")
@@ -332,8 +292,8 @@ def main():
         server = ThreadingHTTPServer(("127.0.0.1",args.port),Handler)
     except OSError as exc:
         raise SystemExit(f"无法启动端口 {args.port}，可使用 --port 更换端口：{exc}")
-    print(f"CodeLens {VERSION}: http://127.0.0.1:{server.server_port}",flush=True)
-    print("Select a project folder in your browser. Ctrl+C to stop.",flush=True)
+    print(f"CodeLens {VERSION} API: http://127.0.0.1:{server.server_port} (JSON only)",flush=True)
+    print("Open the UI at http://localhost:5173 (see README). Ctrl+C to stop.",flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -2,7 +2,7 @@
 
 ## 当前可运行入口
 
-在仓库根目录运行 `python -B code/backend/server.py`，打开 `http://127.0.0.1:18766`。本地适配器使用标准库 ThreadingHTTPServer，调用 `core_engine.engine.analyze` 并服务 `code/frontend`，不需要第三方依赖。
+在仓库根目录运行 `python -B code/backend/server.py`，本机 `127.0.0.1:18766` 只提供 JSON API。界面是独立的 `codelens-prototype/`（Vite + React，5173），由 `start-codelens.cmd` / `start-codelens.sh` 一并启动。本地适配器使用标准库 ThreadingHTTPServer，调用 `core_engine.engine.analyze`，不需要第三方依赖。
 
 接口与限制见 [工作台说明](../../docs/software/local-workbench.md)。下文 FastAPI、异步任务和持久化为后续正式服务规划。
 

@@ -52,7 +52,7 @@ CodeLens 的目标是**把 AI 生成的代码从黑盒变成可审查对象**：
 | F5 | 时序图生成 | 从入口或指定函数出发的跨文件调用链与消息顺序 | MVP |
 | F6 | 模块依赖图 / 调用图 | 依赖方向、循环依赖、函数级调用 | MVP |
 | F7 | 复杂度与坏味 | 函数/类/模块三级指标 + 10 类坏味 + 健康度评分 | MVP |
-| F8 | SOLID 检查 | 首期 SRP / OCP / DIP 三条规则 | MVP |
+| F8 | SOLID 检查 | S / O / L / I / D 五项静态规则与覆盖缺口 | MVP |
 | F9 | AI 代码风险检查 | 重复实现、未处理异常、硬编码、死代码、可疑依赖调用等 | MVP（基础）/ 迭代 2（扩展） |
 | F10 | 交互式审查 | 逻辑步骤与代码行联动、图与风险联动、按模块过滤 | 迭代 2 |
 | F11 | 报告导出 | Markdown 审查报告 + JSON + Mermaid/PlantUML/SVG | MVP |
@@ -69,16 +69,23 @@ python -B code/backend/server.py
 
 打开 [本机工作台](http://127.0.0.1:18766)，选择 Python 项目文件夹并开始分析。Windows 可双击 `start-codelens.cmd`；macOS/Linux 可运行 `sh start-codelens.sh`。端口被占用时使用 `--port 18767` 并访问对应地址。
 
-当前提供真实文件统计、函数/类识别、带行号的逻辑步骤、复杂度、模块依赖/循环依赖、可确定的调用/继承、6 条基础规则及 Markdown/JSON/Mermaid 导出。没有预置项目或模拟结果。完整 CFG、def-use、时序图、SOLID、重复代码和健康度仍在规划中，上文功能清单不表示全部已交付。
+SOLID 检查覆盖 S（方法数线索）、O（类型分派线索）、L（覆盖方法签名/绑定/同步异步/显式拒绝）、I（多方法继承契约中显式拒绝成员）、D（已解析的具体类构造依赖）。未命中不等于符合原则；外部父类、多继承、自定义装饰器等覆盖缺口会单独展示。详细规则见 [SOLID 分析说明](docs/software/solid-analysis.md)。
 
-源码仅交给本机服务内存解析，不执行或导入目标项目。最多 200 个 Python 文件、单文件 1 MB、总计 8 MB；默认排除测试、虚拟环境和构建目录。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
+当前已提供文件/符号统计、函数复杂度与健康度、WMC/DIT/CBO/LCOM1 类指标、SOLID 五项静态检查、结构重复检测、模块依赖与循环、调用图和类关系图（继承/组合/关联/依赖）。逻辑说明支持跨文件 AI 解读及已校验行号跳转；报告支持 Markdown/JSON/CSV，图支持 SVG。没有预置项目或模拟结果。静态分析不能证明完整运行时行为契约，也不覆盖所有语义等价重复。
 
-检查命令（前端检查另需 Node.js 22+）：
+静态分析仅在本机服务内存中完成，不执行或导入目标项目。使用“逻辑说明 → 生成 AI 解读”时，所选文件或函数源码及最多两层已解析调用的相关上下文会发送到配置的模型服务；模型解读按需触发，不使用模板替代失败结果。最多 200 个 Python 文件、单文件 1 MB、总计 8 MB；默认排除测试、虚拟环境和构建目录。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
+
+AI 逻辑解读：打开右上角设置，填写兼容 chat/completions 的 Base URL、模型名称和 API Key；进入“逻辑说明”选择整个文件或函数，点击“生成 AI 解读”。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。详细范围见 [AI 逻辑解读说明](docs/software/ai-logic-explanation.md)。
+
+检查命令（前端检查另需 Node.js 22+ 与本机 Chromium/Edge；可用 `CODELENS_BROWSER` 指定浏览器程序）：
 
 ```bash
 python -B -m unittest discover -s tests -p 'test_*.py' -v
 node --check code/frontend/app.js
+node tests/integration/test_logic_frontend.cjs
+node tests/integration/test_solid_frontend.cjs
 node tests/integration/test_frontend.cjs
+python -B tests/evaluate_solid.py
 ```
 
 ## 项目结构

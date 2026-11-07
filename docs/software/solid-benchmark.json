@@ -1,0 +1,171 @@
+{
+  "scope": "逐类源码审查标注的静态设计复核线索（尚未经独立人工复核）；包含三个教学项目和当前仓库真实源码。用于回归，不代表未知项目的准确率。未列出的原则在该类上标为未发现对应线索。",
+  "projects": 5,
+  "classes": 15,
+  "per_rule": {
+    "SRP-01": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 14,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "OCP-01": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 14,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "LSP-01": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 14,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "ISP-01": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 14,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "DIP-01": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 14,
+      "precision": 1.0,
+      "recall": 1.0
+    }
+  },
+  "coverage_gaps": [
+    {
+      "project": "real-provider",
+      "class": "provider.ProviderError",
+      "file": "provider.py",
+      "line": 45,
+      "reason": "父类未解析、继承有环或存在多继承，未推断 MRO"
+    },
+    {
+      "project": "real-server",
+      "class": "server.Handler",
+      "file": "server.py",
+      "line": 206,
+      "reason": "父类未解析、继承有环或存在多继承，未推断 MRO"
+    }
+  ],
+  "details": [
+    {
+      "project": "contracts",
+      "class": "devices.CompatibleDevice",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "contracts",
+      "class": "devices.Device",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "contracts",
+      "class": "devices.ReadOnlyDevice",
+      "expected": [
+        "ISP-01",
+        "LSP-01"
+      ],
+      "actual": [
+        "ISP-01",
+        "LSP-01"
+      ]
+    },
+    {
+      "project": "dispatch",
+      "class": "shipping.Air",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "dispatch",
+      "class": "shipping.Dispatcher",
+      "expected": [
+        "DIP-01",
+        "OCP-01"
+      ],
+      "actual": [
+        "DIP-01",
+        "OCP-01"
+      ]
+    },
+    {
+      "project": "dispatch",
+      "class": "shipping.Ground",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "dispatch",
+      "class": "shipping.InjectedDispatcher",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "dispatch",
+      "class": "shipping.Sea",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "responsibilities",
+      "class": "workbench.Repository",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "responsibilities",
+      "class": "workbench.Workbench",
+      "expected": [
+        "SRP-01"
+      ],
+      "actual": [
+        "SRP-01"
+      ]
+    },
+    {
+      "project": "real-provider",
+      "class": "provider.HttpProvider",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "real-provider",
+      "class": "provider.Provider",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "real-provider",
+      "class": "provider.ProviderError",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "real-provider",
+      "class": "provider.TemplateProvider",
+      "expected": [],
+      "actual": []
+    },
+    {
+      "project": "real-server",
+      "class": "server.Handler",
+      "expected": [],
+      "actual": []
+    }
+  ]
+}

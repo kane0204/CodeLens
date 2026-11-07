@@ -422,13 +422,18 @@ class _Context:
                                       "message": "父类未解析：" + target_name(base)})
 
 
-def _load_records(payload):
+def _validated_files(payload):
     if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
         raise ValueError("请求必须包含 files 列表")
-    if len(payload["files"]) > MAX_FILES:
+    files = payload["files"]
+    if len(files) > MAX_FILES:
         raise ValueError(f"最多分析 {MAX_FILES} 个源码文件，请缩小目录范围")
+    return files
+
+
+def _load_records(payload):
     records, total, seen, excluded_count = [], 0, set(), 0
-    for item in payload["files"]:
+    for item in _validated_files(payload):
         if not isinstance(item, dict):
             raise ValueError("文件记录无效")
         path = normalized_path(item.get("path"))
@@ -444,31 +449,40 @@ def _load_records(payload):
                   "language": "Python 3.11" if is_python else generic.language_of(path),
                   "source": "", "status": "error",
                   "functions": [], "classes": [], "line_count": 0, "code_lines": 0}
-        try:
-            if "content_base64" in item:
-                raw = base64.b64decode(item["content_base64"], validate=True)
-            elif isinstance(item.get("content"), str):
-                raw = item["content"].encode("utf-8")
-            else:
-                raise ValueError("文件缺少源码内容")
-            if len(raw) > MAX_FILE_BYTES:
-                raise ValueError("文件超过 1 MB")
-            total += len(raw)
-            record["sha256"] = hashlib.sha256(raw).hexdigest()
-            try:
-                encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
-                record["source"] = raw.decode(encoding)
-            except (SyntaxError, LookupError, UnicodeError):
-                record["source"] = raw.decode("utf-8", errors="replace")
-            record["line_count"] = len(record["source"].splitlines())
-        except (ValueError, SyntaxError, LookupError) as exc:
-            record["error"] = {"file": path, "line": None, "type": type(exc).__name__,
-                               "message": "读取或编码失败；请检查文件编码及大小"}
+        total += _decode_source(item, record, path)
         records.append(record)
     if total > MAX_TOTAL_BYTES:
         raise ValueError("源码总量超过 8 MB，请缩小目录范围")
     records.sort(key=lambda r: r["path"])
     return records, seen, excluded_count
+
+
+def _raw_bytes(item):
+    if "content_base64" in item:
+        return base64.b64decode(item["content_base64"], validate=True)
+    if isinstance(item.get("content"), str):
+        return item["content"].encode("utf-8")
+    raise ValueError("文件缺少源码内容")
+
+
+def _decode_source(item, record, path):
+    """Populate ``record`` with decoded source; return the counted byte length."""
+    try:
+        raw = _raw_bytes(item)
+        if len(raw) > MAX_FILE_BYTES:
+            raise ValueError("文件超过 1 MB")
+        record["sha256"] = hashlib.sha256(raw).hexdigest()
+        try:
+            encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+            record["source"] = raw.decode(encoding)
+        except (SyntaxError, LookupError, UnicodeError):
+            record["source"] = raw.decode("utf-8", errors="replace")
+        record["line_count"] = len(record["source"].splitlines())
+        return len(raw)
+    except (ValueError, SyntaxError, LookupError) as exc:
+        record["error"] = {"file": path, "line": None, "type": type(exc).__name__,
+                           "message": "读取或编码失败；请检查文件编码及大小"}
+        return 0
 
 
 def _build_module_paths(records):
@@ -572,20 +586,29 @@ def _score_function(ctx, f, active_lines):
 
 def _resolve_nonpython_inheritance(ctx, records):
     # Non-Python inheritance is resolved by unique class name across the project.
+    class_names = _unique_class_names(records)
+    for record in records:
+        if record["path"].endswith(".py") or record["status"] != "ok":
+            continue
+        _link_nonpython_inheritance(ctx, record, class_names)
+
+
+def _unique_class_names(records):
     class_names = {}
     for record in records:
         for cls in record["classes"]:
             class_names.setdefault(cls["name"], cls["id"])
-    for record in records:
-        if record["path"].endswith(".py") or record["status"] != "ok":
-            continue
-        for cls in record["classes"]:
-            for base in cls.get("bases") or []:
-                target = class_names.get(base.split("::")[-1].strip())
-                if target and target != cls["id"]:
-                    ctx.inheritance.append({"source": cls["id"], "target": target,
-                                            "file": record["path"], "line": cls["line"],
-                                            "evidence_type": "inference"})
+    return class_names
+
+
+def _link_nonpython_inheritance(ctx, record, class_names):
+    for cls in record["classes"]:
+        for base in cls.get("bases") or []:
+            target = class_names.get(base.split("::")[-1].strip())
+            if target and target != cls["id"]:
+                ctx.inheritance.append({"source": cls["id"], "target": target,
+                                        "file": record["path"], "line": cls["line"],
+                                        "evidence_type": "inference"})
 
 
 def _resolve_calls_and_secrets(ctx, records):

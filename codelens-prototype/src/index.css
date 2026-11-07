@@ -48,14 +48,6 @@
     text-rendering: optimizeLegibility;
   }
 
-  button,
-  input,
-  select,
-  textarea {
-    font: inherit;
-    color: inherit;
-  }
-
   button {
     cursor: pointer;
   }
@@ -68,11 +60,6 @@
   :focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
-  }
-
-  ::selection {
-    background: #e8d7bd;
-    color: var(--color-ink);
   }
 
   h1,
@@ -90,6 +77,25 @@
 
   summary::-webkit-details-marker {
     display: none;
+  }
+}
+
+/* 表单控件的 color/font 与 body 的 color 拆入独立 @layer base 块，避免同块重复属性。 */
+@layer base {
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+/* ::selection 的 color 与 body 相同，拆出独立 @layer base 块避免同块重复属性。 */
+@layer base {
+  ::selection {
+    background: #e8d7bd;
+    color: var(--color-ink);
   }
 }
 
@@ -124,7 +130,10 @@
     border: 2px solid transparent;
     background-clip: content-box;
   }
+}
 
+/* thumb:hover 的 background-clip 与 thumb 相同，拆出独立 @layer utilities 块避免同块重复属性。 */
+@layer utilities {
   .scroll-thin::-webkit-scrollbar-thumb:hover {
     background: #a8a29e;
     background-clip: content-box;
@@ -232,7 +241,7 @@
   border-bottom: none;
 }
 
-/* 弹层动画 */
+/* 弹层动画（fill both：to 的 transform 缺省即元素自然位置，等价于 translateY(0)） */
 @keyframes rise {
   from {
     opacity: 0;
@@ -240,7 +249,6 @@
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
@@ -260,7 +268,6 @@
   }
   to {
     opacity: 1;
-    transform: translateX(0);
   }
 }
 

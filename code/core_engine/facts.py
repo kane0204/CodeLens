@@ -29,6 +29,13 @@ CONTROL_NODES = (ast.If, ast.IfExp, ast.For, ast.AsyncFor, ast.While, ast.Try, a
                  ast.With, ast.AsyncWith, ast.Match)
 JUMP_NODES = (ast.Break, ast.Continue, ast.Return, ast.Raise)
 
+#: 循环节点 -> (头部标签, 进入循环体的边标签)。
+_LOOP_LABELS = {
+    ast.For: ("for", "loop"),
+    ast.AsyncFor: ("async for", "loop"),
+    ast.While: ("while", "true"),
+}
+
 
 def own_walk(node):
     """遍历函数/类体，跳过嵌套定义（嵌套函数与类各自独立计算）。"""
@@ -45,19 +52,37 @@ def _is_jump(node):
     return isinstance(node, JUMP_NODES)
 
 
+def _terminates_always(_last):
+    return True
+
+
+def _terminates_if(last):
+    return bool(last.orelse) and _terminates(last.body) and _terminates(last.orelse)
+
+
+def _terminates_try(last):
+    blocks = [last.body, last.orelse, last.finalbody] + [h.body for h in last.handlers]
+    return all(_terminates(block) for block in blocks if block)
+
+
+# Registry: 尾语句类型 -> 该语句块是否必然终止的策略。
+_TERMINATORS = {
+    ast.Break: _terminates_always,
+    ast.Continue: _terminates_always,
+    ast.Return: _terminates_always,
+    ast.Raise: _terminates_always,
+    ast.If: _terminates_if,
+    ast.Try: _terminates_try,
+    ast.TryStar: _terminates_try,
+}
+
+
 def _terminates(statements):
     """一个语句块是否必然不落到下一句（用于保守判断 join 点是否可达）。"""
     if not statements:
         return False
-    last = statements[-1]
-    if isinstance(last, JUMP_NODES):
-        return True
-    if isinstance(last, ast.If) and last.orelse:
-        return _terminates(last.body) and _terminates(last.orelse)
-    if isinstance(last, ast.Try):
-        blocks = [last.body, last.orelse, last.finalbody] + [h.body for h in last.handlers]
-        return all(_terminates(block) for block in blocks if block)
-    return False
+    checker = _TERMINATORS.get(type(statements[-1]))
+    return checker(statements[-1]) if checker is not None else False
 
 
 class _Flow:
@@ -119,8 +144,7 @@ class _Flow:
 
     def _loop(self, stmt, depth, loop, pending_break, pending_continue):
         line = stmt.lineno
-        kind_label = "for" if isinstance(stmt, ast.For) else "async for" if isinstance(stmt, ast.AsyncFor) else "while"
-        true_label = "loop" if isinstance(stmt, ast.For) else "loop" if isinstance(stmt, ast.AsyncFor) else "true"
+        kind_label, true_label = _LOOP_LABELS[type(stmt)]
         header = self.add(line, line, "loop", kind_label, depth)
         outer_breaks = []
         body_entry = self.add(getattr(stmt.body[0], "lineno", line), line, "branch", "body", depth + 1) if stmt.body else None
@@ -130,16 +154,20 @@ class _Flow:
         for exits in (body_exits, outer_breaks):
             for source in exits:
                 self.edge(source, header, "back")
-        after_loop = self.add(getattr(stmt.orelse[0], "lineno", line), line, "branch",
-                              "for-else" if not isinstance(stmt, ast.While) else "while-else", depth + 1) if stmt.orelse else None
-        if after_loop:
-            self.edge(header, after_loop, "exhausted")
-            if isinstance(stmt, ast.While):
-                self.edge(header, after_loop, "false")
-            else_exits = self.build(stmt.orelse, after_loop, depth + 1, loop, pending_break, pending_continue)
-        else:
-            else_exits = []
+        else_exits = self._loop_else(stmt, header, depth, loop, pending_break, pending_continue)
         return header, [header] + else_exits
+
+    def _loop_else(self, stmt, header, depth, loop, pending_break, pending_continue):
+        """循环的 orelse（for-else/while-else）子流程；返回其退出节点。"""
+        if not stmt.orelse:
+            return []
+        line = stmt.lineno
+        after_loop = self.add(getattr(stmt.orelse[0], "lineno", line), line, "branch",
+                              "while-else" if isinstance(stmt, ast.While) else "for-else", depth + 1)
+        self.edge(header, after_loop, "exhausted")
+        if isinstance(stmt, ast.While):
+            self.edge(header, after_loop, "false")
+        return self.build(stmt.orelse, after_loop, depth + 1, loop, pending_break, pending_continue)
 
     def _try(self, stmt, depth, loop, pending_break, pending_continue):
         line = stmt.lineno
@@ -148,27 +176,41 @@ class _Flow:
         if body_entry:
             self.edge(header, body_entry, "seq")
         body_exits = self.build(stmt.body, body_entry, depth + 1, loop, pending_break, pending_continue) if stmt.body else []
-        handler_exits = []
+        exits = self._try_else(stmt, body_exits, depth, loop, pending_break, pending_continue)
+        exits = exits + self._try_handlers(stmt, header, depth, loop, pending_break, pending_continue)
+        if stmt.finalbody:
+            exits = self._try_finally(stmt, header, exits, depth, loop, pending_break, pending_continue)
+        return header, exits
+
+    def _try_handlers(self, stmt, header, depth, loop, pending_break, pending_continue):
+        """except 处理器：每个处理器一条从 try 头进入的异常边。"""
+        line = stmt.lineno
+        exits = []
         for handler in stmt.handlers:
             entry = self.add(getattr(handler, "lineno", line), getattr(handler, "end_lineno", line),
                              "except", "except " + _exception_name(handler.type), depth + 1)
             self.edge(header, entry, "except")
-            handler_exits.extend(self.build(handler.body, entry, depth + 1, loop,
-                                            pending_break, pending_continue))
-        if stmt.orelse:
-            entry = self.add(getattr(stmt.orelse[0], "lineno", line), line, "branch", "try-else", depth + 1)
-            for source in body_exits:
-                self.edge(source, entry, "seq")
-            exits = self.build(stmt.orelse, entry, depth + 1, loop, pending_break, pending_continue)
-        else:
-            exits = body_exits
-        exits = exits + handler_exits
-        if stmt.finalbody:
-            entry = self.add(getattr(stmt.finalbody[0], "lineno", line), line, "finally", "finally", depth + 1)
-            for source in list(exits) + [header]:
-                self.edge(source, entry, "finally")
-            exits = self.build(stmt.finalbody, entry, depth + 1, loop, pending_break, pending_continue)
-        return header, exits
+            exits.extend(self.build(handler.body, entry, depth + 1, loop,
+                                    pending_break, pending_continue))
+        return exits
+
+    def _try_else(self, stmt, body_exits, depth, loop, pending_break, pending_continue):
+        """try-else 子流程：无 else 时 try 体的出口直接外泄。"""
+        if not stmt.orelse:
+            return body_exits
+        line = stmt.lineno
+        entry = self.add(getattr(stmt.orelse[0], "lineno", line), line, "branch", "try-else", depth + 1)
+        for source in body_exits:
+            self.edge(source, entry, "seq")
+        return self.build(stmt.orelse, entry, depth + 1, loop, pending_break, pending_continue)
+
+    def _try_finally(self, stmt, header, exits, depth, loop, pending_break, pending_continue):
+        """finally 子流程：汇聚所有出口与 try 头本身。"""
+        line = stmt.lineno
+        entry = self.add(getattr(stmt.finalbody[0], "lineno", line), line, "finally", "finally", depth + 1)
+        for source in list(exits) + [header]:
+            self.edge(source, entry, "finally")
+        return self.build(stmt.finalbody, entry, depth + 1, loop, pending_break, pending_continue)
 
     def _with(self, stmt, depth, loop, pending_break, pending_continue):
         line = stmt.lineno
@@ -309,17 +351,61 @@ def _block_members(leader, outgoing, leaders, block_of):
     return members
 
 
-def _block_record(block_id, members, by_id):
+def _block_span(members, by_id):
+    """块内成员的行号范围原始数据。"""
     lines = [by_id[m]["line"] for m in members if by_id[m]["line"] is not None]
     ends = [by_id[m]["end_line"] or by_id[m]["line"] or 0 for m in members]
+    return lines, ends
+
+
+def _block_record(block_id, members, by_id):
+    lines, ends = _block_span(members, by_id)
+    start = min(lines) if lines else None
     return {
         "id": block_id,
-        "line": min(lines) if lines else None,
-        "end_line": max(ends) if ends else (min(lines) if lines else None),
+        "line": start,
+        "end_line": max(ends) if ends else start,
         "kinds": sorted({by_id[m]["kind"] for m in members}),
         "labels": [by_id[m]["label"] for m in members if by_id[m]["label"]],
         "size": len(members),
     }
+
+
+def _edge_maps(edges):
+    """从语句级边构建出边/入边邻接表。"""
+    outgoing, incoming = {}, {}
+    for source, target, label in edges:
+        outgoing.setdefault(source, []).append((target, label))
+        incoming.setdefault(target, []).append((source, label))
+    return outgoing, incoming
+
+
+def _find_leaders(flow, by_id, outgoing, incoming):
+    first_id = flow.nodes[0]["id"]
+    return {node["id"] for node in flow.nodes
+            if _is_leader(node["id"], first_id, by_id, incoming, outgoing)}
+
+
+def _build_blocks(leaders, outgoing, by_id):
+    """从每个 leader 沿唯一 seq 边吞并成员，返回基本块记录与成员归属表。"""
+    blocks, block_of = [], {}
+    for leader in sorted(leaders):
+        if leader in block_of:
+            continue
+        block_id = len(blocks) + 1
+        members = _block_members(leader, outgoing, leaders, block_of)
+        block_of[leader] = block_id
+        for member in members[1:]:
+            block_of[member] = block_id
+        blocks.append(_block_record(block_id, members, by_id))
+    return blocks, block_of
+
+
+def _project_block_edges(edges, block_of):
+    """把语句级边映射到基本块级，去掉自环并排序去重。"""
+    projected = {(block_of[s], block_of[t], label) for s, t, label in edges
+                 if block_of.get(s) is not None and block_of.get(t) is not None and block_of[s] != block_of[t]}
+    return [list(edge) for edge in sorted(projected, key=lambda item: (item[0], item[1], item[2]))]
 
 
 def _merge_blocks(flow):
@@ -334,30 +420,10 @@ def _merge_blocks(flow):
     if not flow.nodes:
         return [], []
     by_id = {node["id"]: node for node in flow.nodes}
-    outgoing, incoming = {}, {}
-    for source, target, label in flow.edges:
-        outgoing.setdefault(source, []).append((target, label))
-        incoming.setdefault(target, []).append((source, label))
-
-    first_id = flow.nodes[0]["id"]
-    leaders = {node["id"] for node in flow.nodes
-               if _is_leader(node["id"], first_id, by_id, incoming, outgoing)}
-
-    blocks, block_of = [], {}
-    for leader in sorted(leaders):
-        if leader in block_of:
-            continue
-        block_id = len(blocks) + 1
-        members = _block_members(leader, outgoing, leaders, block_of)
-        block_of[leader] = block_id
-        for member in members[1:]:
-            block_of[member] = block_id
-        blocks.append(_block_record(block_id, members, by_id))
-
-    edges = sorted({(block_of[s], block_of[t], label) for s, t, label in flow.edges
-                    if block_of.get(s) is not None and block_of.get(t) is not None and block_of[s] != block_of[t]},
-                   key=lambda item: (item[0], item[1], item[2]))
-    return blocks, [list(edge) for edge in edges]
+    outgoing, incoming = _edge_maps(flow.edges)
+    leaders = _find_leaders(flow, by_id, outgoing, incoming)
+    blocks, block_of = _build_blocks(leaders, outgoing, by_id)
+    return blocks, _project_block_edges(flow.edges, block_of)
 
 
 def build_control_flow(node):
@@ -392,53 +458,90 @@ def build_control_flow(node):
     }
 
 
+def _record(table, name, line):
+    bucket = table.setdefault(name, set())
+    if isinstance(line, int) and line > 0:
+        bucket.add(line)
+
+
+def _du_name(defs, uses, item):
+    if isinstance(item.ctx, ast.Load):
+        _record(uses, item.id, item.lineno)
+    else:
+        _record(defs, item.id, item.lineno)
+
+
+def _du_aug_assign(defs, uses, item):
+    if isinstance(item.target, ast.Name):
+        _record(uses, item.target.id, item.lineno)  # a += 1 既读又写
+
+
+def _du_named_expr(defs, uses, item):
+    if isinstance(item.target, ast.Name):
+        _record(defs, item.target.id, item.lineno)
+
+
+def _du_except(defs, uses, item):
+    if item.name:
+        _record(defs, item.name, item.lineno)
+
+
+def _du_global(defs, uses, item):
+    for name in item.names:
+        _record(defs, name, item.lineno)
+
+
+# Registry: 节点类型 -> def-use 收集策略（写入 defs / uses 两张表）。
+_DEF_USE_COLLECTORS = {
+    ast.Name: _du_name,
+    ast.AugAssign: _du_aug_assign,
+    ast.NamedExpr: _du_named_expr,
+    ast.ExceptHandler: _du_except,
+    ast.Global: _du_global,
+    ast.Nonlocal: _du_global,
+}
+
+
+def _collect_def_use(node, defs, uses):
+    for item in own_walk(node):
+        collector = _DEF_USE_COLLECTORS.get(type(item))
+        if collector is not None:
+            collector(defs, uses, item)
+
+
+def _arg_lists(node):
+    return (list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs),
+            (node.args.vararg, node.args.kwarg))
+
+
+def _def_use_params(args, star_args):
+    return sorted(arg.arg for arg in args) + sorted(arg.arg for arg in star_args if arg)
+
+
+def _def_use_entries(defs, uses):
+    names = sorted(set(defs) | set(uses))
+    truncated = len(names) > MAX_DEF_USE_NAMES
+    entries = [{"name": name, "defs": sorted(defs.get(name, ())), "uses": sorted(uses.get(name, ()))}
+               for name in names[:MAX_DEF_USE_NAMES]]
+    return entries, truncated
+
+
 def build_def_use(node):
     """函数内变量的定义点与使用点。只统计 `Name`，属性/下标读写不计。"""
     defs, uses = {}, {}
-
-    def add(table, name, line):
-        bucket = table.setdefault(name, set())
-        if isinstance(line, int) and line > 0:
-            bucket.add(line)
-
-    args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+    args, star_args = _arg_lists(node)
     for arg in args:
-        add(defs, arg.arg, getattr(arg, "lineno", node.lineno))
-    for arg in (node.args.vararg, node.args.kwarg):
+        _record(defs, arg.arg, getattr(arg, "lineno", node.lineno))
+    for arg in star_args:
         if arg:
-            add(defs, arg.arg, getattr(arg, "lineno", node.lineno))
-
-    for item in own_walk(node):
-        if isinstance(item, ast.Name):
-            if isinstance(item.ctx, ast.Load):
-                add(uses, item.id, item.lineno)
-            else:
-                add(defs, item.id, item.lineno)
-        elif isinstance(item, ast.AugAssign) and isinstance(item.target, ast.Name):
-            add(uses, item.target.id, item.lineno)  # a += 1 既读又写
-        elif isinstance(item, ast.NamedExpr) and isinstance(item.target, ast.Name):
-            add(defs, item.target.id, item.lineno)
-        elif isinstance(item, ast.ExceptHandler) and item.name:
-            add(defs, item.name, item.lineno)
-        elif isinstance(item, (ast.Global, ast.Nonlocal)):
-            for name in item.names:
-                add(defs, name, item.lineno)
-
-    names = sorted(set(defs) | set(uses))
-    truncated = len(names) > MAX_DEF_USE_NAMES
-    names = names[:MAX_DEF_USE_NAMES]
-    entries = []
-    for name in names:
-        entry = {"name": name, "defs": sorted(defs.get(name, ())), "uses": sorted(uses.get(name, ()))}
-        entries.append(entry)
-    params = sorted(arg.arg for arg in args) + sorted(
-        arg.arg for arg in (node.args.vararg, node.args.kwarg) if arg
-    )
+            _record(defs, arg.arg, getattr(arg, "lineno", node.lineno))
+    _collect_def_use(node, defs, uses)
+    entries, truncated = _def_use_entries(defs, uses)
     return {
         "available": True,
         "names": entries,
         "truncated": truncated,
-        "params": params,
+        "params": _def_use_params(args, star_args),
         "notes": [
             "只统计标识符（ast.Name）级定义与使用；a.x 与 a[0] 的属性/下标读写不在其中。",
             "defs 含形参、赋值、循环变量、with/except 绑定与赋值表达式。",

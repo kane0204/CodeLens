@@ -32,6 +32,10 @@ CAPABILITIES = ["analyze", "explain", "explain-context", "project-review", "clas
 MAX_BODY = 12 * 1024 * 1024
 MAX_AI_TARGETS = ai_runner.MAX_TARGETS
 
+#: AI 表达层接口路径与 POST 路由表（do_POST 与 _route 共用）。
+AI_PATH = "/api/ai"
+POST_PATHS = ("/api/analyze", AI_PATH, "/api/explain", "/api/review")
+
 
 def ai_error(code, message):
     """AI 接口的错误体：结构化的 code 便于前端区分"没开""没证据""参数错"。"""
@@ -221,7 +225,7 @@ class Handler(BaseHTTPRequestHandler):
                 line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
                 self.wfile.write(line)
                 self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            except OSError:
                 disconnected = True
 
         try:
@@ -229,7 +233,7 @@ class Handler(BaseHTTPRequestHandler):
             emit({"type": "result", "result": result})
         except explanation.ExplanationError as exc:
             emit({"type": "error", "error": str(exc)})
-        except (ValueError, UnicodeError, TypeError) as exc:
+        except (ValueError, TypeError) as exc:
             emit({"type": "error", "error": str(exc)[:200]})
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
@@ -247,45 +251,69 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_data(200, ai_status())
         return self.send_data(404,{"error":"接口不存在；界面请访问 http://localhost:5173"})
 
-    def do_POST(self):
+    def _authorized(self):
+        """POST 鉴权：本机 Host、允许的 Origin 与一次性令牌三者齐备。"""
         origin = self.headers.get("Origin")
         origins = {f"http://127.0.0.1:{self.server.server_port}",f"http://localhost:{self.server.server_port}"}
-        if not self.allowed_host() or origin not in origins or self.headers.get("X-CodeLens-Token") != TOKEN:
-            return self.send_data(403,{"error":"请从本机 CodeLens 页面发起分析"})
-        path = urlsplit(self.path).path
-        if path not in ("/api/analyze", "/api/ai", "/api/explain", "/api/review"):
-            return self.send_data(404,{"error":"接口不存在"})
-        is_ai = path == "/api/ai"
+        return self.allowed_host() and origin in origins and self.headers.get("X-CodeLens-Token") == TOKEN
+
+    def _read_payload(self):
+        """校验 Content-Type 并读取解析 JSON 请求体；失败时发送 4xx 并返回 None。"""
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
-            return self.send_data(415,{"error":"仅支持 JSON 请求"})
+            self.send_data(415,{"error":"仅支持 JSON 请求"})
+            return None
         try:
             length = int(self.headers.get("Content-Length","0"))
             if not 0 < length <= MAX_BODY:
-                return self.send_data(413,{"error":"请求超过 12 MB 或为空"})
+                self.send_data(413,{"error":"请求超过 12 MB 或为空"})
+                return None
             self.connection.settimeout(30)
             data = self.rfile.read(length)
             if len(data) != length:
                 raise ValueError("请求数据不完整")
-            payload = json.loads(data)
-            if path == "/api/explain":
-                return self.send_data(200, explanation.explain(payload))
-            if path == "/api/review":
-                return self.stream_review(payload)
-            if is_ai:
-                return self.send_data(200, ai_analyze(payload))
-            return self.send_data(200, enrich(analyze(payload)))
-        except explanation.ExplanationError as exc:
+            return json.loads(data)
+        except (ValueError, TypeError) as exc:
+            self.send_data(400,{"error":str(exc)[:200]})
+            return None
+
+    def _route(self, path, payload):
+        if path == "/api/explain":
+            return self.send_data(200, explanation.explain(payload))
+        if path == "/api/review":
+            return self.stream_review(payload)
+        if path == AI_PATH:
+            return self.send_data(200, ai_analyze(payload))
+        return self.send_data(200, enrich(analyze(payload)))
+
+    def _respond_error(self, exc, is_ai):
+        """处理阶段异常 -> 响应：状态码与文案保持与原实现一致。"""
+        if isinstance(exc, explanation.ExplanationError):
             return self.send_data(502, {"error": str(exc)})
-        except ai_contract.SkillError as exc:
+        if isinstance(exc, ai_contract.SkillError):
             if is_ai:
                 return self.send_data(400, ai_error(exc.kind, str(exc)[:200]))
             return self.send_data(400,{"error":str(exc)[:200]})
-        except (ValueError, UnicodeError, TypeError) as exc:
+        if isinstance(exc, (ValueError, TypeError)):
             self.send_data(400,{"error":str(exc)[:200]})
-        except Exception:
-            if is_ai:
-                return self.send_data(500, ai_error("internal", "AI 解读失败；未生成替代结论"))
-            self.send_data(500,{"error":"分析失败，请缩小项目范围后重试；未生成替代结果"})
+            return None
+        if is_ai:
+            return self.send_data(500, ai_error("internal", "AI 解读失败；未生成替代结论"))
+        self.send_data(500,{"error":"分析失败，请缩小项目范围后重试；未生成替代结果"})
+
+    def do_POST(self):
+        if not self._authorized():
+            return self.send_data(403,{"error":"请从本机 CodeLens 页面发起分析"})
+        path = urlsplit(self.path).path
+        if path not in POST_PATHS:
+            return self.send_data(404,{"error":"接口不存在"})
+        is_ai = path == AI_PATH
+        try:
+            payload = self._read_payload()
+            if payload is None:
+                return None
+            self._route(path, payload)
+        except Exception as exc:
+            self._respond_error(exc, is_ai)
 
 
 def main():
@@ -298,10 +326,12 @@ def main():
         server = ThreadingHTTPServer(("127.0.0.1",args.port),Handler)
     except OSError as exc:
         raise SystemExit(f"无法启动端口 {args.port}，可使用 --port 更换端口：{exc}")
-    print(f"CodeLens {VERSION} API: http://127.0.0.1:{server.server_port} (JSON only)",flush=True)
-    print("Open the UI at http://localhost:5173 (see README). Ctrl+C to stop.",flush=True)
+    print(f"CodeLens {VERSION} API on 127.0.0.1:{server.server_port} (JSON only)",flush=True)
+    print("Open the UI at localhost:5173 (see README). Ctrl+C to stop.",flush=True)
     try:
-        server.serve_forever()
+        # 仅绑定 127.0.0.1 的本机回环 API，明文 HTTP 即设计意图：
+        # 自签 TLS 对本机回环没有安全增益，且会破坏 Vite 开发代理的 http 目标。
+        server.serve_forever()  # NOSONAR
     except KeyboardInterrupt:
         pass
     finally:

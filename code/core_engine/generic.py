@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_left
+from itertools import islice
 from pathlib import PurePosixPath
+
+#: Java 源文件后缀（语言表、依赖边构建器与导入解析共用）。
+_JAVA_SUFFIX = ".java"
 
 LANGUAGES = {
     ".c": "C",
@@ -19,7 +23,7 @@ LANGUAGES = {
     ".cpp": "C++",
     ".cxx": "C++",
     ".hpp": "C++",
-    ".java": "Java",
+    _JAVA_SUFFIX: "Java",
     ".js": "JavaScript",
     ".jsx": "JavaScript",
     ".ts": "TypeScript",
@@ -45,11 +49,15 @@ KEYWORDS = {
 CONTROL_WORDS = {"if", "for", "while", "switch", "catch", "else", "do", "try"}
 
 HEADER_RE = re.compile(r"([A-Za-z_~][\w:~]*)\s*\(")
-ARROW_RE = re.compile(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\s*)?\([^)]*\)\s*(?::[^=]+)?=>")
+#: JS/TS 箭头函数：声明头（const/let/var x[: T]=）与函数体尾（[async] (args)[: T]=>）。
+#: 拆成两段以降低单个正则的复杂度；头部结束位置唯一，顺序衔接与单正则等价。
+ARROW_DECL_RE = re.compile(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=")
+ARROW_BODY_RE = re.compile(r"\s*(?:async\s*)?(?:function\s*)?\([^)]*\)\s*(?::[^=]+)?=>")
 GO_FUNC_RE = re.compile(r"\bfunc\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(")
 CLASS_RE = re.compile(r"\b(class|struct|interface|enum)\s+([A-Za-z_]\w*)")
 SECRET_RE = re.compile(
-    r"(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)\s*[:=]\s*[\"']([^\"'\n]{8,})[\"']",
+    r"((?:pass(?:word|wd)|pwd|secret|token|(?:api|access|private)[_-]?key))"
+    r"\s*[:=]\s*[\"']([^\"'\n]{8,})[\"']",
     re.I,
 )
 PLACEHOLDER_RE = re.compile(r"demo|example|sample|test|placeholder|changeme|your[_ -]|dummy|xxx|not[_ -]a[_ -]real", re.I)
@@ -59,6 +67,9 @@ BROAD_CATCH_RE = re.compile(r"catch\s*\(\s*(?:Exception|Throwable|\.\.\.)\b")
 CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
 CC_TOKEN_RE = re.compile(r"\b(?:if|for|foreach|while|case|catch)\b|&&|\|\||\?(?![.:])")
 MAX_CALLS_PER_FILE = 4000
+
+#: JS/TS 相对导入解析时依次尝试的后缀与目录入口。
+_JS_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js")
 
 
 class _LineIndex:
@@ -88,54 +99,71 @@ def code_line_count(source):
     return total
 
 
+def _consume_block_comment(chars, source, i):
+    """从 /* 之后消费到 */ 为止；换行符保留，其余置空。返回下一个索引。"""
+    n = len(source)
+    while i < n:
+        if source[i] == "*" and i + 1 < n and source[i + 1] == "/":
+            chars[i] = chars[i + 1] = " "
+            return i + 2
+        if source[i] != "\n":
+            chars[i] = " "
+        i += 1
+    return i
+
+
+def _consume_line_comment(chars, source, i):
+    """从 // 之后消费到行尾（不含换行符）。"""
+    n = len(source)
+    while i < n and source[i] != "\n":
+        chars[i] = " "
+        i += 1
+    return i
+
+
+def _skip_string_char(chars, source, i):
+    """字符串内一个普通字符或转义序列；返回下一个索引。"""
+    n = len(source)
+    if source[i] == "\\":
+        chars[i] = " "
+        if i + 1 < n:
+            chars[i + 1] = " "
+        return i + 2
+    if source[i] != "\n":
+        chars[i] = " "
+    return i + 1
+
+
+def _consume_string(chars, source, i):
+    """消费一个字符串字面量（含转义序列）。返回下一个索引。"""
+    n = len(source)
+    quote = source[i]
+    chars[i] = " "
+    i += 1
+    while i < n and source[i] != quote:
+        i = _skip_string_char(chars, source, i)
+    if i < n:
+        chars[i] = " "
+        i += 1
+    return i
+
+
 def _sanitize(source):
     """Blank out comments and string bodies while preserving offsets/newlines."""
     chars = list(source)
     i, n = 0, len(source)
-    in_block = False
     while i < n:
         c = source[i]
         nxt = source[i + 1] if i + 1 < n else ""
-        if in_block:
-            if c == "*" and nxt == "/":
-                chars[i] = chars[i + 1] = " "
-                in_block = False
-                i += 2
-                continue
-            if c != "\n":
-                chars[i] = " "
-            i += 1
-            continue
         if c == "/" and nxt == "*":
             chars[i] = chars[i + 1] = " "
-            in_block = True
-            i += 2
-            continue
-        if c == "/" and nxt == "/":
-            while i < n and source[i] != "\n":
-                chars[i] = " "
-                i += 1
-            continue
-        if c in "\"'`":
-            quote = c
-            chars[i] = " "
+            i = _consume_block_comment(chars, source, i + 2)
+        elif c == "/" and nxt == "/":
+            i = _consume_line_comment(chars, source, i)
+        elif c in "\"'`":
+            i = _consume_string(chars, source, i)
+        else:
             i += 1
-            while i < n:
-                if source[i] == "\\":
-                    chars[i] = " "
-                    if i + 1 < n:
-                        chars[i + 1] = " "
-                    i += 2
-                    continue
-                if source[i] == quote:
-                    chars[i] = " "
-                    i += 1
-                    break
-                if source[i] != "\n":
-                    chars[i] = " "
-                i += 1
-            continue
-        i += 1
     return "".join(chars)
 
 
@@ -168,28 +196,41 @@ def _control_before(clean, index):
     return _is_control_brace(clean[start:index])
 
 
+def _param_body(header, open_at):
+    """提取一级括号内的参数文本（不含外层括号）。"""
+    depth = 0
+    for offset in range(open_at, len(header)):
+        if header[offset] == "(":
+            depth += 1
+        elif header[offset] == ")":
+            depth -= 1
+            if depth == 0:
+                return header[open_at + 1:offset]
+    return header[open_at + 1:]
+
+
+def _param_stats(body):
+    """单层扫描参数体：返回 (顶层逗号数, 是否有实际参数内容)。"""
+    depth, count, has_value = 0, 0, False
+    for ch in body:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0 and ch == ",":
+            count += 1
+        elif depth == 0 and not ch.isspace():
+            has_value = True
+    return count, has_value
+
+
 def _params_of(header):
     open_at = header.find("(")
     if open_at < 0:
         return 0
-    depth, count, has_value = 0, 0, False
-    for ch in header[open_at:]:
-        if ch == "(":
-            depth += 1
-            if depth == 1:
-                continue
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                break
-        elif depth == 1 and ch == ",":
-            count += 1
-        elif depth == 1 and not ch.isspace():
-            has_value = True
-    if not has_value:
-        return 0
-    text = header[open_at + 1: header.find(")", open_at)]
-    if text.strip() in {"", "void"}:
+    body = _param_body(header, open_at)
+    count, has_value = _param_stats(body)
+    if not has_value or body.strip() in {"", "void"}:
         return 0
     return count + 1
 
@@ -207,47 +248,79 @@ def _effective_lines(source, start_line, end_line):
     return total
 
 
-def _function_header(clean, brace):
-    segment = _segment_before(clean, brace)
-    text = segment.strip()
-    if not text or "#" in text:
-        return None
-    arrow = ARROW_RE.search(text)
-    if arrow:
-        return arrow.group(1), text
-    go = GO_FUNC_RE.search(text)
-    if go:
-        return go.group(1), text
+def _header_c_style(text):
+    """C/C++ 风格头部：从声明文本提取函数名，形如声明的文本返回 None。"""
     if "(" not in text or ")" not in text:
         return None
     head = text.split("(")[0].strip()
     if not head or any(word in head.split() for word in CONTROL_WORDS):
         return None
-    words = head.replace("*", " ").replace("&", " ").split()
-    if not words:
-        return None
-    name = words[-1]
-    if name in KEYWORDS:
-        return None
-    if not re.fullmatch(r"[A-Za-z_~][\w:~]*", name):
+    name = _c_style_name(head)
+    if name is None:
         return None
     # C/C++ declarations such as `int x` must not be treated as functions.
     if text.rstrip().endswith(";") and "{" not in text:
         return None
-    return name.split("::")[-1].lstrip("~"), text
+    return name, text
+
+
+def _c_style_name(head):
+    words = head.replace("*", " ").replace("&", " ").split()
+    if not words:
+        return None
+    name = words[-1]
+    if name in KEYWORDS or not re.fullmatch(r"[A-Za-z_~][\w:~]*", name):
+        return None
+    return name.split("::")[-1].lstrip("~")
+
+
+def _arrow_name(text):
+    """匹配 const/let/var 声明的箭头函数，返回变量名；等价于原单一正则的 search。"""
+    decl = ARROW_DECL_RE.search(text)
+    while decl is not None:
+        if ARROW_BODY_RE.match(text, decl.end()):
+            return decl.group(1)
+        decl = ARROW_DECL_RE.search(text, decl.end())
+    return None
+
+
+def _function_header(clean, brace):
+    segment = _segment_before(clean, brace)
+    text = segment.strip()
+    if not text or "#" in text:
+        return None
+    arrow = _arrow_name(text)
+    if arrow is not None:
+        return arrow, text
+    go = GO_FUNC_RE.search(text)
+    if go:
+        return go.group(1), text
+    return _header_c_style(text)
+
+
+def _extends_bases(text):
+    """Java/JS 风格：extends/implements 列表。"""
+    match = re.search(r"\b(?:extends|implements)\s+([^{]+)", text)
+    if not match:
+        return []
+    return [item.strip().split("<")[0] for item in re.split(r",|\band\b", match.group(1)) if item.strip()]
+
+
+def _colon_bases(text):
+    """C++ 风格：冒号后的基类列表（去掉访问修饰符）。"""
+    colon = re.search(r":\s*([^{]+)", text)
+    if not colon:
+        return []
+    names = []
+    for item in colon.group(1).split(","):
+        cleaned = re.sub(r"\b(public|private|protected|virtual)\b", "", item).strip().split("<")[0]
+        if cleaned and re.fullmatch(r"[\w:.]+", cleaned):
+            names.append(cleaned.split("::")[-1])
+    return names
 
 
 def _class_bases(text):
-    match = re.search(r"\b(?:extends|implements)\s+([^{]+)", text)
-    names = []
-    if match:
-        names = [item.strip().split("<")[0] for item in re.split(r",|\band\b", match.group(1)) if item.strip()]
-    colon = re.search(r":\s*([^{]+)", text)
-    if colon:
-        for item in colon.group(1).split(","):
-            cleaned = re.sub(r"\b(public|private|protected|virtual)\b", "", item).strip().split("<")[0]
-            if cleaned and re.fullmatch(r"[\w:.]+", cleaned):
-                names.append(cleaned.split("::")[-1])
+    names = _extends_bases(text) + _colon_bases(text)
     return [name for name in names if name and name not in {"public", "private", "protected"}]
 
 
@@ -316,6 +389,21 @@ def _scan_classes(clean, pairs, module, path, lines):
     return classes
 
 
+def _owning_class(classes, brace):
+    return next((item for item in classes if item["_span"][0] < brace < item["_span"][1]), None)
+
+
+def _function_ident(module, owner, name, start_line, seen_ids):
+    """唯一化函数 id：重复时追加行号后缀，仍重复则放弃该条。"""
+    ident = f"{module}.{owner['name']}.{name}" if owner else f"{module}.{name}"
+    if ident in seen_ids:
+        ident += "@" + str(start_line)
+    if ident in seen_ids:
+        return None
+    seen_ids.add(ident)
+    return ident
+
+
 def _scan_functions(clean, pairs, classes, module, path, lines):
     """Locate function spans and identities; metrics are applied afterwards."""
     functions = []
@@ -330,13 +418,10 @@ def _scan_functions(clean, pairs, classes, module, path, lines):
         end_line = lines.line_at(end)
         if end_line < start_line:
             continue
-        owner = next((item for item in classes if item["_span"][0] < brace < item["_span"][1]), None)
-        ident = f"{module}.{owner['name']}.{name}" if owner else f"{module}.{name}"
-        if ident in seen_ids:
-            ident += "@" + str(start_line)
-        if ident in seen_ids:
+        owner = _owning_class(classes, brace)
+        ident = _function_ident(module, owner, name, start_line, seen_ids)
+        if ident is None:
             continue
-        seen_ids.add(ident)
         functions.append({
             "id": ident,
             "name": name,
@@ -351,7 +436,31 @@ def _scan_functions(clean, pairs, classes, module, path, lines):
     return functions
 
 
-def _apply_metrics(functions, clean, source, lines):
+def _brace_depth_delta(clean, index, stack):
+    """一个字符对控制嵌套深度的贡献：控制花括号开启 +1、对应闭合 -1、其余 0。"""
+    if clean[index] == "{":
+        control = _control_before(clean, index)
+        stack.append(control)
+        return 1 if control else 0
+    if clean[index] == "}" and stack and stack.pop():
+        return -1
+    return 0
+
+
+def _nesting_depth(clean, ranges):
+    """控制花括号嵌套深度：只计入控制结构（if/for/...）开的花括号。"""
+    depth = maximum = 0
+    stack = []
+    for a, b in ranges:
+        for index in range(a, b):
+            delta = _brace_depth_delta(clean, index, stack)
+            if delta:
+                depth += delta
+                maximum = max(maximum, depth)
+    return maximum
+
+
+def _apply_metrics(functions, clean, source):
     """CC / nesting / length / params, excluding nested-function bodies (the Python
     AST path counts nested definitions separately; this keeps both aligned)."""
     spans = {tuple(item["_span"]) for item in functions}
@@ -361,21 +470,7 @@ def _apply_metrics(functions, clean, source, lines):
         start, end = span
         ranges = _kept_ranges(start + 1, end, inner.get(span) or [])
         item["cc"] = 1 + sum(len(CC_TOKEN_RE.findall(clean[a:b])) for a, b in ranges)
-        depth = maximum = 0
-        stack = []
-        for a, b in ranges:
-            for index in range(a, b):
-                ch = clean[index]
-                if ch == "{":
-                    control = _control_before(clean, index)
-                    stack.append(control)
-                    if control:
-                        depth += 1
-                        maximum = max(maximum, depth)
-                elif ch == "}" and stack:
-                    if stack.pop():
-                        depth -= 1
-        item["nesting"] = maximum
+        item["nesting"] = _nesting_depth(clean, ranges)
         item["length"] = _effective_lines(source, item["line"], item["end_line"])
         item["params"] = _params_of(item["_text"])
         item["statements"] = []
@@ -400,61 +495,96 @@ def _threshold_findings(functions, path):
     return findings
 
 
+def _secret_signal(line):
+    secret = SECRET_RE.search(line)
+    if secret and not PLACEHOLDER_RE.search(secret.group(2)):
+        return ("A4", "warning",
+                "敏感命名变量被直接赋予非占位字符串字面量；值已从报告隐藏。",
+                "确认是否为真实凭据，改用环境变量或密钥管理服务；未验证凭据有效性。",
+                "fact", None)
+    return None
+
+
+def _catch_signal(line):
+    if EMPTY_CATCH_RE.search(line):
+        return ("A8-DEFENSIVE", "warning",
+                "异常捕获块为空，异常被静默吞掉。",
+                "至少记录异常并给出恢复路径或向上抛出。",
+                "inference", "medium")
+    if BROAD_CATCH_RE.search(line):
+        return ("A8-DEFENSIVE", "info",
+                "捕获范围过宽（Exception/Throwable/...），可能掩盖非预期错误。",
+                "缩小捕获类型，只处理可恢复的异常。",
+                "inference", "low")
+    return None
+
+
+def _todo_signal(line):
+    if TODO_RE.search(line) and ("//" in line or "#" in line or "/*" in line or "*" in line):
+        return ("CMT-01", "info",
+                "存在未完成、临时或占位注释，实现可能与注释描述不一致。",
+                "核对注释与当前实现，补齐未完成部分或删除过期注释。",
+                "inference", "low")
+    return None
+
+
+# Chain of Responsibility: 每行源码依次经过这些规则，返回 None 表示不触发。
+_LINE_SIGNALS = (_secret_signal, _catch_signal, _todo_signal)
+
+
 def _line_findings(source, path):
     findings = []
     for number, line in enumerate(source.splitlines(), 1):
-        secret = SECRET_RE.search(line)
-        if secret and not PLACEHOLDER_RE.search(secret.group(2)):
-            findings.append(_finding("A4", "warning", path, number,
-                                     "敏感命名变量被直接赋予非占位字符串字面量；值已从报告隐藏。",
-                                     "确认是否为真实凭据，改用环境变量或密钥管理服务；未验证凭据有效性。"))
-        if EMPTY_CATCH_RE.search(line):
-            findings.append(_finding("A8-DEFENSIVE", "warning", path, number,
-                                     "异常捕获块为空，异常被静默吞掉。",
-                                     "至少记录异常并给出恢复路径或向上抛出。", evidence="inference", confidence="medium"))
-        elif BROAD_CATCH_RE.search(line):
-            findings.append(_finding("A8-DEFENSIVE", "info", path, number,
-                                     "捕获范围过宽（Exception/Throwable/...），可能掩盖非预期错误。",
-                                     "缩小捕获类型，只处理可恢复的异常。", evidence="inference", confidence="low"))
-        if TODO_RE.search(line) and ("//" in line or "#" in line or "/*" in line or "*" in line):
-            findings.append(_finding("CMT-01", "info", path, number,
-                                     "存在未完成、临时或占位注释，实现可能与注释描述不一致。",
-                                     "核对注释与当前实现，补齐未完成部分或删除过期注释。",
-                                     evidence="inference", confidence="low"))
+        for rule, severity, message, suggestion, evidence, confidence in \
+                filter(None, (signal(line) for signal in _LINE_SIGNALS)):
+            findings.append(_finding(rule, severity, path, number, message, suggestion,
+                                     evidence=evidence, confidence=confidence))
     return findings
 
 
-def _build_calls(functions, clean, path, lines):
+def _call_index(functions):
+    """函数名 -> 定义 id 列表（多于一个即视为不唯一，无法确定解析）。"""
     by_name = {}
     for item in functions:
         by_name.setdefault(item["name"], []).append(item["id"])
-    calls = []
-    exhausted = False
+    return by_name
+
+
+def _call_record(source_id, name, match, a, path, lines, by_name):
+    ids = by_name.get(name) or []
+    resolved = len(ids) == 1
+    return {
+        "source": source_id,
+        "target": ids[0] if resolved else None,
+        "expression": name,
+        "file": path,
+        "line": lines.line_at(a + match.start()),
+        "status": "resolved" if resolved else "unresolved",
+        "evidence_type": "fact" if resolved else "inference",
+    }
+
+
+def _range_calls(source_id, clean, a, b, path, lines, by_name):
+    for match in CALL_RE.finditer(clean[a:b]):
+        name = match.group(1)
+        if name not in KEYWORDS:
+            yield _call_record(source_id, name, match, a, path, lines, by_name)
+
+
+def _iter_calls(functions, clean, path, lines, by_name):
+    """按函数体范围产出调用边；由调用方负责截断到上限。"""
     for item in functions:
-        if exhausted:
-            break
         for a, b in item["_ranges"]:
-            for match in CALL_RE.finditer(clean[a:b]):
-                name = match.group(1)
-                if name in KEYWORDS:
-                    continue
-                ids = by_name.get(name) or []
-                resolved = len(ids) == 1
-                calls.append({
-                    "source": item["id"],
-                    "target": ids[0] if resolved else None,
-                    "expression": name,
-                    "file": path,
-                    "line": lines.line_at(a + match.start()),
-                    "status": "resolved" if resolved else "unresolved",
-                    "evidence_type": "fact" if resolved else "inference",
-                })
-                if len(calls) >= MAX_CALLS_PER_FILE:
-                    exhausted = True
-                    break
-            if exhausted:
-                break
-    return calls
+            yield from _range_calls(item["id"], clean, a, b, path, lines, by_name)
+
+
+def _build_calls(functions, clean, path, lines):
+    by_name = _call_index(functions)
+    return list(islice(_iter_calls(functions, clean, path, lines, by_name), MAX_CALLS_PER_FILE))
+
+
+def _is_private(item):
+    return item["name"].startswith("_") or re.search(r"\bprivate\b", item["_text"])
 
 
 def _dead_code_findings(functions, calls, path):
@@ -462,8 +592,7 @@ def _dead_code_findings(functions, calls, path):
     inbound = {edge["target"] for edge in calls if edge["status"] == "resolved"}
     findings = []
     for item in functions:
-        private = item["name"].startswith("_") or re.search(r"\bprivate\b", item["_text"])
-        if private and item["id"] not in inbound and item["name"] not in {"main", "constructor"}:
+        if _is_private(item) and item["id"] not in inbound and item["name"] not in {"main", "constructor"}:
             findings.append(_finding("A5-DEAD", "info", path, item["line"],
                                      f"{item['id']} 在本次分析范围内没有发现调用方。",
                                      "确认是否被外部、反射或回调使用；确认后再决定删除。",
@@ -486,7 +615,7 @@ def analyze_record(record, known_paths):
         owner = item["_owner"]
         if owner is not None:
             owner["methods"].append(item["id"])
-    _apply_metrics(functions, clean, source, lines)
+    _apply_metrics(functions, clean, source)
     calls = _build_calls(functions, clean, path, lines)
     findings = _threshold_findings(functions, path)
     findings.extend(_line_findings(source, path))
@@ -524,8 +653,35 @@ def _java_edges(source, path, known, push):
         if not match:
             continue
         target = match.group(1)
-        guess = target.replace(".", "/") + ".java"
+        guess = target.replace(".", "/") + _JAVA_SUFFIX
         push(target, number, next((item for item in known if item.endswith(guess)), None))
+
+
+def _join_path_part(parts, part):
+    """归一化路径段：.. 弹出上一段，空段与当前目录忽略。"""
+    if part == "..":
+        if parts:
+            parts.pop()
+    elif part not in ("", "."):
+        parts.append(part)
+
+
+def _js_relative_candidates(path, target):
+    """把 ./x 形式的相对导入展开成可能的真实路径候选。"""
+    base = PurePosixPath(path).parent
+    raw = str((base / target).as_posix())
+    parts = []
+    for part in raw.split("/"):
+        _join_path_part(parts, part)
+    stem = "/".join(parts)
+    return [stem] + [f"{stem}{ext}" for ext in _JS_SUFFIXES]
+
+
+def _js_internal(path, target, known):
+    if not target.startswith("."):
+        return None
+    candidates = _js_relative_candidates(path, target)
+    return next((item for item in known if item in candidates), None)
 
 
 def _js_edges(source, path, known, push):
@@ -533,44 +689,42 @@ def _js_edges(source, path, known, push):
     for number, line in enumerate(source.splitlines(), 1):
         for match in pattern.finditer(line):
             target = match.group(1)
-            internal = None
-            if target.startswith("."):
-                base = PurePosixPath(path).parent
-                raw = str((base / target).as_posix())
-                parts = []
-                for part in raw.split("/"):
-                    if part == "..":
-                        if parts:
-                            parts.pop()
-                    elif part not in ("", "."):
-                        parts.append(part)
-                stem = "/".join(parts)
-                candidates = [stem] + [f"{stem}{ext}" for ext in (".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js")]
-                internal = next((item for item in known if item in candidates), None)
-            push(target, number, internal)
+            push(target, number, _js_internal(path, target, known))
+
+
+def _go_import_match(stripped, in_block):
+    """块内或单行 import 中提取引号内的包路径。"""
+    if in_block or stripped.startswith("import"):
+        return re.search(r"\"([^\"]+)\"", stripped)
+    return None
+
+
+def _go_scan_line(stripped, in_block):
+    """扫描一行 Go 源码：返回 (新的 import 块状态, 该行的导入目标列表)。"""
+    if stripped.startswith("import ("):
+        return True, []
+    if in_block and stripped.startswith(")"):
+        return False, []
+    match = _go_import_match(stripped, in_block)
+    return in_block, [match.group(1)] if match else []
+
+
+def _go_internal(target, known):
+    return next((item for item in known if item.rsplit(".", 1)[0].endswith(target)), None)
 
 
 def _go_edges(source, path, known, push):
     in_block = False
     for number, line in enumerate(source.splitlines(), 1):
-        stripped = line.strip()
-        if stripped.startswith("import ("):
-            in_block = True
-            continue
-        if in_block and stripped.startswith(")"):
-            in_block = False
-            continue
-        match = re.search(r"\"([^\"]+)\"", stripped) if (in_block or stripped.startswith("import")) else None
-        if not match:
-            continue
-        target = match.group(1)
-        push(target, number, next((item for item in known if item.rsplit(".", 1)[0].endswith(target)), None))
+        in_block, targets = _go_scan_line(line.strip(), in_block)
+        for target in targets:
+            push(target, number, _go_internal(target, known))
 
 
 _EDGE_BUILDERS = {
     ".c": _c_cpp_edges, ".h": _c_cpp_edges, ".cc": _c_cpp_edges, ".cpp": _c_cpp_edges,
     ".cxx": _c_cpp_edges, ".hpp": _c_cpp_edges,
-    ".java": _java_edges,
+    _JAVA_SUFFIX: _java_edges,
     ".js": _js_edges, ".jsx": _js_edges, ".ts": _js_edges, ".tsx": _js_edges,
     ".go": _go_edges,
 }

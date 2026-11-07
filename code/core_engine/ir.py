@@ -335,7 +335,7 @@ class Index:
             return {"ok": False, "error": "文件不在本次分析范围内：" + path}
         line = _line_number(raw_line)
         if line is None:
-            return {"ok": False, "error": "行号非法：" + raw_line}
+            return _invalid_line_error(raw_line)
         record = self.files[path]
         if line < 1 or line > (record.get("line_count") or 0):
             return {"ok": False, "error": "行号超出文件范围：{}#{}".format(path, line)}
@@ -348,7 +348,7 @@ class Index:
         ident, raw_line = parts
         line = _line_number(raw_line)
         if line is None:
-            return {"ok": False, "error": "行号非法：" + raw_line}
+            return _invalid_line_error(raw_line)
         if (ident, line) not in self.statements:
             return {"ok": False, "error": "该函数第 {} 行不是已抽取的语句：{}".format(line, ident)}
         return {"ok": True, "kind": "stmt", "id": ident, "line": line,
@@ -375,7 +375,7 @@ class Index:
         path, raw_line = parts
         line = _line_number(raw_line)
         if line is None:
-            return {"ok": False, "error": "行号非法：" + raw_line}
+            return _invalid_line_error(raw_line)
         if (path, line) not in self.calls_by_file_line:
             return {"ok": False, "error": "该位置没有已记录的调用：{}#{}".format(path, line)}
         return {"ok": True, "kind": "call", "path": path, "line": line}
@@ -429,6 +429,10 @@ def _line_number(raw):
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
+
+
+def _invalid_line_error(raw_line):
+    return {"ok": False, "error": "行号非法：" + raw_line}
 
 
 def _call_key(call):

@@ -77,22 +77,34 @@ def _type_name_of(second):
     return None
 
 
+def _isinstance_type(node):
+    """`isinstance(x, T)` 形式的类型测试。"""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "isinstance"):
+        return None
+    if len(node.args) < 2:
+        return None
+    return _type_name_of(node.args[1])
+
+
+def _is_type_call(expr):
+    return isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "type" and bool(expr.args)
+
+
+def _type_compare_name(node):
+    """`type(x) is T` 形式的类型测试。"""
+    if not (isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Is)):
+        return None
+    left, right = node.left, node.comparators[0]
+    if _is_type_call(left):
+        return right.id if isinstance(right, ast.Name) else None
+    if _is_type_call(right):
+        return left.id if isinstance(left, ast.Name) else None
+    return None
+
+
 def _is_type_test(node):
     """`isinstance(x, T)` 或 `type(x) is T`，返回被判断的类型名。"""
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "isinstance":
-        if len(node.args) >= 2:
-            return _type_name_of(node.args[1])
-        return None
-    if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Is):
-        left, right = node.left, node.comparators[0]
-        if isinstance(left, ast.Call) and isinstance(left.func, ast.Name) and left.func.id == "type" and left.args:
-            if isinstance(right, ast.Name):
-                return right.id
-            return None
-        if isinstance(right, ast.Call) and isinstance(right.func, ast.Name) and right.func.id == "type" and right.args:
-            if isinstance(left, ast.Name):
-                return left.id
-    return None
+    return _isinstance_type(node) or _type_compare_name(node)
 
 
 def _handler_is_silent(handler):
@@ -132,7 +144,7 @@ def _collect_type_names(methods):
     return type_names
 
 
-def _collect_constructed(result, cls, nodes, method_ids):
+def _collect_constructed(result, nodes, method_ids):
     constructed = set()
     for call in (result.get("graph") or {}).get("calls") or []:
         target = call.get("target")
@@ -149,51 +161,58 @@ def _collect_constructed(result, cls, nodes, method_ids):
     return constructed
 
 
+def _evaluate_srp(cls, path, line, methods, add):
+    public = [item for item in methods if not item.name.startswith("_")]
+    if len(public) > MAX_METHODS_PER_CLASS:
+        add("SRP-01", "info", path, line,
+            "类 {} 定义了 {} 个公开方法，超过口径 {}；方法数多不等于违反单一职责，但值得确认它是否只承担一件事。".format(
+                cls.get("name"), len(public), MAX_METHODS_PER_CLASS),
+            "按「数据 + 行为」切分：把操作同一组字段的方法聚成一个类，其余迁出。",
+            actual=len(public), threshold=MAX_METHODS_PER_CLASS, confidence="medium")
+
+
+def _evaluate_dispatch(result, cls, path, line, methods, nodes, metrics, add):
+    """OCP-01（类型分派）与 DIP-01（直接构造具体类）。"""
+    type_names = _collect_type_names(methods)
+    method_ids = set(cls.get("methods") or [])
+    constructed = _collect_constructed(result, nodes, method_ids)
+    metrics["type_branches"] += len(type_names)
+    metrics["concrete_deps"] += len(constructed)
+    if len(type_names) >= MAX_TYPE_BRANCHES:
+        add("OCP-01", "info", path, line,
+            "类 {} 的方法里用 {} 种类型判断（{}）做分派，新增一种类型就要改这里。".format(
+                cls.get("name"), len(type_names), "、".join(sorted(type_names)[:6])),
+            "如果这些分支的行为彼此独立，考虑把差异下沉到各自类型的多态实现；数量少时条件分派更容易读，不必强改。",
+            actual=len(type_names), threshold=MAX_TYPE_BRANCHES, confidence="low")
+    if len(constructed) >= MAX_CONCRETE_DEPS:
+        add("DIP-01", "info", path, line,
+            "类 {} 直接构造了 {} 个本项目内的具体类（{}），依赖写在方法体里而不是构造参数里。".format(
+                cls.get("name"), len(constructed), "、".join(sorted(constructed)[:6])),
+            "核对这几处构造是否需要可替换：需要就把协作对象改为由调用方传入。无需替换时直接构造是更简单的选择。",
+            actual=len(constructed), threshold=MAX_CONCRETE_DEPS, confidence="low")
+
+
+def _evaluate_class(result, cls, nodes, metrics, add):
+    path = cls.get("file")
+    line = cls.get("line")
+    node = nodes.get((path, line))
+    if node is None or not isinstance(node, ast.ClassDef):
+        return
+    metrics["classes"] += 1
+    methods = [item for item in node.body
+               if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    _evaluate_srp(cls, path, line, methods, add)
+    _evaluate_dispatch(result, cls, path, line, methods, nodes, metrics, add)
+
+
 def _evaluate_classes(result, nodes, metrics, add):
     """SRP-01 / OCP-01 / DIP-01：逐类检查。"""
     for cls in result.get("classes") or []:
-        ident = cls.get("id")
-        path = cls.get("file")
-        line = cls.get("line")
-        node = nodes.get((path, line))
-        if node is None or not isinstance(node, ast.ClassDef):
-            continue
-        metrics["classes"] += 1
-        methods = [item for item in node.body
-                   if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))]
-        public = [item for item in methods if not item.name.startswith("_")]
-        if len(public) > MAX_METHODS_PER_CLASS:
-            add("SRP-01", "info", path, line,
-                "类 {} 定义了 {} 个公开方法，超过口径 {}；方法数多不等于违反单一职责，但值得确认它是否只承担一件事。".format(
-                    cls.get("name"), len(public), MAX_METHODS_PER_CLASS),
-                "按「数据 + 行为」切分：把操作同一组字段的方法聚成一个类，其余迁出。",
-                actual=len(public), threshold=MAX_METHODS_PER_CLASS, confidence="medium")
-
-        type_names = _collect_type_names(methods)
-        method_ids = set(cls.get("methods") or [])
-        constructed = _collect_constructed(result, cls, nodes, method_ids)
-        metrics["type_branches"] += len(type_names)
-        metrics["concrete_deps"] += len(constructed)
-        if len(type_names) >= MAX_TYPE_BRANCHES:
-            add("OCP-01", "info", path, line,
-                "类 {} 的方法里用 {} 种类型判断（{}）做分派，新增一种类型就要改这里。".format(
-                    cls.get("name"), len(type_names), "、".join(sorted(type_names)[:6])),
-                "如果这些分支的行为彼此独立，考虑把差异下沉到各自类型的多态实现；数量少时条件分派更容易读，不必强改。",
-                actual=len(type_names), threshold=MAX_TYPE_BRANCHES, confidence="low")
-        if len(constructed) >= MAX_CONCRETE_DEPS:
-            add("DIP-01", "info", path, line,
-                "类 {} 直接构造了 {} 个本项目内的具体类（{}），依赖写在方法体里而不是构造参数里。".format(
-                    cls.get("name"), len(constructed), "、".join(sorted(constructed)[:6])),
-                "核对这几处构造是否需要可替换：需要就把协作对象改为由调用方传入。无需替换时直接构造是更简单的选择。",
-                actual=len(constructed), threshold=MAX_CONCRETE_DEPS, confidence="low")
+        _evaluate_class(result, cls, nodes, metrics, add)
 
 
-def _evaluate_dead(result, metrics, add):
-    """A5-DEAD：未被本次分析内任何已解析调用指向的函数。"""
-    calls = (result.get("graph") or {}).get("calls") or []
-    called = {call.get("target") for call in calls
-              if call.get("status") == "resolved" and call.get("target")}
-    # 未解析的调用虽然给不出目标符号，但它的表达式末段仍是"可能有人在调我"的线索。
+def _dead_hinted_names(calls):
+    """未解析的调用虽然给不出目标符号，但它的表达式末段仍是"可能有人在调我"的线索。"""
     hinted = set()
     for call in calls:
         if call.get("status") == "resolved":
@@ -201,6 +220,27 @@ def _evaluate_dead(result, metrics, add):
         expression = call.get("expression")
         if isinstance(expression, str) and expression:
             hinted.add(expression.rsplit(".", 1)[-1])
+    return hinted
+
+
+def _report_dead(fn, name, add):
+    add("A5-DEAD", "info", fn.get("file"), fn.get("line"),
+        "函数 {} 在本次分析范围内没有任何已解析的调用点。外部调用、反射调用或测试调用都可能漏计，因此这只是一条线索。".format(name),
+        "确认它是否由框架、命令行或外部模块调用；确认无人使用后再删除。",
+        actual=0, threshold=1, confidence="low")
+
+
+def _is_ignored_dead(name):
+    """入口名、私有函数与测试函数不参与 A5-DEAD 判定。"""
+    return name.startswith("_") or name in ENTRY_NAMES or name.startswith("test")
+
+
+def _evaluate_dead(result, metrics, add):
+    """A5-DEAD：未被本次分析内任何已解析调用指向的函数。"""
+    calls = (result.get("graph") or {}).get("calls") or []
+    called = {call.get("target") for call in calls
+              if call.get("status") == "resolved" and call.get("target")}
+    hinted = _dead_hinted_names(calls)
     for fn in result.get("functions") or []:
         ident = fn.get("id")
         name = fn.get("name")
@@ -211,15 +251,10 @@ def _evaluate_dead(result, metrics, add):
         if not str(fn.get("file") or "").endswith(".py"):
             continue
         metrics["functions"] += 1
-        if name.startswith("_") or name in ENTRY_NAMES or name.startswith("test"):
-            continue
-        if ident in called or name in hinted:
+        if _is_ignored_dead(name) or ident in called or name in hinted:
             continue
         metrics["dead_functions"] += 1
-        add("A5-DEAD", "info", fn.get("file"), fn.get("line"),
-            "函数 {} 在本次分析范围内没有任何已解析的调用点。外部调用、反射调用或测试调用都可能漏计，因此这只是一条线索。".format(name),
-            "确认它是否由框架、命令行或外部模块调用；确认无人使用后再删除。",
-            actual=0, threshold=1, confidence="low")
+        _report_dead(fn, name, add)
 
 
 def _evaluate_handlers(trees, metrics, add):

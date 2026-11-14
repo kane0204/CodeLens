@@ -13,6 +13,8 @@ from bisect import bisect_left
 from itertools import islice
 from pathlib import PurePosixPath
 
+from . import levels
+
 LANGUAGES = {
     ".c": "C",
     ".h": "C/C++ header",
@@ -433,15 +435,15 @@ def _threshold_findings(functions, path):
     findings = []
     for item in functions:
         if item["cc"] > 10:
-            findings.append(_finding("CC-01", "critical" if item["cc"] > 20 else "warning", path, item["line"],
+            findings.append(_finding(levels.RULE_CC, levels.SEVERITY_CRITICAL if item["cc"] > 20 else levels.SEVERITY_WARNING, path, item["line"],
                                      f"{item['id']} 的圈复杂度为 {item['cc']}，超过阈值 10。",
                                      "检查复杂路径与职责边界，考虑拆分独立逻辑。", actual=item["cc"], threshold=10))
         if item["length"] > 50:
-            findings.append(_finding("LEN-01", "warning", path, item["line"],
+            findings.append(_finding(levels.RULE_LEN, levels.SEVERITY_WARNING, path, item["line"],
                                      f"{item['id']} 的有效代码行数为 {item['length']}，超过阈值 50。",
                                      "拆分过长函数，或提取可复用的独立步骤。", actual=item["length"], threshold=50))
         if item["nesting"] > 4:
-            findings.append(_finding("DEPTH-01", "warning", path, item["line"],
+            findings.append(_finding(levels.RULE_DEPTH, levels.SEVERITY_WARNING, path, item["line"],
                                      f"{item['id']} 的控制结构嵌套深度为 {item['nesting']}，超过阈值 4。",
                                      "优先用提前返回或拆分函数降低嵌套。", actual=item["nesting"], threshold=4))
     return findings
@@ -452,29 +454,29 @@ def _line_findings(source, path):
     for number, line in enumerate(source.splitlines(), 1):
         secret = SECRET_RE.search(line)
         if secret and not PLACEHOLDER_RE.search(secret.group(2)):
-            findings.append(_finding("A4", "warning", path, number,
+            findings.append(_finding(levels.RULE_A4, levels.SEVERITY_WARNING, path, number,
                                      "敏感命名变量被直接赋予非占位字符串字面量；值已从报告隐藏。",
                                      "确认是否为真实凭据，改用环境变量或密钥管理服务；未验证凭据有效性。"))
         catch = _catch_finding(line, path, number)
         if catch is not None:
             findings.append(catch)
         if TODO_RE.search(line) and COMMENT_MARKER_RE.search(line):
-            findings.append(_finding("CMT-01", "info", path, number,
+            findings.append(_finding(levels.RULE_CMT, levels.SEVERITY_INFO, path, number,
                                      "存在未完成、临时或占位注释，实现可能与注释描述不一致。",
                                      "核对注释与当前实现，补齐未完成部分或删除过期注释。",
-                                     evidence="inference", confidence="low"))
+                                     evidence=levels.EVIDENCE_INFERENCE, confidence=levels.CONFIDENCE_LOW))
     return findings
 
 
 def _catch_finding(line, path, number):
     if EMPTY_CATCH_RE.search(line):
-        return _finding("A8-DEFENSIVE", "warning", path, number,
+        return _finding(levels.RULE_A8_DEFENSIVE, levels.SEVERITY_WARNING, path, number,
                                      "异常捕获块为空，异常被静默吞掉。",
-                                     "至少记录异常并给出恢复路径或向上抛出。", evidence="inference", confidence="medium")
+                                     "至少记录异常并给出恢复路径或向上抛出。", evidence=levels.EVIDENCE_INFERENCE, confidence=levels.CONFIDENCE_MEDIUM)
     if BROAD_CATCH_RE.search(line):
-        return _finding("A8-DEFENSIVE", "info", path, number,
+        return _finding(levels.RULE_A8_DEFENSIVE, levels.SEVERITY_INFO, path, number,
                                      "捕获范围过宽（Exception/Throwable/...），可能掩盖非预期错误。",
-                                     "缩小捕获类型，只处理可恢复的异常。", evidence="inference", confidence="low")
+                                     "缩小捕获类型，只处理可恢复的异常。", evidence=levels.EVIDENCE_INFERENCE, confidence=levels.CONFIDENCE_LOW)
 
 
 def _build_calls(functions, clean, path, lines):
@@ -500,7 +502,7 @@ def _call_edge(item, match, offset, by_name, path, lines):
     return {"source": item["id"], "target": ids[0] if resolved else None,
             "expression": name, "file": path, "line": lines.line_at(offset + match.start()),
             "status": "resolved" if resolved else "unresolved",
-            "evidence_type": "fact" if resolved else "inference"}
+            "evidence_type": levels.EVIDENCE_FACT if resolved else levels.EVIDENCE_INFERENCE}
 
 
 def _dead_code_findings(functions, calls, path):
@@ -510,10 +512,10 @@ def _dead_code_findings(functions, calls, path):
     for item in functions:
         private = item["name"].startswith("_") or re.search(r"\bprivate\b", item["_text"])
         if private and item["id"] not in inbound and item["name"] not in {"main", "constructor"}:
-            findings.append(_finding("A5-DEAD", "info", path, item["line"],
+            findings.append(_finding(levels.RULE_A5_DEAD, levels.SEVERITY_INFO, path, item["line"],
                                      f"{item['id']} 在本次分析范围内没有发现调用方。",
                                      "确认是否被外部、反射或回调使用；确认后再决定删除。",
-                                     evidence="inference", confidence="low"))
+                                     evidence=levels.EVIDENCE_INFERENCE, confidence=levels.CONFIDENCE_LOW))
     return findings
 
 
@@ -551,7 +553,7 @@ def analyze_record(record, known_paths):
             "calls": calls, "dependencies": dependencies}
 
 
-def _finding(rule, severity, path, line, message, suggestion, evidence="fact", actual=None,
+def _finding(rule, severity, path, line, message, suggestion, evidence=levels.EVIDENCE_FACT, actual=None,
              threshold=None, confidence=None):
     return {"rule_id": rule, "severity": severity, "file": path, "line": line,
             "message": message, "suggestion": suggestion, "evidence_type": evidence,
@@ -653,7 +655,7 @@ def _dependencies(record, known_paths):
             "file": path,
             "line": line,
             "internal": bool(internal_path),
-            "evidence_type": "fact",
+            "evidence_type": levels.EVIDENCE_FACT,
         })
 
     builder = _EDGE_BUILDERS.get(suffix)

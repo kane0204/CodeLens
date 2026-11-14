@@ -11,6 +11,7 @@ from bisect import bisect_left, bisect_right
 from pathlib import PurePosixPath
 
 from . import generic
+from . import levels
 
 VERSION = "0.4.0"
 EXCLUDED = {
@@ -21,7 +22,7 @@ EXCLUDED_TEST_DIRS = {("doc", "unit"), ("doc", "frontend")}
 MAX_FILES = 200
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
-RULES = ["CC-01", "LEN-01", "DEPTH-01", "A4", "A3-IO", "CYCLE-01"]
+RULES = [levels.RULE_CC, levels.RULE_LEN, levels.RULE_DEPTH, levels.RULE_A4, levels.RULE_A3_IO, levels.RULE_CYCLE]
 SENSITIVE_NAME_RE = re.compile(r"(?:^|[._])(password|passwd|secret|token|api_?key|access_?key)(?:$|_)", re.I)
 PLACEHOLDER_VALUE_RE = re.compile(r"demo|example|sample|test|placeholder|changeme|your[_ -]|not[_ -]a[_ -]real|dummy|xxx", re.I)
 LIMITATIONS = [
@@ -225,7 +226,7 @@ class _AnalysisContext:
 
     # -- scope/symbol helpers (were closures inside analyze) -----------------
 
-    def finding(self, rule, severity, file, line, message, suggestion, evidence="fact",
+    def finding(self, rule, severity, file, line, message, suggestion, evidence=levels.EVIDENCE_FACT,
                 actual=None, threshold=None, confidence=None):
         self.findings.append(dict(rule_id=rule, severity=severity, file=file, line=line,
                                   message=message, suggestion=suggestion, evidence_type=evidence,
@@ -532,14 +533,14 @@ def _score_function(ctx, function, active_lines):
     statements = sorted((s for s in own_walk(node) if isinstance(s, ast.stmt)),
                         key=lambda s: (s.lineno, s.col_offset))
     function["statements"] = [{"line": s.lineno, "end_line": s.end_lineno, "ast_type": type(s).__name__,
-                               "description": statement_description(s), "evidence_type": "fact"}
+                               "description": statement_description(s), "evidence_type": levels.EVIDENCE_FACT}
                               for s in statements]
-    for key, rule, threshold, label in [("cc", "CC-01", 10, "圈复杂度"),
-                                        ("length", "LEN-01", 50, "有效代码行数"),
-                                        ("nesting", "DEPTH-01", 4, "控制结构嵌套深度")]:
+    for key, rule, threshold, label in [("cc", levels.RULE_CC, 10, "圈复杂度"),
+                                        ("length", levels.RULE_LEN, 50, "有效代码行数"),
+                                        ("nesting", levels.RULE_DEPTH, 4, "控制结构嵌套深度")]:
         value = function[key]
         if value > threshold:
-            ctx.finding(rule, "critical" if rule == "CC-01" and value > 20 else "warning",
+            ctx.finding(rule, levels.SEVERITY_CRITICAL if rule == levels.RULE_CC and value > 20 else levels.SEVERITY_WARNING,
                         function["file"], function["line"],
                         f"{function['id']} 的{label}为 {value}，超过阈值 {threshold}。",
                         "检查复杂路径与职责边界，考虑拆分独立逻辑。", actual=value, threshold=threshold)
@@ -600,7 +601,7 @@ def _link_generic_bases(ctx, path, cls, class_names):
         target = class_names.get(base.split("::")[-1].strip())
         if target and target != cls["id"]:
             ctx.inheritance.append({"source": cls["id"], "target": target, "file": path,
-                                    "line": cls["line"], "evidence_type": "inference"})
+                                    "line": cls["line"], "evidence_type": levels.EVIDENCE_INFERENCE})
 
 
 
@@ -611,14 +612,14 @@ def _check_call(ctx, record, item, scope, valid_defs):
     ctx.calls.append({"source": scope, "target": target if resolved else None,
                       "expression": target_name(item.func), "file": record["path"],
                       "line": item.lineno, "status": "resolved" if resolved else "unresolved",
-                      "evidence_type": "fact" if resolved else "inference"})
+                      "evidence_type": levels.EVIDENCE_FACT if resolved else levels.EVIDENCE_INFERENCE})
     if isinstance(item.func, ast.Name) and item.func.id == "open":
         _, shadowed = ctx.resolve_name("open", scope)
         if not shadowed and not ctx.handled_io(item):
-            ctx.finding("A3-IO", "warning", record["path"], item.lineno,
+            ctx.finding(levels.RULE_A3_IO, levels.SEVERITY_WARNING, record["path"], item.lineno,
                         "内置 open 调用所在局部路径未发现匹配的 OSError 捕获。with 仅管理资源，不等于异常处理。",
                         "核查上层是否统一处理 IO 失败；该推断不能证明程序必然出错。",
-                        evidence="inference", confidence="medium")
+                        evidence=levels.EVIDENCE_INFERENCE, confidence=levels.CONFIDENCE_MEDIUM)
 
 
 def _credential_literal(node):
@@ -634,7 +635,7 @@ def _check_assignment(ctx, record, item):
         return
     targets = item.targets if isinstance(item, ast.Assign) else [item.target]
     if any(SENSITIVE_NAME_RE.search(target_name(target)) for target in targets):
-        ctx.finding("A4", "warning", record["path"], item.lineno,
+        ctx.finding(levels.RULE_A4, levels.SEVERITY_WARNING, record["path"], item.lineno,
                     "敏感命名变量被直接赋予非占位字符串字面量；值已从报告隐藏。",
                     "确认是否为真实凭据，并检查配置或环境变量读取方式；未验证凭据有效性。")
 
@@ -650,7 +651,7 @@ def _resolve_class_relations(ctx, record, valid_defs):
             if valid_defs.get(target, {}).get("kind") == "class":
                 ctx.inheritance.append({"source": cls["id"], "target": target,
                                         "file": record["path"], "line": n.lineno,
-                                        "evidence_type": "fact"})
+                                        "evidence_type": levels.EVIDENCE_FACT})
             else:
                 ctx.warnings.append({"file": record["path"], "line": n.lineno,
                                      "message": "父类未解析：" + target_name(base)})
@@ -688,7 +689,7 @@ def _module_dependencies(ctx):
         edge["internal"] = target in ctx.module_paths
         if edge["internal"]:
             edge["target"] = target
-        edge["evidence_type"] = "fact"
+        edge["evidence_type"] = levels.EVIDENCE_FACT
         dependencies.append(edge)
     dependencies.extend(ctx.generic_dependencies)
     return dependencies
@@ -707,7 +708,7 @@ def _run_rule_checks(ctx):
     cycles = cycles_of(graph_nodes, unique_edges)
     for group in cycles:
         evidence = next(d for d in dependencies if d["source"] in group and d["target"] in group)
-        ctx.finding("CYCLE-01", "warning", evidence["file"], evidence["line"],
+        ctx.finding(levels.RULE_CYCLE, levels.SEVERITY_WARNING, evidence["file"], evidence["line"],
                     "模块循环依赖组：" + " ↔ ".join(group),
                     "沿导入位置复核耦合，评估提取公共接口。")
     return dependencies, cycles
@@ -726,7 +727,7 @@ def _status_of(records, errors):
 
 
 def _number_findings(findings):
-    order = {"critical": 0, "warning": 1, "info": 2}
+    order = {levels.SEVERITY_CRITICAL: 0, levels.SEVERITY_WARNING: 1, levels.SEVERITY_INFO: 2}
     findings.sort(key=lambda f: (order[f["severity"]], f["file"], f["line"], f["rule_id"]))
     for index, finding in enumerate(findings, start=1):
         finding["id"] = f"finding-{index}"

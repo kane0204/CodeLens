@@ -3,6 +3,7 @@ import ast
 import hashlib
 from itertools import combinations
 from .engine import own_walk
+from . import levels
 
 NOTES = [
     "WMC 为直接定义方法的圈复杂度之和；DIT 为已解析继承图的最长路径（外部父类深度未知）。",
@@ -253,7 +254,7 @@ def apply(result):
             return
         relation_keys.add(key)
         relations.append({"source": source, "target": target, "kind": kind,
-                          "file": path, "line": line, "evidence_type": "inference"})
+                          "file": path, "line": line, "evidence_type": levels.EVIDENCE_INFERENCE})
 
     for ident, cls in classes.items():
         _collect_class_relations(result, cls, classes, functions, nodes, trees, graph, relation)
@@ -265,7 +266,7 @@ def apply(result):
     return {**result, "graph": graph, "class_metrics": metrics, "duplicates": duplicate_groups,
             "quality_notes": list(NOTES), "findings": findings,
             "summary": {**result["summary"], "findings": len(findings)},
-            "config": {**result["config"], "rules": list(result["config"]["rules"]) + ["DUP-01"]}}
+            "config": {**result["config"], "rules": list(result["config"]["rules"]) + [levels.RULE_DUP]}}
 
 
 def _clone_findings(result, duplicate_groups):
@@ -273,11 +274,11 @@ def _clone_findings(result, duplicate_groups):
     for group in duplicate_groups:
         first, *others = group["occurrences"]
         for duplicate in others:
-            findings.append({"rule_id": "DUP-01", "severity": "info", "file": duplicate["file"], "line": duplicate["line"],
+            findings.append({"rule_id": levels.RULE_DUP, "severity": levels.SEVERITY_INFO, "file": duplicate["file"], "line": duplicate["line"],
                              "message": "函数体与 {}:{} 的 AST 结构相同，建议复核是否需要提取复用。".format(first["file"], first["line"]),
                              "suggestion": "核对职责和变化原因；仅在需要同步维护时提取公共实现。",
-                             "evidence_type": "fact", "actual": len(group["occurrences"]), "threshold": 1,
-                             "confidence": "high", "related": [first]})
+                             "evidence_type": levels.EVIDENCE_FACT, "actual": len(group["occurrences"]), "threshold": 1,
+                             "confidence": levels.CONFIDENCE_HIGH, "related": [first]})
     for i, finding in enumerate(findings, 1):
         finding["id"] = "finding-" + str(i)
     return findings

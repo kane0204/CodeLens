@@ -83,14 +83,14 @@ class ClassNodeName(Skill):
         claims.append(contract.claim(
             "{} 位于模块 {}，共 {} 个方法；节点标签据此写成「{}」，让图上只看名字也能读出它的分工。".format(
                 name, module, count, label),
-            evidence, kind="naming", confidence="high"))
+            evidence, kind="naming", confidence=contract.CONFIDENCE_HIGH))
 
         claims.extend(self._inheritance_claims(ctx, name))
 
         if count >= 5:
             claims.append(contract.claim(
                 "{} 的方法有 {} 个，只写类名不足以看懂它做什么，标签里应带一句职责短语而不是只列方法名。".format(name, count),
-                evidence, kind="naming", confidence="medium"))
+                evidence, kind="naming", confidence=contract.CONFIDENCE_MEDIUM))
 
         finding_claim = self._finding_claim(ctx, name)
         if finding_claim:
@@ -110,7 +110,7 @@ class ClassNodeName(Skill):
         return contract.claim(
             "{} 上还有 {} 条规则发现（{}），标签可以带一个提示角标，把注意力引到问题所在的类上。".format(
                 name, len(ctx["findings"]), rules),
-            refs + ["def:" + ctx["ident"]], kind="naming", confidence="medium")
+            refs + ["def:" + ctx["ident"]], kind="naming", confidence=contract.CONFIDENCE_MEDIUM)
 
     def _inheritance_claims(self, ctx, name):
         if not ctx["inheritance"]:
@@ -120,7 +120,7 @@ class ClassNodeName(Skill):
             yield contract.claim(
                 "{} 继承 {}；图上线要保留这条纵向关系，节点标签不必重复父类信息。".format(name, edge.get("target")),
                 ["inherit:{}->{}".format(edge.get("source"), edge.get("target")), "def:" + index],
-                kind="naming", confidence="high")
+                kind="naming", confidence=contract.CONFIDENCE_HIGH)
 
     def prompt(self, ctx):
         return (

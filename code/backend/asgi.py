@@ -230,36 +230,36 @@ def create_app(store, history=None):
 
 
 def _routes(app, store, history):
-    @app.get("/api/status")
+    @app.get(obs.API_STATUS)
     def status():
         capabilities = core.CAPABILITIES + (["project-history"] if history is not None else [])
         return {"ready": True, "engine_version": core.VERSION, "api_revision": core.API_REVISION,
                 "capabilities": capabilities, "token": core.TOKEN}
 
-    @app.get("/api/ai/status")
+    @app.get(obs.API_AI_STATUS)
     def ai_status():
         return core.ai_status()
 
-    @app.post("/api/analyze", openapi_extra=_schema(SourceRequest))
+    @app.post(obs.API_ANALYZE, openapi_extra=_schema(SourceRequest))
     def analyze(payload=Depends(_read_payload)):
         result = core.enrich(core.analyze(_validate(payload, SourceRequest)))
         if history is not None and "history_project" in payload and result["summary"]["parsed"]:
             result["history"] = history.record(result, payload["history_project"])
         return result
 
-    @app.post("/api/explain", openapi_extra=_schema(ExplainRequest))
+    @app.post(obs.API_EXPLAIN, openapi_extra=_schema(ExplainRequest))
     def explain(payload=Depends(_read_payload)):
         return core.explanation.explain(_validate(payload, ExplainRequest))
 
-    @app.post("/api/ai", openapi_extra=_schema(SkillRequest))
+    @app.post(obs.API_AI, openapi_extra=_schema(SkillRequest))
     def skills(payload=Depends(_read_payload)):
         return core.ai_analyze(payload)
 
-    @app.post("/api/review", response_class=StreamingResponse, openapi_extra=_schema(ReviewRequest))
+    @app.post(obs.API_REVIEW, response_class=StreamingResponse, openapi_extra=_schema(ReviewRequest))
     def review(request: Request, payload=Depends(_read_payload)):
         return StreamingResponse(_review_stream(request, payload, store, history), media_type="application/x-ndjson")
 
-    @app.post("/api/review/cached", openapi_extra=_schema(ReviewRequest))
+    @app.post(obs.API_REVIEW_CACHED, openapi_extra=_schema(ReviewRequest))
     def cached(payload=Depends(_read_payload)):
         payload = _validate(payload, ReviewRequest)
         options = _review_history(history, payload)

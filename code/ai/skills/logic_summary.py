@@ -106,7 +106,7 @@ class LogicSummary(Skill):
         return contract.claim(
             "控制流切成 {} 个基本块、{} 条分支或循环边；也就是说它有 {} 处「走另一条路」的地方。".format(
                 len(flow.get("blocks") or []), len(edges), branches),
-            evidence, kind="branch", confidence="high")
+            evidence, kind="branch", confidence=contract.CONFIDENCE_HIGH)
 
     def _callers_claim(self, ctx):
         if not ctx["callers"]:
@@ -118,7 +118,7 @@ class LogicSummary(Skill):
         return contract.claim(
             "它被 {} 处调用引用，调用方来自 {}；改动签名前先看这些位置。".format(
                 len(ctx["callers"]), base.join_limited(callers, 3)),
-            evidence, kind="advice", confidence="medium")
+            evidence, kind="advice", confidence=contract.CONFIDENCE_MEDIUM)
 
     def render(self, ctx):
         piece = ctx["slice"]
@@ -134,7 +134,7 @@ class LogicSummary(Skill):
         claims.append(contract.claim(
             "{} 从第 {} 行到第 {} 行，{}，包含 {} 条语句。".format(
                 name, piece.get("line"), piece.get("end_line"), signature, len(ctx["statements"])),
-            head_evidence, kind="responsibility", confidence="high"))
+            head_evidence, kind="responsibility", confidence=contract.CONFIDENCE_HIGH))
 
         claims.extend(self._step_claims(ctx, rows, dropped_middle))
 
@@ -159,13 +159,13 @@ class LogicSummary(Skill):
             claims.append(contract.claim(
                 "{}第 {} 行：{}。".format(base.ordinal(position), item.get("line"), item.get("description")),
                 [base.statement_ref(ctx["ident"], item.get("line")), "def:" + ctx["ident"]],
-                kind="step", confidence="high"))
+                kind="step", confidence=contract.CONFIDENCE_HIGH))
 
         if dropped_middle:
             claims.append(contract.claim(
                 "函数语句较多，中间部分已省略，只保留开头与结尾的关键步骤；完整轨迹请看法制视图的语句列表。",
                 [base.statement_ref(ctx["ident"], rows[-1].get("line")), "def:" + ctx["ident"]],
-                kind="step", confidence="medium"))
+                kind="step", confidence=contract.CONFIDENCE_MEDIUM))
         return claims
 
     def _headline(self, ctx, name):
@@ -180,7 +180,7 @@ class LogicSummary(Skill):
                 "第 {} 行调用了 {}，这一步会改动外部状态，不只是算值。".format(
                     call.get("line"), call.get("expression")),
                 ["call:{}#{}".format(call.get("file"), call.get("line")), "def:" + ctx["ident"]],
-                kind="side_effect", confidence="high")
+                kind="side_effect", confidence=contract.CONFIDENCE_HIGH)
 
     def prompt(self, ctx):
         rendered = ["第 {} 行：{}".format(item.get("line"), item.get("description"))

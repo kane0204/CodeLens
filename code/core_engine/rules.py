@@ -4,6 +4,7 @@ from __future__ import annotations
 import ast
 
 from . import solid
+from . import levels
 
 #: SRP-01：一个类的方法数达到多少算"承担了太多事"。
 MAX_METHODS_PER_CLASS = 12
@@ -183,11 +184,11 @@ def _evaluate_responsibility(cls, methods, add):
     path, line = cls.get("file"), cls.get("line")
     public = [item for item in methods if not item.name.startswith("_")]
     if len(public) > MAX_METHODS_PER_CLASS:
-        add("SRP-01", "info", path, line,
+        add(levels.RULE_SRP, levels.SEVERITY_INFO, path, line,
             "类 {} 定义了 {} 个公开方法，超过口径 {}；方法数多不等于违反单一职责，但值得确认它是否只承担一件事。".format(
                 cls.get("name"), len(public), MAX_METHODS_PER_CLASS),
             "按「数据 + 行为」切分：把操作同一组字段的方法聚成一个类，其余迁出。",
-            actual=len(public), threshold=MAX_METHODS_PER_CLASS, confidence="medium")
+            actual=len(public), threshold=MAX_METHODS_PER_CLASS, confidence=levels.CONFIDENCE_MEDIUM)
 
 
 
@@ -195,17 +196,17 @@ def _evaluate_responsibility(cls, methods, add):
 def _evaluate_design_dependencies(cls, type_names, constructed, add):
     path, line = cls.get("file"), cls.get("line")
     if len(type_names) >= MAX_TYPE_BRANCHES:
-        add("OCP-01", "info", path, line,
+        add(levels.RULE_OCP, levels.SEVERITY_INFO, path, line,
             "类 {} 的方法里用 {} 种类型判断（{}）做分派，新增一种类型就要改这里。".format(
                 cls.get("name"), len(type_names), "、".join(sorted(type_names)[:6])),
             "如果这些分支的行为彼此独立，考虑把差异下沉到各自类型的多态实现；数量少时条件分派更容易读，不必强改。",
-            actual=len(type_names), threshold=MAX_TYPE_BRANCHES, confidence="low")
+            actual=len(type_names), threshold=MAX_TYPE_BRANCHES, confidence=levels.CONFIDENCE_LOW)
     if len(constructed) >= MAX_CONCRETE_DEPS:
-        add("DIP-01", "info", path, line,
+        add(levels.RULE_DIP, levels.SEVERITY_INFO, path, line,
             "类 {} 直接构造了 {} 个本项目内的具体类（{}），依赖写在方法体里而不是构造参数里。".format(
                 cls.get("name"), len(constructed), "、".join(sorted(constructed)[:6])),
             "核对这几处构造是否需要可替换：需要就把协作对象改为由调用方传入。无需替换时直接构造是更简单的选择。",
-            actual=len(constructed), threshold=MAX_CONCRETE_DEPS, confidence="low")
+            actual=len(constructed), threshold=MAX_CONCRETE_DEPS, confidence=levels.CONFIDENCE_LOW)
 
 def _call_references(calls):
     called = {call.get("target") for call in calls
@@ -277,10 +278,10 @@ def _evaluate_dead(result, trees, metrics, add):
         if ident in called or _has_usage_evidence(ident, name, names, hinted, handler_classes):
             continue
         metrics["dead_functions"] += 1
-        add("A5-DEAD", "info", fn.get("file"), fn.get("line"),
+        add(levels.RULE_A5_DEAD, levels.SEVERITY_INFO, fn.get("file"), fn.get("line"),
             "函数 {} 在本次分析范围内没有任何已解析的调用点。外部调用、反射调用或测试调用都可能漏计，因此这只是一条线索。".format(name),
             "确认它是否由框架、命令行或外部模块调用；确认无人使用后再删除。",
-            actual=0, threshold=1, confidence="low")
+            actual=0, threshold=1, confidence=levels.CONFIDENCE_LOW)
 
 
 def _evaluate_handlers(trees, metrics, add):
@@ -293,10 +294,10 @@ def _evaluate_handlers(trees, metrics, add):
                 if not (_handler_is_broad(handler) and _handler_is_silent(handler)):
                     continue
                 metrics["silent_handlers"] += 1
-                add("A8-DEFENSIVE", "warning", path, handler.lineno,
+                add(levels.RULE_A8_DEFENSIVE, levels.SEVERITY_WARNING, path, handler.lineno,
                     "这里捕获了过宽的异常并且处理体什么都不做，失败会被静默吞掉。",
                     "至少记录日志或缩小捕获类型；确实可忽略时在注释里写明为什么可忽略。",
-                    actual="silent-broad-except", threshold=None, confidence="medium")
+                    actual="silent-broad-except", threshold=None, confidence=levels.CONFIDENCE_MEDIUM)
 
 
 def evaluate(result):
@@ -319,10 +320,10 @@ def evaluate(result):
         if len(findings) >= MAX_EXTRA_FINDINGS:
             return
         findings.append({"rule_id": rule, "severity": severity, "file": file, "line": line,
-                         "message": message, "suggestion": suggestion, "evidence_type": "fact",
+                         "message": message, "suggestion": suggestion, "evidence_type": levels.EVIDENCE_FACT,
                          "actual": actual, "threshold": threshold, "confidence": confidence})
         if rule in solid.RULE_IDS:
-            findings[-1]["evidence_type"] = "inference"
+            findings[-1]["evidence_type"] = levels.EVIDENCE_INFERENCE
 
     _evaluate_classes(result, nodes, metrics, add)
 
@@ -343,7 +344,7 @@ def evaluate(result):
                       "truncated": len(findings) >= MAX_EXTRA_FINDINGS}}
 
 
-ORDER = {"critical": 0, "warning": 1, "info": 2}
+ORDER = {levels.SEVERITY_CRITICAL: 0, levels.SEVERITY_WARNING: 1, levels.SEVERITY_INFO: 2}
 
 
 def merge(base, extra):

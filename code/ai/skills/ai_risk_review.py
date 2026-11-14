@@ -20,25 +20,25 @@ from .base import Skill
 
 #: 每条规则的解释与建议。没有列出的规则只在计数里出现，不单独展开。
 PLAYBOOK = {
-    "CC-01": ("圈复杂度超过阈值：分支一多，改一个条件就要在脑子里跑完全部分支。",
-              "把互不相关的条件拆成独立函数，让每个函数只有一条主路径。"),
-    "LEN-01": ("函数过长：一次读不完就难以在改动时判断影响面。",
-               "按「准备数据 / 做判断 / 落结果」三段拆开，每段一个名字。"),
-    "DEPTH-01": ("嵌套过深：条件与循环套在一起时，读者要同时维护多层心智状态。",
-                 "用提前返回削平分支，把循环体里的大段逻辑提成函数。"),
-    "A4": ("硬编码敏感字面量：这类值一旦进版本库就很难彻底清除。",
-           "改从环境变量或配置读取，并确认它是否已经被提交过。"),
-    "A3-IO": ("IO 调用附近没有发现匹配的失败处理：本地环境通常不会暴露这类问题。",
-              "在调用点显式处理失败，或确认上层已有统一兜底，并在注释里写清楚。"),
-    "CYCLE-01": ("模块循环依赖：两边互相引用后，任何一边都难以单独测试。",
-                 "把共用部分提取成更底层的模块，让依赖方向保持单向。"),
-    "A5-DEAD": ("存在没有调用点的函数：可能是遗留代码，也可能是外部入口。",
-                "先确认是否由框架或测试调用；确认无人使用后再删除。"),
-    "A8-DEFENSIVE": ("过宽捕获后什么都不做：异常被静默吞掉，失败现场直接消失。",
-                     "至少记录日志，或缩小捕获类型；确实可忽略时写明理由。"),
+    contract.RULE_CC: ("圈复杂度超过阈值：分支一多，改一个条件就要在脑子里跑完全部分支。",
+                       "把互不相关的条件拆成独立函数，让每个函数只有一条主路径。"),
+    contract.RULE_LEN: ("函数过长：一次读不完就难以在改动时判断影响面。",
+                        "按「准备数据 / 做判断 / 落结果」三段拆开，每段一个名字。"),
+    contract.RULE_DEPTH: ("嵌套过深：条件与循环套在一起时，读者要同时维护多层心智状态。",
+                          "用提前返回削平分支，把循环体里的大段逻辑提成函数。"),
+    contract.RULE_A4: ("硬编码敏感字面量：这类值一旦进版本库就很难彻底清除。",
+                       "改从环境变量或配置读取，并确认它是否已经被提交过。"),
+    contract.RULE_A3_IO: ("IO 调用附近没有发现匹配的失败处理：本地环境通常不会暴露这类问题。",
+                          "在调用点显式处理失败，或确认上层已有统一兜底，并在注释里写清楚。"),
+    contract.RULE_CYCLE: ("模块循环依赖：两边互相引用后，任何一边都难以单独测试。",
+                          "把共用部分提取成更底层的模块，让依赖方向保持单向。"),
+    contract.RULE_A5_DEAD: ("存在没有调用点的函数：可能是遗留代码，也可能是外部入口。",
+                            "先确认是否由框架或测试调用；确认无人使用后再删除。"),
+    contract.RULE_A8_DEFENSIVE: ("过宽捕获后什么都不做：异常被静默吞掉，失败现场直接消失。",
+                                 "至少记录日志，或缩小捕获类型；确实可忽略时写明理由。"),
 }
 
-SEVERITY_WEIGHT = {"critical": 3, "warning": 2, "info": 1}
+SEVERITY_WEIGHT = {contract.SEVERITY_CRITICAL: 3, contract.SEVERITY_WARNING: 2, contract.SEVERITY_INFO: 1}
 
 
 class AIRiskReview(Skill):
@@ -120,12 +120,12 @@ class AIRiskReview(Skill):
                 "{}：{}（{} 处命中，例如第 {} 行）这类问题在 AI 生成的代码里很常见，{}".format(
                     rule, text, len(items),
                     items[0].get("line"), suggestion),
-                refs, kind="advice", confidence="high"))
+                refs, kind="advice", confidence=contract.CONFIDENCE_HIGH))
 
         if not claims and anchor:
             claims.append(contract.claim(
                 "{} 在本次口径下没有命中已展开的规则；这只说明计数没超阈值，不能当作「没有问题」的结论。".format(scope_label),
-                anchor[:2], kind="advice", confidence="low"))
+                anchor[:2], kind="advice", confidence=contract.CONFIDENCE_LOW))
 
         top = ["{}（{} 处，最高严重度 {}）".format(
             rule, len(items), max(items, key=lambda f: SEVERITY_WEIGHT.get(f.get("severity"), 0)).get("severity"))

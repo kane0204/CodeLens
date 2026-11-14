@@ -30,7 +30,7 @@ Python 3.11+，后端仅使用标准库；界面是独立的 `codelens-prototype
 | POST `/api/explain` | 单文件 / 单函数自然语言解读（兼容保留，当前界面主要使用 `/api/review`） |
 | POST `/api/ai` | 旧结构化 AI skill 规则表达层（兼容保留） |
 
-POST 使用本机 Host、Origin 和 `X-CodeLens-Token` 校验。请求体上限 12 MB；服务端最多 200 个文件、单文件 1 MB、总计 8 MB。默认排除 tests、虚拟环境、构建及依赖目录；导入不会执行或导入目标代码。支持扩展名：`py`、`c/h/cc/cpp/cxx/hpp`、`java`、`js/jsx/ts/tsx`、`go`。
+POST 使用本机 Host、Origin 和 `X-CodeLens-Token` 校验。请求体上限 12 MB；服务端最多 200 个文件、单文件 1 MB、总计 8 MB。默认排除测试目录（含本项目的 doc/unit、doc/frontend）、虚拟环境、构建及依赖目录，以及 htmlcov、tmp、.tmp、logs 等报告和临时目录；导入不会执行或导入目标代码。支持扩展名：`py`、`c/h/cc/cpp/cxx/hpp`、`java`、`js/jsx/ts/tsx`、`go`。
 
 ## 规则与口径
 

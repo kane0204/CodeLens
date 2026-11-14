@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { LlmSettings } from '../types';
 import { useApp } from '../state/AppState';
 import { Button, Modal } from './Ui';
@@ -6,7 +6,6 @@ import { logger } from '../lib/logger';
 
 export function SettingsDialog() {
   const { settingsOpen, settings, settingsError, closeSettings, saveSettings } = useApp();
-  const { draft, reveal, updateField, clearDraft, toggleReveal } = useSettingsDraft(settingsOpen, settings);
 
   return (
     <Modal
@@ -17,53 +16,48 @@ export function SettingsDialog() {
       width={540}
       footer={<SettingsFooter onClose={closeSettings} />}
     >
-      <form
-        id="llm-settings-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          saveSettings(draft);
-        }}
-      >
-        <ModelFields
-          baseUrl={draft.baseUrl}
-          model={draft.model}
-          setBaseUrl={(value) => updateField('baseUrl', value)}
-          setModel={(value) => updateField('model', value)}
-        />
-        <ApiKeyField
-          apiKey={draft.apiKey}
-          setApiKey={(value) => updateField('apiKey', value)}
-          reveal={reveal}
-          toggleReveal={toggleReveal}
-        />
-        <SettingsError message={settingsError} />
-        <SettingsActions onClear={clearDraft} />
-      </form>
+      <SettingsForm settings={settings}
+        settingsError={settingsError} saveSettings={saveSettings} />
     </Modal>
   );
 }
 
-function useSettingsDraft(settingsOpen: boolean, settings: LlmSettings) {
-  const [draft, setDraft] = useState(settings);
+interface SettingsFormProps {
+  settings: LlmSettings;
+  settingsError: string;
+  saveSettings: (settings: LlmSettings) => void;
+}
+
+function SettingsForm({ settings, settingsError, saveSettings }: SettingsFormProps) {
+  const formRef = useRef<HTMLFormElement>(null);
   const [reveal, setReveal] = useState(false);
 
-  useEffect(() => {
-    if (!settingsOpen) return;
-    setDraft(settings);
-    setReveal(false);
-  }, [settingsOpen, settings]);
+  return (
+    <form id="llm-settings-form" ref={formRef} onSubmit={(event) => {
+      event.preventDefault();
+      const fields = new FormData(event.currentTarget);
+      saveSettings({
+        baseUrl: String(fields.get('baseUrl')),
+        model: String(fields.get('model')),
+        apiKey: String(fields.get('apiKey')),
+      });
+    }}>
+      <ModelFields baseUrl={settings.baseUrl} model={settings.model} />
+      <ApiKeyField apiKey={settings.apiKey} reveal={reveal} toggleReveal={() => setReveal((value) => !value)} />
+      <SettingsError message={settingsError} />
+      <SettingsActions onClear={() => {
+        clearSettingsFields(formRef.current);
+        setReveal(false);
+      }} />
+    </form>
+  );
+}
 
-  function updateField(key: keyof LlmSettings, value: string) {
-    setDraft((current) => ({ ...current, [key]: value }));
-  }
-
-  function clearDraft() {
-    setDraft({ baseUrl: '', model: '', apiKey: '' });
-    setReveal(false);
-    document.getElementById('llm-base-url')?.focus();
-  }
-
-  return { draft, reveal, updateField, clearDraft, toggleReveal: () => setReveal((value) => !value) };
+function clearSettingsFields(form: HTMLFormElement | null) {
+  const inputs = form?.querySelectorAll('input');
+  if (!inputs) return;
+  for (const input of inputs) input.value = '';
+  inputs[0]?.focus();
 }
 
 interface SettingsFooterProps {
@@ -99,11 +93,9 @@ function SettingsError({ message }: SettingsErrorProps) {
 interface ModelFieldsProps {
   baseUrl: string;
   model: string;
-  setBaseUrl: (value: string) => void;
-  setModel: (value: string) => void;
 }
 
-function ModelFields({ baseUrl, model, setBaseUrl, setModel }: ModelFieldsProps) {
+function ModelFields({ baseUrl, model }: ModelFieldsProps) {
   return (
     <>
       <label className="block text-[11.5px] font-medium text-ink" htmlFor="llm-base-url">
@@ -116,8 +108,8 @@ function ModelFields({ baseUrl, model, setBaseUrl, setModel }: ModelFieldsProps)
         autoComplete="off"
         spellCheck={false}
         placeholder="https://api.example.com/v1"
-        value={baseUrl}
-        onChange={(event) => setBaseUrl(event.target.value)}
+        name="baseUrl"
+        defaultValue={baseUrl}
         className="mt-1.5 h-9 w-full rounded-[4px] border border-line bg-card px-3 text-[12px] outline-none transition-colors placeholder:text-faint focus:border-primary"
       />
       <p className="mt-1 text-[10.5px] leading-relaxed text-faint">
@@ -133,8 +125,8 @@ function ModelFields({ baseUrl, model, setBaseUrl, setModel }: ModelFieldsProps)
         autoComplete="off"
         spellCheck={false}
         placeholder="例如 gpt-4o-mini"
-        value={model}
-        onChange={(event) => setModel(event.target.value)}
+        name="model"
+        defaultValue={model}
         className="num mt-1.5 h-9 w-full rounded-[4px] border border-line bg-card px-3 text-[12px] outline-none transition-colors placeholder:text-faint focus:border-primary"
       />
     </>
@@ -143,12 +135,11 @@ function ModelFields({ baseUrl, model, setBaseUrl, setModel }: ModelFieldsProps)
 
 interface ApiKeyFieldProps {
   apiKey: string;
-  setApiKey: (value: string) => void;
   reveal: boolean;
   toggleReveal: () => void;
 }
 
-function ApiKeyField({ apiKey, setApiKey, reveal, toggleReveal }: ApiKeyFieldProps) {
+function ApiKeyField({ apiKey, reveal, toggleReveal }: ApiKeyFieldProps) {
   return (
     <>
       <label className="mt-5 block text-[11.5px] font-medium text-ink" htmlFor="llm-api-key">
@@ -161,8 +152,8 @@ function ApiKeyField({ apiKey, setApiKey, reveal, toggleReveal }: ApiKeyFieldPro
           autoComplete="off"
           spellCheck={false}
           placeholder="仅保存在当前页面内存中"
-          value={apiKey}
-          onChange={(event) => setApiKey(event.target.value)}
+          name="apiKey"
+          defaultValue={apiKey}
           className="num h-9 min-w-0 flex-1 rounded-[4px] border border-line bg-card px-3 text-[12px] outline-none transition-colors placeholder:text-faint focus:border-primary"
         />
         <Button size="sm" className="h-9" aria-pressed={reveal} onClick={toggleReveal}>

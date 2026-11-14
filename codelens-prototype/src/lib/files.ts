@@ -16,7 +16,11 @@ export const SUPPORTED_EXTENSIONS = [
   '.go',
 ] as const;
 
-export const EXCLUDED_DIRS = ['.git', '.venv', 'venv', '__pycache__', 'node_modules', 'build', 'dist', 'tests'];
+export const EXCLUDED_DIRS = [
+  '.git', '.venv', 'venv', '__pycache__', 'node_modules', 'build', 'dist', 'tests',
+  'htmlcov', 'tmp', '.tmp', '.next', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'logs',
+];
+const EXCLUDED_TEST_DIRS = new Set(['doc/unit', 'doc/frontend']);
 
 export const LIMITS = {
   maxFiles: 200,
@@ -50,7 +54,9 @@ function extensionOf(name: string): string {
 
 function isExcluded(path: string): boolean {
   const parts = normalizePath(path).split('/').slice(0, -1);
-  return parts.some((part) => EXCLUDED_DIRS.includes(part));
+  return parts.some((part, index) =>
+    EXCLUDED_DIRS.includes(part) || EXCLUDED_TEST_DIRS.has(parts.slice(index, index + 2).join('/')),
+  );
 }
 
 function isSupported(path: string): boolean {

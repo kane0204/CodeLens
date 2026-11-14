@@ -17,6 +17,30 @@ def run_files(files):
 
 
 class EngineTests(unittest.TestCase):
+    def test_dead_code_keeps_registered_callbacks_and_http_handlers(self):
+        from core_engine.rules import evaluate
+
+        source = ("from http.server import BaseHTTPRequestHandler\n"
+                  "def shutdown(): pass\n"
+                  "def unused(): pass\n"
+                  "def setup(register): register(shutdown)\n"
+                  "class Handler(BaseHTTPRequestHandler):\n"
+                  "    def do_GET(self): self.dispatch(self.handle_get)\n"
+                  "    def handle_get(self): pass\n"
+                  "    def log_message(self, format, *args): pass\n")
+        findings = evaluate(run_files({"service.py": source}))["findings"]
+        self.assertEqual([item["line"] for item in findings if item["rule_id"] == "A5-DEAD"], [3, 4])
+
+    def test_scan_skips_generated_reports_and_local_test_directories(self):
+        result = run_files({path: "pass" for path in (
+            "tmp/coverage-tools/coverage/pytracer.py", "htmlcov/frontend/prettify.js",
+            "doc/unit/test_engine.py", "doc/frontend/example.jsx",
+            "docs/software/ddd/domain_model.py", "src/tmp_parser.py",
+        )})
+        self.assertEqual(result["summary"]["excluded"], 4)
+        self.assertEqual([row["path"] for row in result["files"]],
+                         ["docs/software/ddd/domain_model.py", "src/tmp_parser.py"])
+
     def test_invalid_file_records_and_duplicate_modules_are_rejected(self):
         for record in (None, {"path": None}, {"path": "x" * 1025}):
             with self.subTest(record=record), self.assertRaises(ValueError):
@@ -70,6 +94,30 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result["status"], "complete")
         self.assertIn("\ufffd", result["files"][0]["source"])
         self.assertEqual(result["functions"][0]["name"], "run")
+
+    def test_guarded_match_cases_count_the_guard(self):
+        source = ("def choose(value, enabled):\n    match value:\n"
+                  "        case 1 if enabled: return 1\n"
+                  "        case _ if enabled: return 2\n"
+                  "        case _: return 0\n")
+        self.assertEqual(run_files({"a.py": source})["functions"][0]["cc"], 4)
+
+    def test_typescript_counts_coalescing_once_and_includes_expression_arrows(self):
+        source = ("function check(x) { return x ?? 1; }\n"
+                  "const choose = (ok) => ok ? 1 : 0;\n"
+                  "const choose = ok => ok;\n"
+                  "const label = () => 'ready';\n")
+        rows = run_files({"a.ts": source})["functions"]
+        self.assertEqual([(f["name"], f["cc"], f["params"]) for f in rows],
+                         [("check", 2, 1), ("choose", 2, 1), ("choose", 1, 1), ("label", 1, 0)])
+        self.assertEqual(len({f["id"] for f in rows}), 4)
+
+    def test_excluded_files_do_not_consume_file_limit(self):
+        files = {f"htmlcov/{index}.js": "ignored" for index in range(MAX_FILES)}
+        files["app.py"] = "pass"
+        result = run_files(files)
+        self.assertEqual(result["summary"]["excluded"], MAX_FILES)
+        self.assertEqual(result["summary"]["parsed"], 1)
 
     def test_match_complexity_excludes_default_case(self):
         result = run_files({"main.py": """def route(value):

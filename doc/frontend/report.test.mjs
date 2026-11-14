@@ -108,3 +108,20 @@ test('module names, truncation and sorting preserve significant input', () => {
   assert.equal(compareText('a', 'b'), -1);
   assert.equal(compareText('z', 'b'), 1);
 });
+
+test('Markdown and JSON export scoped reviews only when AI output is included', async () => {
+  const download = captureDownload();
+  const scoped = { ...report, scope: 'file', sections: {
+    logic: { ...report.sections.logic, markdown: 'Scoped explanation' },
+  } };
+  const options = { includeAi: true, includeSource: false, review: null,
+    scopedReviews: new Map([['file:src/main.py', scoped]]) };
+  exportReport(projectResult(), 'md', options);
+  assert.match((await download.read('md')).text, /文件与文件夹解读[\s\S]*src\/main.py[\s\S]*Scoped explanation/);
+  exportReport(projectResult(), 'json', options);
+  assert.deepEqual(JSON.parse((await download.read('json', 1)).text).ai_scoped_reviews, {
+    'file:src/main.py': scoped,
+  });
+  exportReport(projectResult(), 'json', { ...options, includeAi: false });
+  assert.equal(JSON.parse((await download.read('json', 2)).text).ai_scoped_reviews, undefined);
+});

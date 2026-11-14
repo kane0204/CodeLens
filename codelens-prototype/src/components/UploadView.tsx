@@ -13,49 +13,63 @@ function formatEta(seconds: number | null): string {
 }
 
 function useUploadModel() {
-  const { busy, settings, applySettings } = useApp();
+  const { settings, applySettings } = useApp();
   const [form, setForm] = useState({ baseUrl: settings.baseUrl, model: settings.model, apiKey: settings.apiKey });
   const [formError, setFormError] = useState('');
 
-  useEffect(() => {
-    if (busy) return;
-    setForm((current) => ({
-      baseUrl: current.baseUrl || settings.baseUrl,
-      model: current.model || settings.model,
-      apiKey: current.apiKey || settings.apiKey,
-    }));
-    // 仅在空闲时回填已保存配置，避免打断输入
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.baseUrl, settings.model]);
+  const [autoReview, setAutoReview] = useState(true);
 
   const persistForm = (): boolean => {
+    if (!autoReview) return true;
     const ok = applySettings(form);
     setFormError(ok ? '' : '接口地址需为不含账号、查询参数或片段的 HTTP/HTTPS 地址');
     return ok;
   };
   const aiConfigured = Boolean(form.baseUrl.trim() && form.model.trim());
-  return { form, setForm, formError, persistForm, aiConfigured };
+  return { form, setForm, formError, persistForm, aiConfigured, autoReview, setAutoReview };
 }
 
 function UploadModelForm({ model }: { model: ReturnType<typeof useUploadModel> }) {
   const { busy } = useApp();
-  const { form, setForm, formError, persistForm, aiConfigured } = model;
+  const { autoReview, setAutoReview } = model;
   return (
     <div className="mt-4 rounded-[6px] border border-line bg-[#fdfbf8] px-3.5 py-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] font-semibold text-ink">AI 审查配置</p>
-        <span className={`inline-flex items-center gap-1 text-[10px] ${aiConfigured ? 'text-success' : 'text-faint'}`}>
-          <i className={`inline-block h-1.5 w-1.5 rounded-full ${aiConfigured ? 'bg-success' : 'bg-[#d6cfc4]'}`} />
-          {aiConfigured ? '导入后自动执行 AI 审查' : '未配置 · 仅静态分析'}
-        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-label="导入后自动执行 AI 审查"
+          aria-checked={autoReview}
+          aria-controls="upload-ai-fields"
+          disabled={busy}
+          onClick={() => setAutoReview(!autoReview)}
+          className="rounded-[4px] border border-line px-2 py-1 text-[10px] text-muted aria-checked:border-primary aria-checked:text-primary disabled:opacity-60"
+        >
+          {autoReview ? '自动审查已开启' : '自动审查已关闭'}
+        </button>
       </div>
+      {autoReview && <UploadModelFields model={model} busy={busy} />}
+    </div>
+  );
+}
+
+function UploadModelFields({ model, busy }: { model: ReturnType<typeof useUploadModel>; busy: boolean }) {
+  const { form, setForm, formError, aiConfigured } = model;
+  return (
+    <div id="upload-ai-fields">
+      <p className="mt-2 text-[10px] text-muted">
+        {aiConfigured ? '导入后自动执行 AI 审查' : '填写接口地址和模型后，导入时自动审查'}
+      </p>
       <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <label className="block sm:col-span-2">
           <span className="mb-1 block text-[10px] text-faint">接口地址（OpenAI 兼容）</span>
           <input
             value={form.baseUrl}
-            onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))}
-            onBlur={() => void persistForm()}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setForm((current) => ({ ...current, baseUrl: value }));
+            }}
             placeholder="https://api.example.com/v1"
             disabled={busy}
             className="num h-8 w-full rounded-[4px] border border-line bg-card px-2 text-[11.5px] outline-none transition-colors focus:border-primary disabled:opacity-60"
@@ -65,8 +79,10 @@ function UploadModelForm({ model }: { model: ReturnType<typeof useUploadModel> }
           <span className="mb-1 block text-[10px] text-faint">模型名称</span>
           <input
             value={form.model}
-            onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))}
-            onBlur={() => void persistForm()}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setForm((current) => ({ ...current, model: value }));
+            }}
             placeholder="gpt-4o-mini"
             disabled={busy}
             className="num h-8 w-full rounded-[4px] border border-line bg-card px-2 text-[11.5px] outline-none transition-colors focus:border-primary disabled:opacity-60"
@@ -77,8 +93,10 @@ function UploadModelForm({ model }: { model: ReturnType<typeof useUploadModel> }
           <input
             type="password"
             value={form.apiKey}
-            onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))}
-            onBlur={() => void persistForm()}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setForm((current) => ({ ...current, apiKey: value }));
+            }}
             placeholder="sk-…"
             disabled={busy}
             className="num h-8 w-full rounded-[4px] border border-line bg-card px-2 text-[11.5px] outline-none transition-colors focus:border-primary disabled:opacity-60"
@@ -118,7 +136,7 @@ function UploadProgress() {
   );
 }
 
-function useFolderDrop(persistForm: () => boolean) {
+function useFolderDrop(persistForm: () => boolean, autoReview: boolean) {
   const { busy, startFromTransfer } = useApp();
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -144,7 +162,7 @@ function useFolderDrop(persistForm: () => boolean) {
     setDragging(false);
     if (busy) return;
     if (!persistForm()) return;
-    void startFromTransfer(event.dataTransfer);
+    void startFromTransfer(event.dataTransfer, autoReview);
   };
   return { dragging, onDragEnter, onDragLeave, onDragOver, onDrop };
 }
@@ -214,10 +232,16 @@ function UploadConnectionPrompt() {
   );
 }
 
-function ProjectPicker({ persistForm, aiConfigured }: { persistForm: () => boolean; aiConfigured: boolean }) {
+interface ProjectPickerProps {
+  persistForm: () => boolean;
+  aiConfigured: boolean;
+  autoReview: boolean;
+}
+
+function ProjectPicker({ persistForm, aiConfigured, autoReview }: ProjectPickerProps) {
   const { status, startAnalysis } = useApp();
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const drop = useFolderDrop(persistForm);
+  const drop = useFolderDrop(persistForm, autoReview);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -243,7 +267,7 @@ function ProjectPicker({ persistForm, aiConfigured }: { persistForm: () => boole
         aria-label="选择项目文件夹"
         onChange={(event) => {
           if (!event.target.files?.length) return;
-          void startAnalysis(filesFromInput(event.target.files));
+          void startAnalysis(filesFromInput(event.target.files), autoReview);
           event.target.value = '';
         }}
       />
@@ -365,7 +389,7 @@ export function UploadView() {
             支持 {SUPPORTED_LABEL}；自动排除 .git、依赖与构建目录。
           </p>
           <UploadModelForm model={model} />
-          <ProjectPicker persistForm={model.persistForm} aiConfigured={model.aiConfigured} />
+          <ProjectPicker persistForm={model.persistForm} aiConfigured={model.autoReview && model.aiConfigured} autoReview={model.autoReview} />
           <ImportFeedback />
           <ConnectionFooter />
         </section>

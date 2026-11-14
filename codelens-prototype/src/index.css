@@ -280,3 +280,7 @@
     transition: none !important;
   }
 }
+
+.file-tree-directory[open] > summary > .file-tree-chevron {
+  transform: rotate(90deg);
+}

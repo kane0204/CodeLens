@@ -33,30 +33,31 @@ function buildTree(files: FileInfo[], classes: ClassInfo[]): DirNode {
   return root;
 }
 
-interface DirectoryProps extends Pick<FileTreeProps, 'selected' | 'onSelect' | 'onSelectFolder'> {
+interface DirectoryProps extends Pick<FileTreeProps, 'selected' | 'onSelect' | 'onSelectFolder' | 'isReviewed'> {
   node: DirNode;
   depth: number;
   prefix: string;
 }
 
-function Directory({ node, depth, prefix, selected, onSelect, onSelectFolder }: DirectoryProps) {
+function Directory({ node, depth, prefix, selected, onSelect, onSelectFolder, isReviewed }: DirectoryProps) {
   return (
     <>
       {[...node.dirs.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([name, child]) => (
-          <details key={name} open className="group">
+          <details key={name} open className="file-tree-directory">
             <summary
               className="flex h-7 items-center gap-1 rounded-[3px] pr-1 text-[11.5px] text-[#57534e] hover:bg-[#f7f3ec] aria-[current=true]:bg-tint aria-[current=true]:text-primary"
               style={{ paddingLeft: depth * 10 + 4 }}
               onClick={() => onSelectFolder?.(prefix + name)}
               aria-current={selected === prefix + name ? 'true' : undefined}
             >
-              <Icon name="chevronRight" size={11} className="shrink-0 text-faint transition-transform group-open:rotate-90" />
+              <Icon name="chevronRight" size={11} className="file-tree-chevron shrink-0 text-faint transition-transform" />
               <Icon name="folder" size={12} className="shrink-0 text-[#a88c6c]" />
-              <span className="truncate">{name}</span>
+              <span className="truncate" data-folder-name>{name}</span>
+              <ReviewMarker reviewed={isReviewed?.("folder", prefix + name)} />
             </summary>
-            <Directory node={child} depth={depth + 1} prefix={prefix + name + "/"} selected={selected} onSelect={onSelect} onSelectFolder={onSelectFolder} />
+            <Directory node={child} depth={depth + 1} prefix={prefix + name + "/"} selected={selected} onSelect={onSelect} onSelectFolder={onSelectFolder} isReviewed={isReviewed} />
           </details>
         ))}
       {node.files
@@ -78,6 +79,7 @@ function Directory({ node, depth, prefix, selected, onSelect, onSelectFolder }: 
             >
               <Icon name={error ? 'alert' : 'file'} size={11} className={`shrink-0 ${error ? 'text-danger' : 'text-faint'}`} />
               <span className={`min-w-0 flex-1 truncate ${error ? 'text-danger' : ''}`}>{file.path.split('/').pop()}</span>
+              <ReviewMarker reviewed={isReviewed?.("file", file.path)} />
               <span className="num shrink-0 text-[9.5px] text-faint">
                 {file.functions.length} 函数 / {classCount} 类
               </span>
@@ -88,6 +90,11 @@ function Directory({ node, depth, prefix, selected, onSelect, onSelectFolder }: 
   );
 }
 
+function ReviewMarker({ reviewed }: { reviewed?: boolean }) {
+  if (!reviewed) return null;
+  return <span className="shrink-0 text-[9.5px] text-success">已解读</span>;
+}
+
 interface FileTreeProps {
   files: FileInfo[];
   classes: ClassInfo[];
@@ -96,9 +103,10 @@ interface FileTreeProps {
   onSearch: (value: string) => void;
   onSelect: (path: string) => void;
   onSelectFolder?: (path: string) => void;
+  isReviewed?: (kind: "file" | "folder", path: string) => boolean;
 }
 
-export function FileTree({ files, classes, selected, search, onSearch, onSelect, onSelectFolder }: FileTreeProps) {
+export function FileTree({ files, classes, selected, search, onSearch, onSelect, onSelectFolder, isReviewed }: FileTreeProps) {
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return query ? files.filter((file) => file.path.toLowerCase().includes(query)) : files;
@@ -121,7 +129,7 @@ export function FileTree({ files, classes, selected, search, onSearch, onSelect,
       </div>
       <div className="scroll-thin min-h-0 flex-1 overflow-auto px-1.5 pb-2">
         {filtered.length ? (
-          <Directory node={tree} depth={0} prefix="" selected={selected} onSelect={onSelect} onSelectFolder={onSelectFolder} />
+          <Directory node={tree} depth={0} prefix="" selected={selected} onSelect={onSelect} onSelectFolder={onSelectFolder} isReviewed={isReviewed} />
         ) : (
           <p className="px-2 py-4 text-[11px] text-faint">没有匹配的文件</p>
         )}

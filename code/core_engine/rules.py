@@ -238,13 +238,43 @@ def _is_entry_point(name):
     return name.startswith(("_", "test")) or name in ENTRY_NAMES
 
 
-def _evaluate_dead(result, metrics, add):
+def _referenced_names(trees):
+    """Collect loaded names and attribute references, including callbacks and properties."""
+    return {path: set(_loaded_names(tree)) for path, tree in trees.items()}
+
+
+def _loaded_names(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            yield node.id
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            yield node.attr
+
+
+def _is_http_handler(ident, name, handler_classes):
+    owner = ident.rpartition(".")[0]
+    return owner in handler_classes and (name.startswith("do_") or name == "log_message")
+
+
+def _http_handler_classes(classes):
+    handler_bases = {"BaseHTTPRequestHandler", "http.server.BaseHTTPRequestHandler"}
+    return {entry["id"] for entry in classes if handler_bases.intersection(entry.get("bases") or ())}
+
+
+def _has_usage_evidence(ident, name, names, hinted, handler_classes):
+    return _is_entry_point(name) or name in names or name in hinted or _is_http_handler(ident, name, handler_classes)
+
+
+def _evaluate_dead(result, trees, metrics, add):
     """A5-DEAD：未被本次分析内任何已解析调用指向的函数。"""
     calls = (result.get("graph") or {}).get("calls") or []
     called, hinted = _call_references(calls)
+    referenced = _referenced_names(trees)
+    handler_classes = _http_handler_classes(result.get("classes") or [])
     for fn, ident, name in _python_functions(result.get("functions") or []):
         metrics["functions"] += 1
-        if _is_entry_point(name) or ident in called or name in hinted:
+        names = referenced.get(fn.get("file"), ())
+        if ident in called or _has_usage_evidence(ident, name, names, hinted, handler_classes):
             continue
         metrics["dead_functions"] += 1
         add("A5-DEAD", "info", fn.get("file"), fn.get("line"),
@@ -302,7 +332,7 @@ def evaluate(result):
             findings.append(item)
     metrics["checked_overrides"] = solid_result["checked_overrides"]
 
-    _evaluate_dead(result, metrics, add)
+    _evaluate_dead(result, trees, metrics, add)
     _evaluate_handlers(trees, metrics, add)
 
     return {"findings": findings, "metrics": metrics, "notes": list(NOTES),

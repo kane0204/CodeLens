@@ -30,6 +30,51 @@ class ProjectReviewTests(unittest.TestCase):
             "risks": "Out of range [main.py:L3]",
         })
 
+    def test_scoped_review_uses_natural_guidance_and_only_requests_logic(self):
+        for scope, guide in (("file", "包初始化"), ("folder", "如何分工")):
+            with self.subTest(scope=scope):
+                self.chat.return_value = (json.dumps({"logic": "用途 [main.py:L1-L2]"}), False)
+                result = explanation.review({**self.payload, "scope": scope})
+                self.assertEqual(result["scope"], scope)
+                self.assertEqual(list(result["sections"]), ["logic"])
+                self.assertTrue(result["sections"]["logic"]["citations"][0]["valid"])
+                prompt = self.chat.call_args.args[-1]
+                self.assertIn(guide, prompt)
+                self.assertIn("通俗", prompt)
+                self.assertNotIn('"design"', prompt)
+        self.assertEqual(self.chat.call_count, 2)
+        with self.assertRaisesRegex(ValueError, "审查范围"):
+            explanation.review({**self.payload, "scope": "invalid"})
+
+    def test_pausing_after_read_preserves_notes_and_their_truncation(self):
+        self.chat.side_effect = [("first note", True), ("next note", False), (self.report, False)]
+
+        def disconnect(event):
+            if event["stage"] == "read" and event["done"] == 1:
+                raise BrokenPipeError()
+
+        payload = {**self.payload, "files": [
+            {"path": "a.py", "content": "# " + "x" * 600},
+            {"path": "b.py", "content": "# " + "x" * 600},
+        ]}
+        with patch.object(explanation, "MAX_PROJECT_BATCH_CHARS", 1000):
+            with self.assertRaises(BrokenPipeError):
+                explanation.review(payload, progress=disconnect)
+            self.assertEqual(self.chat.call_count, 1)
+            result = explanation.review(payload)
+        self.assertEqual(self.chat.call_count, 3)
+        self.assertTrue(result["truncated"])
+        self.assertIn("first note", self.chat.call_args.args[-1])
+
+    def test_synthesis_limit_retains_material_from_every_batch(self):
+        notes = ["first " + "x" * 200, "second " + "y" * 200]
+        with patch.object(explanation, "MAX_REVIEW_SYNTHESIS_CHARS", 100):
+            material, facts, limited = explanation._bounded_synthesis(notes, "z" * 80)
+        self.assertTrue(limited)
+        self.assertLessEqual(len(material) + len(facts), 100)
+        self.assertIn("first", material)
+        self.assertIn("second", material)
+
     def test_review_checks_citations_and_reports_model_truncation(self):
         self.chat.return_value = (self.report, True)
 
@@ -108,6 +153,28 @@ class ProjectReviewTests(unittest.TestCase):
         self.assertEqual(set(result["sections"]), {"logic", "design", "risks"})
         self.assertEqual(self.chat.call_count, 2)
 
+    def test_waiter_observes_original_failure_after_retry_claims_job(self):
+        original, _ = explanation._claim_review_job("same-input")
+        waiting, state = explanation._claim_review_job("same-input")
+        self.assertEqual(state, "waiting")
+        original.notes.append("completed batch")
+        explanation._finish_review(original, "failed", error="first attempt failed")
+        retry, state = explanation._claim_review_job("same-input")
+        self.assertEqual(state, "owner")
+        self.assertIsNot(retry, waiting)
+        self.assertEqual(retry.notes, ["completed batch"])
+        self.assertTrue(waiting.finished.is_set())
+        with self.assertRaisesRegex(explanation.ExplanationError, "first attempt failed"):
+            explanation._await_review(waiting, None)
+
+    def test_segment_end_matches_the_last_rendered_line(self):
+        record = {"path": "main.py", "source": "first\n" + "x" * 210 + "\nlast"}
+        with patch.object(explanation, "MAX_PROJECT_BATCH_CHARS", 720):
+            segments = list(explanation._file_segments(record))
+        for _, start, end, rendered in segments:
+            numbers = [int(line.split(":", 1)[0]) for line in rendered.splitlines()]
+            self.assertEqual((start, end), (numbers[0], numbers[-1]))
+
     def test_concurrent_review_waits_for_in_flight_request_and_reuses_result(self):
         model_started = Event()
         waiter_attached = Event()
@@ -184,6 +251,18 @@ class ProjectReviewTests(unittest.TestCase):
                 explanation.review(self.payload)
         result = explanation.review(self.payload)
         self.assertIn("Entry point", result["sections"]["logic"]["markdown"])
+
+    def test_completed_jobs_are_evicted_before_failed_checkpoints(self):
+        with patch.object(explanation, "_REVIEW_JOB_LIMIT", 2):
+            failed, _ = explanation._claim_review_job("failed")
+            failed.notes.append("completed batch")
+            explanation._finish_review(failed, "failed", error="timeout")
+            done, _ = explanation._claim_review_job("done")
+            explanation._finish_review(done, "done", result={})
+            explanation._claim_review_job("new")
+            self.assertNotIn("done", explanation._REVIEW_JOBS)
+            retried, _ = explanation._claim_review_job("failed")
+            self.assertEqual(retried.notes, ["completed batch"])
 
     def test_review_cache_evicts_old_completed_results(self):
         self.chat.return_value = (self.report, False)

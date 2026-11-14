@@ -103,7 +103,7 @@ test('analysis initializes workspace and finding navigation and export use the l
   assert.deepEqual(state().expandedRules, []);
   assert.deepEqual(state().expandedFindings, []);
   assert.deepEqual(exportReport.mock.calls, [
-    [state().result, 'json', { includeAi: true, includeSource: false, review: null }],
+    [state().result, 'json', { includeAi: true, includeSource: false, review: null, scopedReviews: new Map() }],
   ]);
 });
 
@@ -126,6 +126,17 @@ test('settings validate and trim inputs, omit API keys from storage and enable a
   });
   assert.equal(state().reviewBusy, false);
   assert.equal(state().importing, false);
+});
+
+test('configured models stay idle during static-only imports and remain available for manual review', async () => {
+  const state = await renderProvider();
+  act(() => state().applySettings(settings));
+  await act(() => state().startAnalysis(selection, false));
+  await act(() => state().startFromTransfer({ items: [], files: [selection[0].file] }, false));
+  assert.ok(state().result);
+  assert.equal(reviewProject.mock.calls.length, 0);
+  await act(() => state().runReview());
+  assert.equal(reviewProject.mock.calls.length, 1);
 });
 
 test('review failure leaves static analysis available and retry can succeed', async () => {
@@ -329,4 +340,17 @@ test('temporary notices disappear when their timers expire', async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+test('scoped reviews are exported with their project and cleared on new import', async () => {
+  const state = await renderProvider();
+  await act(() => state().startAnalysis(selection, false));
+  const first = state().result;
+  const scoped = { ...report, scope: 'file', sections: { logic: report.sections.logic } };
+  act(() => state().saveScopedReview(first, 'file:' + path, scoped));
+  act(() => state().runExport('json'));
+  assert.equal(exportReport.mock.lastCall[2].scopedReviews.get('file:' + path), scoped);
+  await act(() => state().startAnalysis(selection, false));
+  act(() => state().saveScopedReview(first, 'file:' + path, scoped));
+  assert.equal(state().scopedReviews.size, 0);
 });

@@ -29,6 +29,7 @@ import secrets
 import sys
 import threading
 import traceback
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -195,8 +196,10 @@ def flush_all(logger: logging.Logger) -> None:
     for handler in list(logger.handlers):
         try:
             handler.flush()
-        except Exception:  # a broken sink must not hide the original crash
-            pass
+        except Exception as exc:
+            # Report only the exception type and bypass the failing logger.
+            with suppress(OSError, ValueError):
+                print(f"codelens: log flush failed ({type(exc).__name__})", file=sys.stderr)
 
 
 def exception_summary(exc: BaseException) -> dict[str, str]:

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import ast
 
+from .engine import own_walk
+
 #: 语句数超过它的函数不做控制流抽取（避免超大函数把结果撑爆）。
 MAX_FLOW_STATEMENTS = 150
 
@@ -28,17 +30,6 @@ MAX_DEF_USE_NAMES = 120
 CONTROL_NODES = (ast.If, ast.IfExp, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.TryStar,
                  ast.With, ast.AsyncWith, ast.Match)
 JUMP_NODES = (ast.Break, ast.Continue, ast.Return, ast.Raise)
-
-
-def own_walk(node):
-    """遍历函数/类体，跳过嵌套定义（嵌套函数与类各自独立计算）。"""
-    stack = list(reversed(node.body))
-    while stack:
-        item = stack.pop()
-        yield item
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        stack.extend(reversed(list(ast.iter_child_nodes(item))))
 
 
 def _is_jump(node):

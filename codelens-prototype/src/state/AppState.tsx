@@ -6,6 +6,7 @@ import { logger } from '../lib/logger';
 import type {
   AiReviewProgress,
   AiReviewResult,
+  ScopedReviewResult,
   AnalyzeResult,
   ExplainCitation,
   GraphTab,
@@ -77,6 +78,8 @@ interface AppContextValue {
   settingsOpen: boolean;
   settingsError: string;
   aiReview: AiReviewResult | null;
+  scopedReviews: ReadonlyMap<string, ScopedReviewResult>;
+  saveScopedReview: (result: AnalyzeResult, key: string, review: ScopedReviewResult) => void;
   reviewBusy: boolean;
   reviewProgress: AiReviewProgress | null;
   reviewError: string;
@@ -85,8 +88,8 @@ interface AppContextValue {
   sourceTarget: SourceTarget | null;
   connect: () => Promise<void>;
   go: (route: Route) => void;
-  startAnalysis: (raw: RawFile[]) => Promise<void>;
-  startFromTransfer: (transfer: DataTransfer) => Promise<void>;
+  startAnalysis: (raw: RawFile[], autoReview?: boolean) => Promise<void>;
+  startFromTransfer: (transfer: DataTransfer, autoReview?: boolean) => Promise<void>;
   cancelAnalysis: () => void;
   requestReimport: () => void;
   confirmReimportAction: () => void;
@@ -234,8 +237,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [exportAi, setExportAi] = useState(true);
   const [exportSource, setExportSource] = useState(false);
   const [settings, setSettings] = useState<LlmSettings>(loadSettings);
+  const currentSettings = useRef(settings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsError, setSettingsError] = useState('');
+  const [scopedReviews, setScopedReviews] = useState<ReadonlyMap<string, ScopedReviewResult>>(new Map());
+  const currentProject = useRef<AnalyzeResult | null>(null);
   const [aiReview, setAiReview] = useState<AiReviewResult | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewProgress, setReviewProgress] = useState<AiReviewProgress | null>(null);
@@ -301,6 +307,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const resetAfterResult = useCallback((data: AnalyzeResult) => {
+    currentProject.current = data;
+    setScopedReviews(new Map());
     setResult(data);
     setImporting(false);
     setFile(data.files[0]?.path ?? '');
@@ -348,7 +356,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const executeReview = useCallback(
-    async (data: AnalyzeResult): Promise<AiReviewResult | null> => {
+    async (data: AnalyzeResult, modelSettings = currentSettings.current): Promise<AiReviewResult | null> => {
       const files = data.files
         .filter((item) => item.status === 'ok' && typeof item.source === 'string')
         .map((item) => ({ path: item.path, content: item.source }));
@@ -364,7 +372,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       progressClock.current = performance.now();
       try {
         const review = await reviewProject(
-          { project: data.project, files, settings },
+          { project: data.project, files, settings: modelSettings },
           token,
           reportReviewProgress,
           controller.signal,
@@ -391,18 +399,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [settings, token, reportReviewProgress],
+    [token, reportReviewProgress],
   );
 
-  const announceAnalysis = useCallback(async (data: AnalyzeResult) => {
+  const announceAnalysis = useCallback(async (data: AnalyzeResult, autoReview: boolean) => {
+    const settings = currentSettings.current;
     let message = `分析完成：${data.summary.parsed} 个文件，${data.summary.findings} 条风险`;
     let kind: ToastKind = 'success';
-    if (settings.baseUrl.trim() && settings.model.trim()) {
+    if (autoReview && settings.baseUrl.trim() && settings.model.trim()) {
       setImporting(true);
       setPhase('准备 AI 审查');
       setProgress(0);
       setProgressTotal(1);
-      const review = await executeReview(data);
+      const review = await executeReview(data, settings);
       if (review) {
         message = `静态分析与 AI 审查完成：${data.summary.parsed} 个文件`;
       } else {
@@ -414,10 +423,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (window.location.hash !== '#overview') window.location.hash = 'overview';
     setRoute('overview');
     toast(message, kind);
-  }, [settings, executeReview, toast]);
+  }, [executeReview, toast]);
 
   const runWithRaw = useCallback(
-    async (raw: RawFile[]) => {
+    async (raw: RawFile[], autoReview = true) => {
       if (busy || status !== 'ready') return;
       const prepared = prepareSelection(raw);
       setErrors(prepared.errors);
@@ -447,7 +456,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         );
         resetAfterResult(data);
 
-        await announceAnalysis(data);
+        await announceAnalysis(data, autoReview);
       } catch (error) {
         logger.warn('analyze', 'analysis.stopped', {
           aborted: isAbortError(error),
@@ -467,17 +476,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const startAnalysis = useCallback(
-    async (raw: RawFile[]) => {
-      await runWithRaw(raw);
+    async (raw: RawFile[], autoReview = true) => {
+      await runWithRaw(raw, autoReview);
     },
     [runWithRaw],
   );
 
   const startFromTransfer = useCallback(
-    async (transfer: DataTransfer) => {
+    async (transfer: DataTransfer, autoReview = true) => {
       try {
         const raw = await filesFromDataTransfer(transfer, new AbortController().signal);
-        await runWithRaw(raw);
+        await runWithRaw(raw, autoReview);
     } catch (error) {
       logger.warn('analyze', 'drop.read_failed', { message: errorText(error, '') });
       setErrors([errorText(error, '读取拖拽目录失败，请重试。')]);
@@ -574,6 +583,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (GRAPH_NAVIGATION_KEYS.some((key) => patch[key] !== undefined)) setDrawerNode(null);
   }, []);
 
+  const saveScopedReview = useCallback((data: AnalyzeResult, key: string, review: ScopedReviewResult) => {
+    if (data === currentProject.current) {
+      setScopedReviews((current) => new Map(current).set(key, review));
+    }
+  }, []);
+
   const runExport = useCallback(
     (format: ExportFormat) => {
       if (!result) return;
@@ -581,10 +596,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         includeAi: exportAi,
         includeSource: exportSource,
         review: aiReview,
+        scopedReviews,
       });
       toast(`已生成 ${format.toUpperCase()} 报告`, 'success');
     },
-    [result, exportAi, exportSource, aiReview, toast],
+    [result, exportAi, exportSource, aiReview, scopedReviews, toast],
   );
 
   const openSettings = useCallback(() => {
@@ -603,7 +619,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (baseUrl && !validBaseUrl(baseUrl)) {
       return false;
     }
-    setSettings({ baseUrl, model, apiKey });
+    currentSettings.current = { baseUrl, model, apiKey };
+    setSettings(currentSettings.current);
     try {
       if (baseUrl || model) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ baseUrl, model }));
       else localStorage.removeItem(SETTINGS_KEY);
@@ -623,7 +640,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSettingsError('请输入 HTTP 或 HTTPS 基础地址，不要在地址中包含账号、密码、查询参数或片段。');
         return;
       }
-      setSettings({ baseUrl, model, apiKey });
+      currentSettings.current = { baseUrl, model, apiKey };
+      setSettings(currentSettings.current);
       let persisted = true;
       try {
         if (baseUrl || model) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ baseUrl, model }));
@@ -728,6 +746,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       settingsOpen,
       settingsError,
       aiReview,
+      scopedReviews,
+      saveScopedReview,
       reviewBusy,
       reviewProgress,
       reviewError,
@@ -805,6 +825,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       settingsOpen,
       settingsError,
       aiReview,
+      scopedReviews,
+      saveScopedReview,
       reviewBusy,
       reviewProgress,
       reviewError,

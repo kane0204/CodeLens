@@ -61,7 +61,7 @@ TODO_RE = re.compile(r"(?:\btodo\b|\bfixme\b|\bhack\b|\bxxx\b|待实现|临时�
 EMPTY_CATCH_RE = re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}")
 BROAD_CATCH_RE = re.compile(r"catch\s*\(\s*(?:Exception|Throwable|\.\.\.)\b")
 CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
-CC_TOKEN_RE = re.compile(r"\b(?:if|for|foreach|while|case|catch)\b|&&|\|\||\?(?![.:])")
+CC_TOKEN_RE = re.compile(r"\b(?:if|for|foreach|while|case|catch)\b|&&|\|\||\?\?|\?(?![.:?])")
 MAX_CALLS_PER_FILE = 4000
 
 
@@ -329,6 +329,40 @@ def _scan_classes(clean, pairs, module, path, lines):
     return classes
 
 
+_EXPRESSION_ARROW = re.compile(
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?"
+    r"(\([^()\n]*\)|[A-Za-z_$][\w$]*)[ \t]*=>"
+)
+
+
+def _expression_arrows(clean, source):
+    for match in _EXPRESSION_ARROW.finditer(clean):
+        body = match.end()
+        end = clean.find("\n", body)
+        end = len(clean) if end < 0 else end
+        first = source[body:end].lstrip()
+        if not first or first.startswith(("{", "//", "/*")):
+            continue
+        stop = clean.find(";", body, end)
+        yield match.group(1), match.group(2), match.start(), body - 1, end if stop < 0 else stop
+
+
+def _add_expression_arrows(functions, clean, source, module, path, lines):
+    used_ids = {item["id"] for item in functions}
+    for name, header, offset, start, end in _expression_arrows(clean, source):
+        line = lines.line_at(offset)
+        ident = f"{module}.{name}"
+        if ident in used_ids:
+            ident += f"@{line}-{offset}"
+        used_ids.add(ident)
+        functions.append({
+            "id": ident, "name": name, "file": path, "line": line,
+            "end_line": lines.line_at(end), "kind": "function",
+            "_span": (start, end), "_text": header if header.startswith("(") else f"({header})",
+            "_owner": None,
+        })
+
+
 def _scan_functions(clean, pairs, classes, module, path, lines):
     """Locate function spans and identities; metrics are applied afterwards."""
     functions = []
@@ -494,6 +528,9 @@ def analyze_record(record, known_paths):
 
     classes = _scan_classes(clean, pairs, module, path, lines)
     functions = _scan_functions(clean, pairs, classes, module, path, lines)
+    if PurePosixPath(path).suffix.lower() in {".js", ".jsx", ".ts", ".tsx"}:
+        _add_expression_arrows(functions, clean, source, module, path, lines)
+        functions.sort(key=lambda item: item["_span"])
     for item in functions:
         owner = item["_owner"]
         if owner is not None:

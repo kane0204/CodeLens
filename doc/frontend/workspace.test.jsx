@@ -20,7 +20,9 @@ vi.mock('../../codelens-prototype/src/state/AppState.tsx', () => ({
 
 beforeEach(() => {
   mocked.context = {
-    route: 'overview', result: projectResult(), file: path, phase: '', status: 'ready',
+    route: 'overview', result: projectResult(),
+    scopedReviews: new Map(),
+    saveScopedReview: (_result, key, output) => mocked.context.scopedReviews.set(key, output), file: path, phase: '', status: 'ready',
     settings: { baseUrl: '', model: '', apiKey: '' },
     toasts: [], errors: [], ignored: {}, treeSearch: '', expandedRules: ['CC-01'],
     go: vi.fn(), openSource: vi.fn(), openFunction: vi.fn(), locateFinding: vi.fn(),
@@ -245,7 +247,7 @@ test('upload routes file selection and drops through settings validation and ren
   const file = new File(['pass'], 'main.py');
   Object.defineProperty(input, 'files', { value: [file], configurable: true });
   act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
-  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }]]);
+  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], true]);
   const dropZone = button('选择文件夹', container).parentElement;
   const dataTransfer = { items: [], files: [file] };
   for (const type of ['dragenter', 'dragover', 'dragleave', 'drop']) {
@@ -254,7 +256,7 @@ test('upload routes file selection and drops through settings validation and ren
     assert.equal(event.defaultPrevented, true);
   }
   assert.equal(dataTransfer.dropEffect, 'copy');
-  assert.deepEqual(mocked.context.startFromTransfer.mock.calls, [[dataTransfer]]);
+  assert.deepEqual(mocked.context.startFromTransfer.mock.calls, [[dataTransfer, true]]);
 
   Object.assign(mocked.context, {
     busy: true, phase: 'AI 正在分析', progress: 1, progressTotal: 3, eta: 61,
@@ -267,6 +269,34 @@ test('upload routes file selection and drops through settings validation and ren
   assert.match(container.textContent, /\.md：2；\.png：1/);
   click(button('取消', container));
   assert.equal(mocked.context.cancelAnalysis.mock.calls.length, 1);
+});
+
+test('disabling automatic review hides fields and allows both import methods', () => {
+  mocked.context.importing = true;
+  const { render, container } = mount();
+  render(<App />);
+  const toggle = container.querySelector('[role="switch"]');
+  const base = () => container.querySelector('input[placeholder="https://api.example.com/v1"]');
+  typeValue(base(), 'draft');
+  click(toggle);
+  assert.equal(toggle.getAttribute('aria-checked'), 'false');
+  assert.equal(base(), null);
+  const input = container.querySelector('input[type=file]');
+  const choose = vi.spyOn(input, 'click').mockImplementation(() => {});
+  click(button('选择文件夹', container));
+  assert.equal(choose.mock.calls.length, 1);
+  const file = new File(['pass'], 'main.py');
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
+  act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
+  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], false]);
+  const dataTransfer = { items: [], files: [file] };
+  act(() => button('选择文件夹', container).parentElement.dispatchEvent(
+    Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer }),
+  ));
+  assert.deepEqual(mocked.context.startFromTransfer.mock.lastCall, [dataTransfer, false]);
+  assert.equal(mocked.context.applySettings.mock.calls.length, 0);
+  click(toggle);
+  assert.equal(base().value, 'draft');
 });
 
 test('overview distinguishes unavailable complexity and an empty risk report', () => {
@@ -357,7 +387,6 @@ test('review routes show busy and failure states and retain access to retry', ()
     { class: 'Worker', file: path, line: 1, reason: 'external base' },
   ];
   for (const [route, startLabel, busyText] of [
-    ['logic', '一键解读整个项目', 'AI 正在通读项目源码'],
     ['solid', '生成设计检查', 'AI 正在评估结构设计'],
     ['risks', '生成风险评估', 'AI 正在评估严重危害风险'],
   ]) {
@@ -372,8 +401,8 @@ test('review routes show busy and failure states and retain access to retry', ()
     assert.ok(container.textContent.includes(busyText));
     click(button('取消', container));
   }
-  assert.equal(mocked.context.runReview.mock.calls.length, 3);
-  assert.equal(mocked.context.cancelReview.mock.calls.length, 3);
+  assert.equal(mocked.context.runReview.mock.calls.length, 2);
+  assert.equal(mocked.context.cancelReview.mock.calls.length, 2);
 });
 
 test('logic enables only the selected scope and submits its parsed sources', async () => {
@@ -394,7 +423,7 @@ test('logic enables only the selected scope and submits its parsed sources', asy
   await act(async () => fileButton().click());
   assert.deepEqual(mocked.selectedReview.mock.lastCall[0].files.map((item) => item.path), [path]);
 
-  click([...container.querySelectorAll('summary')].find((item) => item.textContent.trim() === 'src'));
+  click([...container.querySelectorAll('summary')].find((item) => item.querySelector('[data-folder-name]')?.textContent === 'src'));
   assert.equal(fileButton().disabled, true);
   assert.equal(folderButton().disabled, false);
   await act(async () => folderButton().click());
@@ -403,4 +432,96 @@ test('logic enables only the selected scope and submits its parsed sources', asy
   click(container.querySelector('button[title="' + path + '"]'));
   assert.equal(fileButton().disabled, false);
   assert.equal(folderButton().disabled, true);
+});
+
+test('logic shows scoped review failures and enables retry', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+  mocked.selectedReview.mockRejectedValueOnce(new Error('Model unavailable'));
+  const { render, container } = mount();
+  render(<App />);
+  const action = button('解读当前文件', container);
+  await act(async () => action.click());
+  assert.match(container.querySelector('[role="alert"]').textContent, /Model unavailable/);
+  assert.equal(action.disabled, false);
+});
+
+test('folder review shows batch progress from the review stream', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+  let complete;
+  mocked.selectedReview.mockImplementationOnce((_request, _token, progress) => {
+    progress({ stage: 'read', label: '正在阅读源码', done: 1, total: 3 });
+    return new Promise((resolve) => { complete = resolve; });
+  });
+  const { render, container } = mount();
+  render(<App />);
+  click([...container.querySelectorAll('summary')].find((item) => item.querySelector('[data-folder-name]')?.textContent === 'src'));
+  click(button('解读当前文件夹', container));
+  assert.match(container.querySelector('[role="status"]').textContent, /正在阅读源码.*1\/3/);
+  await act(async () => complete(report));
+});
+
+test('batch review pauses between targets, resumes, and shows cached reports when selecting folders', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+  mocked.selectedReview.mockClear();
+  let finish;
+  const scopedReport = (request) => ({
+    ...report,
+    sections: { ...report.sections, logic: { ...report.sections.logic, markdown: request.project } },
+  });
+  mocked.selectedReview
+    .mockImplementationOnce(async (request) => scopedReport(request))
+    .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+    .mockImplementation(async (request) => scopedReport(request));
+  const { render, container } = mount();
+  render(<App />);
+  await act(async () => button('一键解读所有文件和文件夹', container).click());
+  assert.match(container.textContent, /已解读 1\/2 项/);
+  click(button('暂停', container));
+  assert.equal(mocked.selectedReview.mock.lastCall[3].aborted, true);
+  await act(async () => finish(report));
+  await act(async () => button('继续解读', container).click());
+  assert.match(container.textContent, /已解读 2\/2 项/);
+  assert.match(container.textContent, /文件 · src\/main.py/);
+  click([...container.querySelectorAll('summary')].find((item) => item.querySelector('[data-folder-name]')?.textContent === 'src'));
+  assert.match(container.textContent, /文件夹 · src/);
+  mocked.context.route = 'metrics';
+  render(<App />);
+  mocked.context.route = 'logic';
+  render(<App />);
+  assert.match(container.textContent, /已解读 2\/2 项/);
+  assert.match(container.textContent, /文件 · src\/main.py/);
+  assert.equal(mocked.selectedReview.mock.calls.length, 3);
+});
+
+test('logic can pause a project review started during import', () => {
+  Object.assign(mocked.context, { route: 'logic', reviewBusy: true });
+  const { render, container } = mount();
+  render(<App />);
+  assert.match(container.querySelector('[role="status"]').textContent, /AI 正在通读项目源码/);
+  click(button('暂停', container));
+  assert.equal(mocked.context.cancelReview.mock.calls.length, 1);
+});
+
+test('batch reviews later files after a transport error and marks finished targets', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local', aiReview: report, reviewError: '旧项目审查错误' });
+  mocked.context.result.files.push({ ...mocked.context.result.files[0], path: 'src/nested/helper.py' });
+  mocked.selectedReview.mockReset()
+    .mockRejectedValueOnce(new Error('模型连接中断'))
+    .mockResolvedValue(report);
+  const { render, container } = mount();
+  render(<App />);
+  await act(async () => button('一键解读所有文件和文件夹', container).click());
+  assert.deepEqual(mocked.selectedReview.mock.calls.map(([request]) => [
+    request.scope, request.files.map((file) => file.path),
+  ]), [
+    ['file', [path]],
+    ['file', ['src/nested/helper.py']],
+    ['folder', ['src/nested/helper.py']],
+    ['folder', [path, 'src/nested/helper.py']],
+  ]);
+  assert.match(container.textContent, /已解读 3\/4 项/);
+  assert.match(container.textContent, /当前文件尚未解读/);
+  assert.match(container.querySelector('[role="alert"]').textContent, /src\/main.py.*连接中断/);
+  assert.doesNotMatch(container.textContent, /旧项目审查错误/);
+  assert.match(container.querySelector('button[title="src/nested/helper.py"]').textContent, /已解读/);
 });

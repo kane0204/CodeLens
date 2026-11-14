@@ -288,6 +288,11 @@ export interface AiReviewResult {
   truncated: boolean;
 }
 
+export interface ScopedReviewResult extends Omit<AiReviewResult, 'scope' | 'sections'> {
+  scope: 'file' | 'folder';
+  sections: Pick<AiReviewResult['sections'], 'logic'>;
+}
+
 export interface AiReviewProgress {
   stage: 'analyze' | 'read' | 'review' | 'resume';
   done: number;

@@ -188,9 +188,12 @@ class RequestTests(unittest.TestCase):
                 self.assertIn(message, data.decode())
                 self.assertNotIn("private details", data.decode())
 
-    def test_review_streams_progress_then_result_and_survives_disconnect(self):
+    def test_review_streams_progress_and_stops_work_on_disconnect(self):
+        completed = []
+
         def review(payload, progress):
             progress({"type": "progress", "label": "读取源码"})
+            completed.append(payload["project"])
             return {"project": payload["project"]}
 
         payload = {"project": "demo"}
@@ -204,6 +207,13 @@ class RequestTests(unittest.TestCase):
         ])
         self.assertEqual(json.loads(partial)["type"], "progress")
         self.assertEqual(service.call_count, 2)
+        self.assertEqual(completed, ["demo"])
+
+    def test_review_error_handles_closed_client(self):
+        with patch.object(server.explanation, "review", side_effect=server.explanation.ExplanationError("offline")):
+            _, _, body = self.request("POST", "/api/review", payload={}, write_error=BrokenPipeError())
+        self.assertEqual(json.loads(body)["type"], "error")
+        self.assertIn("review_transport_closed", self.logger.log.call_args.args)
 
     def test_review_stream_emits_structured_errors(self):
         for error, expected in [

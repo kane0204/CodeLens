@@ -151,7 +151,7 @@ class ModelTransportTests(unittest.TestCase):
     def test_http_and_network_errors_omit_private_details(self):
         errors = [
             (HTTPError(self.endpoint, 401, "private data", {}, io.BytesIO(b"fake-key")), "HTTP 401"),
-            (URLError("fake-key"), "连接失败"),
+            (URLError("fake-key"), "连接中断"),
         ]
         for error, message in errors:
             with self.subTest(error=error), patch.object(explanation.urllib.request, "build_opener") as build:
@@ -160,6 +160,36 @@ class ModelTransportTests(unittest.TestCase):
                     explanation._chat(self.endpoint, "unit", "fake-key", "system", "source")
                 self.assertNotIn("fake-key", str(raised.exception))
                 self.assertNotIn("private data", str(raised.exception))
+
+    def test_transient_disconnect_retries_without_logging_private_details(self):
+        response = {"choices": [{"message": {"content": "recovered"}}]}
+        with patch.object(explanation.urllib.request, "build_opener") as build, \
+                self.assertLogs("codelens", level="WARNING") as logs:
+            opener = build.return_value
+            opener.open.side_effect = [URLError(TimeoutError("private data")),
+                                       io.BytesIO(json.dumps(response).encode())]
+            self.assertEqual(explanation._chat(self.endpoint, "unit", "", "system", "source"),
+                             ("recovered", False))
+            self.assertEqual(opener.open.call_count, 2)
+        self.assertIn("type=TimeoutError", logs.output[0])
+        self.assertNotIn("private data", logs.output[0])
+
+    def test_truncated_response_and_tls_eof_can_recover_on_third_attempt(self):
+        import http.client
+        import ssl
+
+        complete = io.BytesIO(b'{"choices":[{"message":{"content":"recovered"}}]}')
+        with patch.object(explanation.urllib.request, "build_opener") as build, \
+                patch.object(explanation.time, "sleep") as sleep:
+            build.return_value.open.side_effect = [
+                http.client.IncompleteRead(b"partial"),
+                ssl.SSLEOFError("early EOF"),
+                complete,
+            ]
+            self.assertEqual(explanation._chat(self.endpoint, "unit", "", "system", "source"),
+                             ("recovered", False))
+        self.assertEqual(build.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
 
     def test_invalid_empty_and_oversized_responses_report_specific_errors(self):
         responses = [

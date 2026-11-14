@@ -1,4 +1,4 @@
-import type { AiReviewResult, AnalyzeResult, Finding } from '../types';
+import type { AiReviewResult, AnalyzeResult, Finding, ScopedReviewResult } from '../types';
 import { SEVERITY_LABEL, ruleName } from './format';
 
 export type ExportFormat = 'md' | 'json' | 'csv';
@@ -7,12 +7,23 @@ export interface ExportOptions {
   includeAi: boolean;
   includeSource: boolean;
   review: AiReviewResult | null;
+  scopedReviews?: ReadonlyMap<string, ScopedReviewResult>;
 }
 
 function escapeMarkdown(value: unknown): string {
   return String(value ?? '—')
     .replace(/[\\`*_{}[\]<>#|]/g, '\\$&')
     .replaceAll('\n', ' ');
+}
+
+function scopedMarkdown(options: ExportOptions): string {
+  if (!options.includeAi || !options.scopedReviews?.size) return '';
+  const sections = [...options.scopedReviews].map(([key, review]) => {
+    const path = key.slice(key.indexOf(':') + 1);
+    const label = review.sections.logic.title;
+    return "### " + escapeMarkdown(label + " · " + path) + "\n\n" + review.sections.logic.markdown;
+  });
+  return "\n\n## 文件与文件夹解读\n\n" + sections.join("\n\n");
 }
 
 function markdown(result: AnalyzeResult, options: ExportOptions): string {
@@ -115,7 +126,7 @@ ${(result.graph?.class_relations ?? [])
 
 ## AI 逻辑解读
 
-${explanations}
+${explanations}${scopedMarkdown(options)}
 `;
 }
 
@@ -164,10 +175,13 @@ export function exportReport(result: AnalyzeResult, format: ExportFormat, option
     triggerDownload(markdown(result, options), 'text/markdown;charset=utf-8', 'md');
     return;
   }
-  const data: AnalyzeResult & { ai_review?: AiReviewResult } = structuredClone(result);
+  const data: AnalyzeResult & { ai_review?: AiReviewResult; ai_scoped_reviews?: Record<string, ScopedReviewResult> } = structuredClone(result);
   if (!options.includeSource) {
     data.files = data.files.map((file) => ({ ...file, source: '' }));
   }
   if (options.includeAi && options.review) data.ai_review = options.review;
+  if (options.includeAi && options.scopedReviews?.size) {
+    data.ai_scoped_reviews = Object.fromEntries(options.scopedReviews);
+  }
   triggerDownload(JSON.stringify(data, null, 2), 'application/json;charset=utf-8', 'json');
 }

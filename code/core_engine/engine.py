@@ -13,7 +13,11 @@ from pathlib import PurePosixPath
 from . import generic
 
 VERSION = "0.4.0"
-EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", "build", "dist", "tests"}
+EXCLUDED = {
+    ".git", ".venv", "venv", "__pycache__", "node_modules", "build", "dist", "tests",
+    "htmlcov", "tmp", ".tmp", ".next", ".pytest_cache", ".mypy_cache", ".ruff_cache", "logs",
+}
+EXCLUDED_TEST_DIRS = {("doc", "unit"), ("doc", "frontend")}
 MAX_FILES = 200
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
@@ -75,8 +79,12 @@ def _decision_count(item):
 
 
 def _match_decisions(node):
-    return sum(not (isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None)
-               for case in node.cases)
+    return sum(_case_decisions(case) for case in node.cases)
+
+
+def _case_decisions(case):
+    default = isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+    return int(not default) + int(case.guard is not None)
 
 
 def complexity(node):
@@ -436,9 +444,19 @@ def _read_record(item, path, suffix):
 def _request_files(payload):
     if not isinstance(payload, dict) or not isinstance(payload.get("files"), list):
         raise ValueError("请求必须包含 files 列表")
-    if len(payload["files"]) > MAX_FILES:
-        raise ValueError(f"最多分析 {MAX_FILES} 个源码文件，请缩小目录范围")
     return payload["files"]
+
+
+def _excluded_source(path):
+    folders = PurePosixPath(path).parts[:-1]
+    return any(folder in EXCLUDED for folder in folders) or any(
+        pair in EXCLUDED_TEST_DIRS for pair in zip(folders, folders[1:])
+    )
+
+
+def _check_file_count(records):
+    if len(records) >= MAX_FILES:
+        raise ValueError(f"最多分析 {MAX_FILES} 个源码文件，请缩小目录范围")
 
 
 def _load_records(payload):
@@ -448,11 +466,12 @@ def _load_records(payload):
             raise ValueError("文件记录无效")
         path = normalized_path(item.get("path"))
         suffix = PurePosixPath(path).suffix.lower()
-        if suffix not in generic.SUPPORTED or any(p in EXCLUDED for p in PurePosixPath(path).parts[:-1]):
+        if suffix not in generic.SUPPORTED or _excluded_source(path):
             excluded_count += 1
             continue
         if path in seen:
             raise ValueError("存在重复的文件路径")
+        _check_file_count(records)
         seen.add(path)
         record, size = _read_record(item, path, suffix)
         total += size
@@ -736,10 +755,10 @@ def _report_summary(ctx, parsed, errors, functions, classes, language_counts):
 def _report_config(language_counts):
     languages = sorted(name for name in language_counts if name)
     return {"language": " / ".join(languages) or "未知", "languages": languages,
-            "excluded": sorted(EXCLUDED), "rules": RULES,
+            "excluded": sorted(EXCLUDED | {"/".join(parts) for parts in EXCLUDED_TEST_DIRS}), "rules": RULES,
             "thresholds": {"cc": 10, "length": 50, "nesting": 4},
             "length_definition": "物理有效代码行，排除空行、纯注释及独立文档字符串；包含定义行与内层定义。非 Python 文件排除空行与纯注释行。",
-            "cc_definition": "Python：初始1；if/三元/assert +1；循环 +1（else再+1）；try按except数（else再+1）；布尔n项+n-1；推导式+1及if数；match非通配case+1。非 Python：初始1，按 if/for/while/case/catch/&&/||/?: 关键字计数。内层函数/类/lambda不计入外层。"}
+            "cc_definition": "Python：初始1；if/三元/assert +1；循环 +1（else再+1）；try按except数（else再+1）；布尔n项+n-1；推导式+1及if数；match非通配case+1、守卫+1。非 Python：初始1，按 if/for/while/case/catch/&&/||/??/?: 词法标记计数。内层函数/类/lambda不计入外层。"}
 
 
 def _parsed_symbols(records):

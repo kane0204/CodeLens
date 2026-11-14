@@ -1,6 +1,7 @@
 import type {
   AiReviewProgress,
   AiReviewResult,
+  ScopedReviewResult,
   AnalyzeResult,
   ExplainResult,
   ExplainTarget,
@@ -335,29 +336,41 @@ interface ReviewStreamEvent {
   done?: number;
   total?: number;
   label?: string;
-  result?: AiReviewResult;
+  result?: AiReviewResult | ScopedReviewResult;
   error?: string;
   error_id?: string;
 }
 
 export function reviewProject(
+  request: ReviewRequest & { scope: ScopedReviewResult["scope"] },
+  token: string,
+  onProgress: (progress: AiReviewProgress) => void,
+  signal: AbortSignal,
+): Promise<ScopedReviewResult>;
+export function reviewProject(
   request: ReviewRequest,
   token: string,
   onProgress: (progress: AiReviewProgress) => void,
   signal: AbortSignal,
-): Promise<AiReviewResult> {
+): Promise<AiReviewResult>;
+export function reviewProject(
+  request: ReviewRequest,
+  token: string,
+  onProgress: (progress: AiReviewProgress) => void,
+  signal: AbortSignal,
+): Promise<AiReviewResult | ScopedReviewResult> {
   return withLogging('api', '/api/review', {}, () =>
     reviewProjectInner(request, token, onProgress, signal),
   );
 }
 
 async function reviewProjectInner(
-  request: ReviewRequest,
+  request: ReviewRequest & { scope?: ScopedReviewResult["scope"] },
   token: string,
   onProgress: (progress: AiReviewProgress) => void,
   signal: AbortSignal,
-): Promise<AiReviewResult> {
-  const payload = withProvider({ project: request.project, files: request.files }, request.settings);
+): Promise<AiReviewResult | ScopedReviewResult> {
+  const payload = withProvider({ project: request.project, files: request.files, scope: request.scope }, request.settings);
   const response = await postJson('/api/review', payload, token, signal);
   if (!response.ok) {
     const data = await parseJson(response);
@@ -402,11 +415,11 @@ function reviewResult(event: ReviewStreamEvent, onProgress: (progress: AiReviewP
 async function readReviewStream(
   body: ReadableStream<Uint8Array>,
   onProgress: (progress: AiReviewProgress) => void,
-): Promise<AiReviewResult> {
+): Promise<AiReviewResult | ScopedReviewResult> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let finalResult: AiReviewResult | null = null;
+  let finalResult: AiReviewResult | ScopedReviewResult | null = null;
 
   const handleLine = (line: string) => {
     if (!line.trim()) return;

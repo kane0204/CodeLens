@@ -218,10 +218,13 @@ class CrashHookTests(unittest.TestCase):
         self.sink.flush.side_effect = OSError("disk full")
         second_sink = Mock()
         self.logger.handlers.append(second_sink)
-        try:
-            raise RuntimeError("process crashed")
-        except RuntimeError:
-            self.on_exit()
+        with redirect_stderr(io.StringIO()) as console:
+            try:
+                raise RuntimeError("process crashed")
+            except RuntimeError:
+                self.on_exit()
+        self.assertIn("log flush failed (OSError)", console.getvalue())
+        self.assertNotIn("disk full", console.getvalue())
         self.assertIn("event=process_exit", self.logger.error.call_args.args)
         self.assertIn("process_exit", self.logger.log.call_args.args)
         second_sink.flush.assert_called_once()

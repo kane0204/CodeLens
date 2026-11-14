@@ -254,31 +254,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
 
-        # If the browser aborts mid-review, keep the job running server-side:
-        # per-batch checkpoints let a later retry resume (see ai.explanation.review).
-        disconnected = False
-
         def emit(event):
-            nonlocal disconnected
             if event.get("type") == "progress":
-                # Long-running jobs: know which batch the process died on.
                 obs.log_event(logger, logging.INFO, "review.progress", request_id=rid,
                               stage=event.get("stage"), done=event.get("done"),
                               total=event.get("total"))
-            if disconnected:
-                return
-            try:
-                line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
-                self.wfile.write(line)
-                self.wfile.flush()
-                self.bytes_out = getattr(self, "bytes_out", 0) + len(line)
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
-                if not disconnected:
-                    obs.log_event(logger, logging.DEBUG, "stream_client_disconnected", request_id=rid)
-                disconnected = True
+            line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+            self.wfile.write(line)
+            self.wfile.flush()
+            self.bytes_out = getattr(self, "bytes_out", 0) + len(line)
 
         def fail(message):
-            emit({"type": "error", "error": message, "error_id": rid})
+            try:
+                emit({"type": "error", "error": message, "error_id": rid})
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                obs.log_event(logger, logging.DEBUG, "review_transport_closed", request_id=rid)
 
         obs.log_event(logger, logging.INFO, "review.start", request_id=rid)
         try:

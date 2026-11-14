@@ -1,16 +1,18 @@
 import { errorText, reviewProject } from '../api/client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, type Highlight } from '../state/AppState';
 import { FileTree } from '../components/FileTree';
 import { Icon } from '../components/Icon';
 import { ReviewMarkdown } from '../components/ReviewMarkdown';
 import { Button, Card, CardHeader, EmptyState } from '../components/Ui';
-import type { AiReviewResult, AnalyzeResult, FileInfo } from '../types';
+import type { AiReviewProgress, AiReviewResult, AnalyzeResult, FileInfo, ScopedReviewResult } from '../types';
+
+type ReviewActions = ReturnType<typeof useScopedReviews>;
 
 type LogicSection = AiReviewResult['sections']['logic'];
 
-function LogicToolbar({ section }: { section: LogicSection | undefined }) {
-  const { highlight, reviewBusy, reviewProgress, runReview, cancelReview, copyText } = useApp();
+function LogicToolbar({ section, actions }: { section: LogicSection | undefined; actions: ReviewActions }) {
+  const { highlight, reviewBusy, reviewProgress, cancelReview, copyText } = useApp();
   return (
 
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-[#fdfbf8] px-3 py-2">
@@ -18,16 +20,12 @@ function LogicToolbar({ section }: { section: LogicSection | undefined }) {
         size="sm"
         variant="primary"
         icon="play"
-        onClick={() => void runReview()}
-        disabled={reviewBusy}
+        onClick={() => void actions.runAll()}
+        disabled={reviewBusy || Boolean(actions.active) || !actions.pending}
       >
-        {section ? '重新生成解读' : '一键解读整个项目'}
+        {actions.paused ? '继续解读' : '一键解读所有文件和文件夹'}
       </Button>
-      {reviewBusy ? (
-        <Button size="sm" variant="danger" icon="stop" onClick={cancelReview}>
-          取消
-        </Button>
-      ) : null}
+      <ReviewPause actions={actions} reviewBusy={reviewBusy} cancelReview={cancelReview} />
       {section ? (
         <Button size="sm" variant="ghost" icon="copy" onClick={() => void copyText(section.markdown)}>
           复制解读
@@ -48,7 +46,20 @@ function LogicToolbar({ section }: { section: LogicSection | undefined }) {
   );
 }
 
-function LogicReport({ aiReview, section }: { aiReview: AiReviewResult; section: LogicSection }) {
+function ReviewPause({ actions, reviewBusy, cancelReview }: {
+  actions: ReviewActions;
+  reviewBusy: boolean;
+  cancelReview: () => void;
+}) {
+  if (!actions.active && !reviewBusy) return null;
+  return (
+    <Button size="sm" variant="ghost" onClick={actions.active ? actions.pause : cancelReview}>
+      暂停
+    </Button>
+  );
+}
+
+function LogicReport({ aiReview, section }: { aiReview: AiReviewResult | ScopedReviewResult; section: LogicSection }) {
   return (
     <div className="max-w-[900px]">
       <ReviewMarkdown markdown={section.markdown} citations={section.citations} />
@@ -66,7 +77,7 @@ function LogicReport({ aiReview, section }: { aiReview: AiReviewResult; section:
       ) : null}
       {aiReview.truncated ? (
         <p className="mt-2 rounded-[4px] border border-[#fed7aa] bg-[#fff7ed] px-3 py-1.5 text-[10.5px] text-warning">
-          模型输出达到长度限制，内容可能不完整，可重新生成。
+          阅读记录或模型输出达到长度限制，当前解读可能不完整。
         </p>
       ) : null}
     </div>
@@ -77,9 +88,9 @@ function LogicReviewPrompt() {
   return (
     <div className="flex h-full items-center justify-center">
       <div className="w-full max-w-[620px] rounded-[6px] border border-dashed border-[#ddd4c8] bg-[#faf8f4] px-6 py-7">
-        <h3 className="serif text-[15px] font-semibold text-ink">一键生成全项目逻辑解读</h3>
+        <h3 className="serif text-[15px] font-semibold text-ink">生成文件与文件夹解读</h3>
         <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
-          AI 通读全部已解析源码，串起入口、主流程与模块协作，同一份审查同时供给「设计检查」「风险评估」，互为说明。
+          一键解读会逐项处理已解析文件及其文件夹。完成后点击左侧文件或文件夹即可查看。
         </p>
         <ul className="mt-3 space-y-1.5 text-[11px] leading-relaxed text-muted">
           {['项目做什么、入口与主流程', '模块之间如何协作、数据如何流转', '异常边界与需要人工复核的地方'].map((item) => (
@@ -90,7 +101,7 @@ function LogicReviewPrompt() {
           ))}
         </ul>
         <p className="mt-3 text-[10.5px] text-faint">
-          在初始化页或「模型设置」中配置接口与模型；导入时配置好会自动生成。
+          在「模型设置」中配置接口与模型后即可开始解读。
         </p>
       </div>
     </div>
@@ -148,9 +159,10 @@ interface LogicFilePanelProps {
   selected: string;
   onSelectFolder: (path: string) => void;
   onSelectFile: () => void;
+  completed: ReadonlyMap<string, ScopedReviewResult>;
 }
 
-function LogicFilePanel({ result, selected, onSelectFolder, onSelectFile }: LogicFilePanelProps) {
+function LogicFilePanel({ result, selected, onSelectFolder, onSelectFile, completed }: LogicFilePanelProps) {
   const { treeSearch, setTreeSearch, selectFile } = useApp();
   return (
     <Card className="min-h-0">
@@ -166,6 +178,7 @@ function LogicFilePanel({ result, selected, onSelectFolder, onSelectFile }: Logi
           selectFile(path);
         }}
         onSelectFolder={onSelectFolder}
+        isReviewed={(kind, path) => completed.has(reviewKey(kind, path))}
       />
     </Card>
   );
@@ -178,12 +191,15 @@ export function LogicView() {
 }
 
 function LogicWorkspace({ result }: { result: AnalyzeResult }) {
-  const { file, highlight, aiReview, reviewError, openSettings } = useApp();
+  const { file, highlight, aiReview, reviewBusy, reviewError, openSettings } = useApp();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [folder, setFolder] = useState('');
   const targetFile = result.files.find((item) => item.path === file);
   useEffect(() => setFolder(''), [result, file, highlight]);
-  const section = aiReview?.sections.logic;
+  const actions = useScopedReviews(result);
+  const selected = reviewKey(folder ? 'folder' : 'file', folder || file);
+  const review = actions.reviews.get(selected);
+  const section = selectedSection(review, aiReview, actions.started);
 
   useEffect(() => {
     if (!highlight || !scrollRef.current) return;
@@ -196,7 +212,7 @@ function LogicWorkspace({ result }: { result: AnalyzeResult }) {
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
-      <LogicFilePanel result={result} selected={folder || file} onSelectFolder={setFolder} onSelectFile={() => setFolder('')} />
+      <LogicFilePanel result={result} selected={folder || file} onSelectFolder={setFolder} onSelectFile={() => setFolder('')} completed={actions.reviews} />
       <Card className="min-h-0">
         <CardHeader
           title="AI 逻辑解读"
@@ -208,14 +224,14 @@ function LogicWorkspace({ result }: { result: AnalyzeResult }) {
             </Button>
           }
         />
-        <LogicToolbar section={section} />
+        <LogicToolbar section={section} actions={actions} />
         <div ref={scrollRef} className="scroll-thin min-h-0 flex-1 overflow-auto px-4 py-3">
-          {reviewError ? (
+          {reviewError && (reviewBusy || !actions.started) ? (
             <div className="mb-3 max-w-[860px] rounded-[4px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11.5px] leading-relaxed text-danger" role="alert">
               {reviewError}
             </div>
           ) : null}
-          <ScopedLogicReview result={result} folder={folder} file={file} />
+          <SelectedLogicReview actions={actions} selected={selected} folder={folder} />
           {!folder && <SourcePreview targetFile={targetFile} highlight={highlight} />}
         </div>
       </Card>
@@ -223,72 +239,180 @@ function LogicWorkspace({ result }: { result: AnalyzeResult }) {
   );
 }
 
-interface ScopedLogicProps {
-  result: AnalyzeResult;
-  folder: string;
-  file: string;
+interface ReviewTarget {
+  key: string;
+  path: string;
+  kind: 'file' | 'folder';
+  files: { path: string; content: string }[];
 }
 
-function ScopedLogicReview({ result, folder, file }: ScopedLogicProps) {
-  return <SelectedLogicReview key={folder ? 'folder:' + folder : 'file:' + file} result={result} folder={folder} file={file} />;
+function reviewKey(kind: ReviewTarget['kind'], path: string) {
+  return kind + ':' + path;
 }
 
-function selectedSources(result: AnalyzeResult, folder: string, file: string) {
-  return result.files
-    .filter((item) => item.status === 'ok' && typeof item.source === 'string')
-    .filter((item) => folder ? item.path.startsWith(folder + '/') : item.path === file)
-    .map((item) => ({ path: item.path, content: item.source }));
+function reviewTargets(result: AnalyzeResult) {
+  const targets = new Map<string, ReviewTarget>();
+  for (const file of result.files) {
+    if (file.status !== 'ok' || typeof file.source !== 'string') continue;
+    const source = { path: file.path, content: file.source };
+    const key = reviewKey('file', file.path);
+    targets.set(key, { key, path: file.path, kind: 'file', files: [source] });
+    addFolderTargets(targets, source);
+  }
+  return targets;
 }
 
-function useSelectedReview(result: AnalyzeResult, folder: string, file: string) {
-  const { token, settings } = useApp();
-  const [review, setReview] = useState<AiReviewResult>();
+function addFolderTargets(targets: Map<string, ReviewTarget>, source: ReviewTarget['files'][number]) {
+  const folders = source.path.split('/').slice(0, -1);
+  let path = '';
+  for (const folder of folders) {
+    path = path ? path + '/' + folder : folder;
+    const key = reviewKey('folder', path);
+    const target = targets.get(key) ?? { key, path, kind: 'folder', files: [] };
+    target.files.push(source);
+    targets.set(key, target);
+  }
+}
+
+function useScopedReviews(result: AnalyzeResult) {
+  const { token, settings, scopedReviews: reviews, saveScopedReview } = useApp();
+  const targets = useMemo(() => reviewTargets(result), [result]);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [active, setActive] = useState('');
+  const [paused, setPaused] = useState(false);
+  const [progress, setProgress] = useState<AiReviewProgress>();
   const request = useRef<AbortController>();
-  const files = selectedSources(result, folder, file);
+
   useEffect(() => {
-    setReview(undefined);
-    setBusy(false);
+    setActive('');
     setError('');
-    return () => request.current?.abort();
+    setPaused(false);
+    return () => stopReview(request);
   }, [result]);
 
-  const selection = folder ? '文件夹 · ' + folder : '文件 · ' + file;
-  const project = result.project + ' · ' + selection;
 
-  async function run() {
-    if (busy || !files.length) return;
-    setError('');
+  function pause() {
+    stopReview(request);
+    setActive('');
+    setPaused(true);
+  }
+
+  async function generate(target: ReviewTarget, signal: AbortSignal) {
+    setActive(target.path);
+    setProgress(undefined);
+    const output = await reviewProject(scopedRequest(result.project, target, settings), token, (next) => { if (!signal.aborted) setProgress(next); }, signal);
+    if (!signal.aborted) saveScopedReview(result, target.key, output);
+  }
+
+  async function run(queue: ReviewTarget[]) {
+    if (request.current || !queue.length) return;
     const controller = new AbortController();
     request.current = controller;
-    setBusy(true);
+    setPaused(false);
+    setError('');
     try {
-      const output = await reviewProject({ project, files, settings }, token, () => {}, controller.signal);
-      if (!controller.signal.aborted) setReview(output);
+      const failed = await runQueue(queue, controller.signal, generate);
+      if (!controller.signal.aborted && failed.length) setError(failed.join("\n"));
     } catch (failure) {
       if (!controller.signal.aborted) setError(errorText(failure, '解读失败，请检查模型设置后重试。'));
     } finally {
-      if (!controller.signal.aborted) setBusy(false);
+      if (request.current === controller) {
+        request.current = undefined;
+        setActive('');
+      }
     }
   }
 
-  return { review, error, busy, canRun: files.length > 0, run };
+  return { reviews, error, active, progress, paused, pause, started: Boolean(active || error || paused || reviews.size),
+    runSelected: (key: string) => run([...targets.values()].filter((target) => target.key === key)),
+    pending: targets.size - reviews.size, total: targets.size,
+    runAll: () => run(pendingReviews(targets, reviews)), targets };
 }
 
-function SelectedLogicReview({ result, folder, file }: ScopedLogicProps) {
+function stopReview(request: { current: AbortController | undefined }) {
+  request.current?.abort();
+  request.current = undefined;
+}
+
+function scopedRequest(project: string, target: ReviewTarget, settings: ReturnType<typeof useApp>['settings']) {
+  const scope = target.kind === 'folder' ? '文件夹' : '文件';
+  return { project: project + ' · ' + scope + ' · ' + target.path, files: target.files, settings, scope: target.kind };
+}
+
+function pendingReviews(targets: Map<string, ReviewTarget>, reviews: ReadonlyMap<string, ScopedReviewResult>) {
+  return [...targets.values()].filter((target) => !reviews.has(target.key)).sort(compareReviewTargets);
+}
+
+function compareReviewTargets(a: ReviewTarget, b: ReviewTarget) {
+  if (a.kind !== b.kind) return a.kind === 'file' ? -1 : 1;
+  if (a.kind === 'file') return 0;
+  return b.path.split('/').length - a.path.split('/').length;
+}
+
+async function runQueue(queue: ReviewTarget[], signal: AbortSignal,
+  generate: (target: ReviewTarget, signal: AbortSignal) => Promise<void>) {
+  const failed: string[] = [];
+  for (const target of queue) {
+    if (signal.aborted) break;
+    const failure = await tryGenerate(target, signal, generate);
+    if (failure) failed.push(failure);
+  }
+  return failed;
+}
+
+async function tryGenerate(target: ReviewTarget, signal: AbortSignal,
+  generate: (target: ReviewTarget, signal: AbortSignal) => Promise<void>) {
+  try {
+    await generate(target, signal);
+  } catch (failure) {
+    if (signal.aborted) return;
+    const message = errorText(failure, '解读失败，请检查模型设置后重试。');
+    if (!/连接(?:失败|中断)|超时/.test(message)) throw failure;
+    return target.path + ' — ' + message;
+  }
+}
+
+interface SelectedLogicProps {
+  actions: ReviewActions;
+  selected: string;
+  folder: string;
+}
+
+function SelectedLogicReview({ actions, selected, folder }: SelectedLogicProps) {
   const { reviewBusy } = useApp();
-  const { review, error, busy, canRun, run } = useSelectedReview(result, folder, file);
-  const disabled = busy || reviewBusy || !canRun;
+  const { reviews, error, active, progress, total } = actions;
+  const review = reviews.get(selected);
+  const disabled = Boolean(active) || reviewBusy || !actions.targets.has(selected);
   return (
     <>
       <div className="mb-3 flex flex-wrap gap-2">
-        <Button size="sm" disabled={Boolean(folder) || disabled} onClick={() => void run()}>解读当前文件</Button>
-        <Button size="sm" disabled={!folder || disabled} onClick={() => void run()}>解读当前文件夹</Button>
+        <Button size="sm" disabled={Boolean(folder) || disabled} onClick={() => actions.runSelected(selected)}>解读当前文件</Button>
+        <Button size="sm" disabled={!folder || disabled} onClick={() => actions.runSelected(selected)}>解读当前文件夹</Button>
+        {total > 0 && <span className="text-[11px] text-muted">已解读 {reviews.size}/{total} 项</span>}
       </div>
-      {busy && <p role="status">正在解读 {folder || file}…</p>}
-      {error && <p role="alert" className="mb-3 text-danger">{error}</p>}
-      {review ? <LogicReport aiReview={review} section={review.sections.logic} /> : <LogicReviewContent />}
+      {active && <ScopedReviewProgress target={active} progress={progress} />}
+      {error && <p role="alert" className="mb-3 whitespace-pre-line text-danger">{error}</p>}
+      <SelectedReport review={review} folder={folder} started={actions.started} />
     </>
+  );
+}
+
+function selectedSection(review: ScopedReviewResult | undefined, projectReview: AiReviewResult | null, started: boolean) {
+  if (review) return review.sections.logic;
+  if (!started) return projectReview?.sections.logic;
+  return undefined;
+}
+
+function SelectedReport({ review, folder, started }: { review?: ScopedReviewResult; folder: string; started: boolean }) {
+  if (review) return <LogicReport aiReview={review} section={review.sections.logic} />;
+  if (folder || started) return <EmptyState compact title={folder ? "当前文件夹尚未解读" : "当前文件尚未解读"} />;
+  return <LogicReviewContent />;
+}
+
+function ScopedReviewProgress({ target, progress }: { target: string; progress?: AiReviewProgress }) {
+  return (
+    <p role="status">
+      正在解读 {target}{progress && <> · {progress.label} · {progress.done}/{progress.total}</>}
+    </p>
   );
 }

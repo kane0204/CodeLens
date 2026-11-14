@@ -132,3 +132,18 @@ test('byte formatting handles B, KB and MB transition points', () => {
   assert.equal(formatBytes(1024), '1.0 KB');
   assert.equal(formatBytes(1024 * 1024), '1.00 MB');
 });
+
+test('selection filters generated reports and local tests before applying limits', () => {
+  const result = prepareSelection([
+    source('CodeLens/tmp/coverage-tools/coverage/pytracer.py'),
+    source('CodeLens/htmlcov/frontend/prettify.js'),
+    source('CodeLens/doc/unit/test_engine.py'),
+    source('CodeLens/doc/frontend/example.jsx'),
+    source('CodeLens/docs/software/ddd/domain_model.py'),
+    source('CodeLens/src/tmp_parser.py'),
+  ]);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.files.map((file) => file.path), [
+    'docs/software/ddd/domain_model.py', 'src/tmp_parser.py',
+  ]);
+});

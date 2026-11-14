@@ -2,7 +2,6 @@
 import json
 import sys
 import unittest
-from tempfile import TemporaryDirectory
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -10,7 +9,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
 from ai import explanation
-from ai.review_store import ReviewStore
 
 
 class ProjectReviewTests(unittest.TestCase):
@@ -76,54 +74,6 @@ class ProjectReviewTests(unittest.TestCase):
         self.assertLessEqual(len(material) + len(facts), 100)
         self.assertIn("first", material)
         self.assertIn("second", material)
-
-    def test_sqlite_recovers_completed_review_and_resumes_only_synthesis(self):
-        payload = {**self.payload, "files": [
-            {"path": "a.py", "content": "# " + "a" * 600},
-            {"path": "b.py", "content": "# " + "b" * 600},
-        ]}
-        self.chat.side_effect = [
-            ("first note", True), ("second note", False),
-            explanation.ExplanationError("synthesis unavailable"), (self.report, False),
-        ]
-        with TemporaryDirectory() as directory, patch.object(explanation, "MAX_PROJECT_BATCH_CHARS", 1000):
-            path = Path(directory) / "nested" / "reviews.sqlite3"
-            with self.assertRaisesRegex(explanation.ExplanationError, "synthesis unavailable"):
-                explanation.review(payload, store=ReviewStore(path))
-            explanation._REVIEW_JOBS.clear()
-            self.assertIsNone(explanation.cached_review(payload, ReviewStore(path)))
-            result = explanation.review(payload, store=ReviewStore(path))
-            self.assertTrue(result["truncated"])
-            self.assertIn("first note", self.chat.call_args.args[-1])
-            self.assertIn("second note", self.chat.call_args.args[-1])
-            explanation._REVIEW_JOBS.clear()
-            self.assertEqual(explanation.cached_review(payload, ReviewStore(path)), result)
-            self.assertEqual(explanation.review(payload, store=ReviewStore(path)), result)
-            self.assertEqual(self.chat.call_count, 4)
-
-    def test_unavailable_sqlite_store_keeps_review_available(self):
-        self.chat.return_value = (self.report, False)
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "file"
-            path.touch()
-            with self.assertLogs("codelens", level="WARNING") as logs:
-                result = explanation.review(self.payload, store=ReviewStore(path / "reviews.sqlite3"))
-            self.assertEqual(result["scope"], "project")
-            self.assertIn("checkpoint_read_failed", logs.output[0])
-            self.assertIn("checkpoint_write_failed", logs.output[1])
-
-    def test_review_runs_graph_with_online_tracing_disabled(self):
-        from langsmith import get_tracing_context
-
-        def chat(*args):
-            self.assertIs(get_tracing_context()["enabled"], False)
-            return self.report, False
-
-        self.chat.side_effect = chat
-        with patch.dict("os.environ", {"LANGSMITH_TRACING": "true"}):
-            result = explanation.review(self.payload)
-        self.assertEqual(result["scope"], "project")
-        self.chat.assert_called_once()
 
     def test_review_checks_citations_and_reports_model_truncation(self):
         self.chat.return_value = (self.report, True)

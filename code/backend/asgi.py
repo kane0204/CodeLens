@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import sqlite3
 from pathlib import Path
 import sys
 import threading
@@ -19,16 +20,25 @@ from pydantic import BaseModel, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from backend import observability as obs, server as core
+from backend.history import DEFAULT_PATH as HISTORY_PATH, HistoryStore
 
 
 class SourceRequest(BaseModel):
     project: str = "代码项目"
     files: list[dict]
+    history_project: str | None = None
 
 
 class ReviewRequest(SourceRequest):
     provider: dict | None = None
     scope: str = "project"
+    history_run: int | None = None
+    use_history: bool = True
+
+
+class HistoryRequest(BaseModel):
+    project_id: str
+    analysis_id: int | None = None
 
 
 class ExplainRequest(ReviewRequest):
@@ -116,10 +126,11 @@ async def _observe(request, call_next):
     return response
 
 
-def _produce_review(request, payload, store, emit):
+def _produce_review(request, payload, store, emit, history):
     logger = obs.get_logger()
     rid = request.state.request_id
     obs.log_event(logger, logging.INFO, "review.start", request_id=rid)
+    options = {}
 
     def progress(event):
         obs.log_event(logger, logging.INFO, "review.progress", request_id=rid,
@@ -127,19 +138,25 @@ def _produce_review(request, payload, store, emit):
         emit(event)
 
     try:
-        result = core.explanation.review(_validate(payload, ReviewRequest), progress=progress, store=store)
+        payload = _validate(payload, ReviewRequest)
+        options = _review_history(history, payload)
+        _review_status(history, options, payload, "running")
+        result = core.explanation.review(payload, progress=progress, store=_review_store(store, history, options), **options)
+        _review_status(history, options, payload, "done", result)
         emit({"type": "result", "result": result})
         obs.log_event(logger, logging.INFO, "review.done", request_id=rid)
     except BrokenPipeError:
+        _review_status(history, options, payload, "paused")
         obs.log_event(logger, logging.DEBUG, "review_transport_closed", request_id=rid)
     except Exception as exc:
+        _review_status(history, options, payload, "failed")
         status, error = _error(request, exc)
         obs.log_event(logger, logging.WARNING, "review.failed", request_id=rid,
                       status=status, type=type(exc).__name__)
         emit({"type": "error", "error": error, "error_id": rid})
 
 
-async def _review_stream(request, payload, store):
+async def _review_stream(request, payload, store, history=None):
     loop = asyncio.get_running_loop()
     events = asyncio.Queue()
     stopped = threading.Event()
@@ -151,7 +168,7 @@ async def _review_stream(request, payload, store):
 
     def work():
         try:
-            _produce_review(request, payload, store, emit)
+            _produce_review(request, payload, store, emit, history)
         except BrokenPipeError:
             pass
         finally:
@@ -182,18 +199,42 @@ def _validate(payload, model):
     return payload
 
 
-def create_app(store):
+def _review_history(history, payload):
+    project, run = payload.get("history_project"), payload.get("history_run")
+    if history is None or not project or not run:
+        return {}
+    paths = [file.get("path") for file in payload["files"]]
+    memory = history.memory(project, run, paths, payload.get("use_history", True))
+    return {"memory": memory, "history_project": project}
+
+
+def _review_status(history, options, payload, status, result=None):
+    if options and payload.get("scope", "project") == "project":
+        try:
+            history.save_review(options["history_project"], payload["history_run"], status, result)
+        except (OSError, sqlite3.Error) as exc:
+            obs.log_event(obs.get_logger(), logging.WARNING, "history.write_failed", type=type(exc).__name__)
+
+
+def _review_store(store, history, options):
+    return history.checkpoints(options["history_project"]) if options else store
+
+
+def create_app(store, history=None):
     app = FastAPI(title="CodeLens API", version=core.VERSION, redoc_url=None)
     app.middleware("http")(_observe)
-    _routes(app, store)
+    _routes(app, store, history)
+    if history is not None:
+        _history_routes(app, history)
     return app
 
 
-def _routes(app, store):
+def _routes(app, store, history):
     @app.get("/api/status")
     def status():
+        capabilities = core.CAPABILITIES + (["project-history"] if history is not None else [])
         return {"ready": True, "engine_version": core.VERSION, "api_revision": core.API_REVISION,
-                "capabilities": core.CAPABILITIES, "token": core.TOKEN}
+                "capabilities": capabilities, "token": core.TOKEN}
 
     @app.get("/api/ai/status")
     def ai_status():
@@ -201,7 +242,10 @@ def _routes(app, store):
 
     @app.post("/api/analyze", openapi_extra=_schema(SourceRequest))
     def analyze(payload=Depends(_read_payload)):
-        return core.enrich(core.analyze(_validate(payload, SourceRequest)))
+        result = core.enrich(core.analyze(_validate(payload, SourceRequest)))
+        if history is not None and "history_project" in payload and result["summary"]["parsed"]:
+            result["history"] = history.record(result, payload["history_project"])
+        return result
 
     @app.post("/api/explain", openapi_extra=_schema(ExplainRequest))
     def explain(payload=Depends(_read_payload)):
@@ -213,11 +257,33 @@ def _routes(app, store):
 
     @app.post("/api/review", response_class=StreamingResponse, openapi_extra=_schema(ReviewRequest))
     def review(request: Request, payload=Depends(_read_payload)):
-        return StreamingResponse(_review_stream(request, payload, store), media_type="application/x-ndjson")
+        return StreamingResponse(_review_stream(request, payload, store, history), media_type="application/x-ndjson")
 
     @app.post("/api/review/cached", openapi_extra=_schema(ReviewRequest))
     def cached(payload=Depends(_read_payload)):
-        return {"result": core.explanation.cached_review(_validate(payload, ReviewRequest), store)}
+        payload = _validate(payload, ReviewRequest)
+        options = _review_history(history, payload)
+        return {"result": core.explanation.cached_review(payload, _review_store(store, history, options), **options)}
+
+
+def _history_routes(app, history):
+    @app.post("/api/history/projects")
+    def projects(payload=Depends(_read_payload)):
+        return history.projects()
+
+    @app.post("/api/history/runs", openapi_extra=_schema(HistoryRequest))
+    def runs(payload=Depends(_read_payload)):
+        return history.runs(_validate(payload, HistoryRequest)["project_id"])
+
+    @app.post("/api/history/detail", openapi_extra=_schema(HistoryRequest))
+    def detail(payload=Depends(_read_payload)):
+        request = HistoryRequest.model_validate(_validate(payload, HistoryRequest))
+        return history.detail(request.project_id, request.analysis_id)
+
+    @app.post("/api/history/delete", openapi_extra=_schema(HistoryRequest))
+    def delete(payload=Depends(_read_payload)):
+        history.delete(_validate(payload, HistoryRequest)["project_id"])
+        return {"deleted": True}
 
 
 def main():
@@ -230,7 +296,8 @@ def main():
     logger = obs.configure_logging(args.log_level, args.log_file, enable_file=not args.no_log_file)
     obs.install_crash_hooks(logger)
     store = core.ReviewStore(os.environ.get("CODELENS_REVIEW_DB") or core.DEFAULT_PATH)
-    uvicorn.run(create_app(store), host="127.0.0.1", port=args.port, access_log=False, proxy_headers=False)
+    history = HistoryStore(os.environ.get("CODELENS_HISTORY_DB") or HISTORY_PATH)
+    uvicorn.run(create_app(store, history), host="127.0.0.1", port=args.port, access_log=False, proxy_headers=False)
 
 
 if __name__ == "__main__":

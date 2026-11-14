@@ -3,6 +3,8 @@ import { useApp } from '../state/AppState';
 import { filesFromInput, formatBytes, LIMITS, SUPPORTED_LABEL } from '../lib/files';
 import { Icon, LensMark } from './Icon';
 import { Button, ProgressBar } from './Ui';
+import { errorText, historyProjects } from '../api/client';
+import type { HistoryProject } from '../types';
 
 function formatEta(seconds: number | null): string {
   if (seconds === null) return '估算中';
@@ -136,7 +138,7 @@ function UploadProgress() {
   );
 }
 
-function useFolderDrop(persistForm: () => boolean, autoReview: boolean) {
+function useFolderDrop(persistForm: () => boolean, autoReview: boolean, historyProject?: string | null) {
   const { busy, startFromTransfer } = useApp();
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -162,7 +164,7 @@ function useFolderDrop(persistForm: () => boolean, autoReview: boolean) {
     setDragging(false);
     if (busy) return;
     if (!persistForm()) return;
-    void startFromTransfer(event.dataTransfer, autoReview);
+    void startFromTransfer(event.dataTransfer, autoReview, historyProject);
   };
   return { dragging, onDragEnter, onDragLeave, onDragOver, onDrop };
 }
@@ -237,9 +239,12 @@ interface ProjectPickerProps {
 }
 
 function ProjectPicker({ persistForm, aiConfigured, autoReview }: ProjectPickerProps) {
-  const { status, startAnalysis } = useApp();
+  const { status, startAnalysis, capabilities, result } = useApp();
+  const enabled = capabilities?.includes('project-history');
+  const [project, setProject] = useState(result?.history?.project_id ?? '');
+  const historyProject = enabled ? project || null : undefined;
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const drop = useFolderDrop(persistForm, autoReview);
+  const drop = useFolderDrop(persistForm, autoReview, historyProject);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -254,6 +259,7 @@ function ProjectPicker({ persistForm, aiConfigured, autoReview }: ProjectPickerP
 
   return (
     <>
+      {enabled && <HistoryPicker project={project} setProject={setProject} />}
       {status === 'ready'
         ? <FolderDropZone drop={drop} aiConfigured={aiConfigured} onChoose={chooseFolder} />
         : <UploadConnectionPrompt />}
@@ -265,11 +271,50 @@ function ProjectPicker({ persistForm, aiConfigured, autoReview }: ProjectPickerP
         aria-label="选择项目文件夹"
         onChange={(event) => {
           if (!event.target.files?.length) return;
-          void startAnalysis(filesFromInput(event.target.files), autoReview);
+          void startAnalysis(filesFromInput(event.target.files), autoReview, historyProject);
           event.target.value = '';
         }}
       />
     </>
+  );
+}
+
+function HistoryPicker({ project, setProject }: {
+  project: string; setProject: React.Dispatch<React.SetStateAction<string>>;
+}) {
+  const { token, busy, go, useHistory, setUseHistory } = useApp();
+  const [projects, setProjects] = useState<HistoryProject[]>([]);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    void historyProjects(token, controller.signal).then((items) => {
+      if (controller.signal.aborted) return;
+      setProjects(items);
+      setProject((current) => items.some((item) => item.id === current) ? current : '');
+    }).catch((failure) => {
+      if (!controller.signal.aborted) setError(errorText(failure, '无法读取项目列表'));
+    });
+    return () => controller.abort();
+  }, [token, setProject]);
+  return (
+    <div className="mt-4 space-y-2 text-[11.5px] text-muted">
+      <label className="block">
+        <span className="mr-2 font-medium">保存到</span>
+        <select className="rounded border border-line bg-card p-1.5" value={project}
+          disabled={busy} onChange={(event) => setProject(event.target.value)}>
+          <option value="">新项目</option>
+          {projects.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id.slice(0, 6)}</option>)}
+        </select>
+      </label>
+      <label className="flex items-center gap-2">
+        <input type="checkbox" checked={useHistory} disabled={busy}
+          onChange={(event) => setUseHistory(event.target.checked)} />
+        AI 可参考本项目的历史问题摘要
+      </label>
+      <p className="text-faint">开启后，相关摘要会随综合审查发送到已配置的模型服务。</p>
+      {error && <p role="alert">{error}</p>}
+      <button type="button" className="text-primary hover:underline" disabled={busy} onClick={() => go('history')}>查看项目历史</button>
+    </div>
   );
 }
 

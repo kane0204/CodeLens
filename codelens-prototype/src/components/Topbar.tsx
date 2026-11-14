@@ -11,6 +11,7 @@ export const ROUTES: { key: Route; label: string }[] = [
   { key: 'metrics', label: '质量体检' },
   { key: 'solid', label: '设计检查' },
   { key: 'risks', label: '风险评估' },
+  { key: 'history', label: '项目历史' },
 ];
 
 export function Topbar() {

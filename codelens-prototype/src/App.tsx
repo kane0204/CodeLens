@@ -9,6 +9,7 @@ import { LogicView } from './views/LogicView';
 import { MetricsView } from './views/MetricsView';
 import { SolidView } from './views/SolidView';
 import { RisksView } from './views/RisksView';
+import { HistoryView } from './views/HistoryView';
 
 function WorkspaceView() {
   const { route } = useApp();
@@ -23,14 +24,16 @@ function WorkspaceView() {
       return <SolidView />;
     case 'risks':
       return <RisksView />;
+    case 'history':
+      return <HistoryView />;
     default:
       return <OverviewView />;
   }
 }
 
 export default function App() {
-  const { importing, result } = useApp();
-  const showUpload = importing || !result;
+  const { importing, result, route } = useApp();
+  const showUpload = route !== 'history' && (importing || !result);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-paper">

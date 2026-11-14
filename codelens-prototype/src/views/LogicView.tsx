@@ -26,6 +26,7 @@ function LogicToolbar({ section, actions }: { section: LogicSection | undefined;
         {actions.paused ? '继续解读' : '一键解读所有文件和文件夹'}
       </Button>
       <ReviewPause actions={actions} reviewBusy={reviewBusy} cancelReview={cancelReview} />
+      <HistoryReviewOption disabled={reviewBusy || Boolean(actions.active)} />
       {section ? (
         <Button size="sm" variant="ghost" icon="copy" onClick={() => void copyText(section.markdown)}>
           复制解读
@@ -44,6 +45,17 @@ function LogicToolbar({ section, actions }: { section: LogicSection | undefined;
       ) : null}
     </div>
   );
+}
+
+function HistoryReviewOption({ disabled }: { disabled: boolean }) {
+  const { result, useHistory, setUseHistory } = useApp();
+  if (!result?.history) return null;
+  return <label className="flex items-center gap-1 text-[10.5px] text-muted"
+    title="相关摘要会随综合审查发送到已配置的模型服务">
+    <input type="checkbox" checked={useHistory} disabled={disabled}
+      onChange={(event) => setUseHistory(event.target.checked)} />
+    参考项目历史
+  </label>;
 }
 
 function ReviewPause({ actions, reviewBusy, cancelReview }: {
@@ -69,6 +81,7 @@ function LogicReport({ aiReview, section }: { aiReview: AiReviewResult | ScopedR
           覆盖 {aiReview.source_files ?? 0} 个已解析文件{aiReview.batch_count > 1 ? ` · ${aiReview.batch_count} 批` : ''}
         </span>
         <span>解读基于完整源码与静态分析事实，点击引用回到源码核对</span>
+        {aiReview.history_references?.length ? <span>参考历史 {aiReview.history_references.map((id) => `#${id}`).join('、')}</span> : null}
       </div>
       {aiReview.omitted_context ? (
         <p className="mt-2 rounded-[4px] border border-[#fed7aa] bg-[#fff7ed] px-3 py-1.5 text-[10.5px] text-warning">
@@ -276,7 +289,7 @@ function addFolderTargets(targets: Map<string, ReviewTarget>, source: ReviewTarg
 }
 
 function useScopedReviews(result: AnalyzeResult) {
-  const { token, settings, scopedReviews: reviews, saveScopedReview } = useApp();
+  const { token, settings, scopedReviews: reviews, saveScopedReview, useHistory } = useApp();
   const targets = useMemo(() => reviewTargets(result), [result]);
   const [error, setError] = useState('');
   const [active, setActive] = useState('');
@@ -301,7 +314,7 @@ function useScopedReviews(result: AnalyzeResult) {
   async function generate(target: ReviewTarget, signal: AbortSignal) {
     setActive(target.path);
     setProgress(undefined);
-    const output = await reviewProject(scopedRequest(result.project, target, settings), token, (next) => { if (!signal.aborted) setProgress(next); }, signal);
+    const output = await reviewProject(scopedRequest(result, target, settings, useHistory), token, (next) => { if (!signal.aborted) setProgress(next); }, signal);
     if (!signal.aborted) saveScopedReview(result, target.key, output);
   }
 
@@ -331,19 +344,19 @@ function useScopedReviews(result: AnalyzeResult) {
 }
 
 function useRestoreScopedReview(result: AnalyzeResult, target: ReviewTarget | undefined, review?: ScopedReviewResult) {
-  const { capabilities, settings, token, saveScopedReview } = useApp();
+  const { capabilities, settings, token, saveScopedReview, useHistory } = useApp();
   useEffect(() => {
     if (!capabilities?.includes('review-checkpoints') || !target || review) return;
     const controller = new AbortController();
     const restore = async () => {
-      const saved = await readCachedReview(scopedRequest(result.project, target, settings), token, controller.signal);
+      const saved = await readCachedReview(scopedRequest(result, target, settings, useHistory), token, controller.signal);
       if (saved && !controller.signal.aborted) saveScopedReview(result, target.key, saved);
     };
     void restore().catch(() => {
       // A cache miss or unavailable local store leaves the manual review action available.
     });
     return () => controller.abort();
-  }, [capabilities, settings, token, saveScopedReview, result, target, review]);
+  }, [capabilities, settings, token, saveScopedReview, result, target, review, useHistory]);
 }
 
 function stopReview(request: { current: AbortController | undefined }) {
@@ -351,9 +364,11 @@ function stopReview(request: { current: AbortController | undefined }) {
   request.current = undefined;
 }
 
-function scopedRequest(project: string, target: ReviewTarget, settings: ReturnType<typeof useApp>['settings']) {
+function scopedRequest(result: AnalyzeResult, target: ReviewTarget, settings: ReturnType<typeof useApp>['settings'], useHistory: boolean) {
   const scope = target.kind === 'folder' ? '文件夹' : '文件';
-  return { project: project + ' · ' + scope + ' · ' + target.path, files: target.files, settings, scope: target.kind };
+  return { project: result.project + ' · ' + scope + ' · ' + target.path,
+    files: target.files, settings, scope: target.kind, history: result.history,
+    useHistory: result.history ? useHistory : undefined };
 }
 
 function pendingReviews(targets: Map<string, ReviewTarget>, reviews: ReadonlyMap<string, ScopedReviewResult>) {

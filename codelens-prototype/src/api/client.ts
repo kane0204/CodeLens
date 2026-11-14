@@ -8,6 +8,10 @@ import type {
   LlmSettings,
   SelectedFile,
   StatusInfo,
+  AnalysisHistory,
+  HistoryProject,
+  HistoryRun,
+  HistoryDetail,
 } from '../types';
 import { logger } from '../lib/logger';
 
@@ -196,6 +200,7 @@ export interface AnalyzeProgress {
 export interface AnalyzeRequest {
   project: string;
   files: SelectedFile[];
+  historyProject?: string | null;
 }
 
 export function analyzeProject(
@@ -222,7 +227,9 @@ async function analyzeProjectInner(
   if (signal.aborted) throw abortError();
   onProgress({ phase: 'upload', done: request.files.length, total: request.files.length });
 
-  const response = await postJson('/api/analyze', { project: request.project, files: encoded }, token, signal);
+  const response = await postJson('/api/analyze', {
+    project: request.project, files: encoded, history_project: request.historyProject,
+  }, token, signal);
   const data = await parseJson(response);
   if (!response.ok) {
     throw apiErrorFrom(data, `分析请求失败（${response.status}）`, response.status);
@@ -328,6 +335,35 @@ export interface ReviewRequest {
   project: string;
   files: { path: string; content: string }[];
   settings: LlmSettings;
+  history?: AnalysisHistory;
+  useHistory?: boolean;
+}
+
+async function historyRequest<T>(endpoint: string, body: object, token: string, signal: AbortSignal): Promise<T> {
+  const response = await postJson('/api/history/' + endpoint, body, token, signal);
+  const data = await parseJson(response);
+  if (!response.ok) throw apiErrorFrom(data, '读取或更新项目历史失败', response.status);
+  return data as T;
+}
+
+export const historyProjects = (token: string, signal: AbortSignal) =>
+  historyRequest<HistoryProject[]>('projects', {}, token, signal);
+
+export const historyRuns = (project: string, token: string, signal: AbortSignal) =>
+  historyRequest<HistoryRun[]>('runs', { project_id: project }, token, signal);
+
+export const historyDetail = (project: string, run: number, token: string, signal: AbortSignal) =>
+  historyRequest<HistoryDetail>('detail', { project_id: project, analysis_id: run }, token, signal);
+
+export const deleteHistory = (project: string, token: string, signal: AbortSignal) =>
+  historyRequest<{ deleted: boolean }>('delete', { project_id: project }, token, signal);
+
+function reviewPayload(request: ReviewRequest & { scope?: ScopedReviewResult['scope'] }) {
+  return withProvider({
+    project: request.project, files: request.files, scope: request.scope,
+    history_project: request.history?.project_id, history_run: request.history?.analysis_id,
+    use_history: request.useHistory,
+  }, request.settings);
 }
 
 export async function readCachedReview(
@@ -335,8 +371,7 @@ export async function readCachedReview(
   token: string,
   signal: AbortSignal,
 ): Promise<ScopedReviewResult | null> {
-  const { project, files, settings, scope } = request;
-  const payload = withProvider({ project, files, scope }, settings);
+  const payload = reviewPayload(request);
   const response = await postJson('/api/review/cached', payload, token, signal);
   const data = await parseJson(response);
   if (!response.ok) throw apiErrorFrom(data, '读取已保存的解读失败', response.status);
@@ -383,7 +418,7 @@ async function reviewProjectInner(
   onProgress: (progress: AiReviewProgress) => void,
   signal: AbortSignal,
 ): Promise<AiReviewResult | ScopedReviewResult> {
-  const payload = withProvider({ project: request.project, files: request.files, scope: request.scope }, request.settings);
+  const payload = reviewPayload(request);
   const response = await postJson('/api/review', payload, token, signal);
   if (!response.ok) {
     const data = await parseJson(response);

@@ -64,6 +64,119 @@ test('overview renders summary and opens or dismisses the export menu', () => {
   assert.equal(container.querySelector('[role="menu"]'), null);
 });
 
+test('history opens without a current import, loads an archived run and deletes the project', async () => {
+  mocked.context.route = 'history';
+  mocked.context.result = null;
+  mocked.context.capabilities = ['project-history'];
+  const requests = [];
+  const archived = {
+    report: projectResult(),
+    changes: { baseline: 1, rules_changed: true, added: ['new.py'], modified: [path], missing: ['gone.py'] },
+    issues: ['present', 'resolved', 'unverified', 'present', 'present'].map((state, index) => ({
+      ...finding, symbol: String(index), state, recurred: index === 3, change: index === 4 ? 'existing' : 'new',
+    })),
+    ai_status: 'done', ai: report,
+  };
+  const project = { name: 'demo', id: 'project-one', runs: 2 };
+  let deleted = false;
+  vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+    const endpoint = String(url).split('/').at(-1);
+    requests.push([endpoint, JSON.parse(options.body)]);
+    if (endpoint === 'delete') deleted = true;
+    const data = {
+      projects: deleted ? [] : [project],
+      runs: [{ id: 2, created: '2026-11-14', ai_status: 'done' }, { id: 1, created: '2026-11-13', ai_status: 'not_run' }],
+      detail: archived, delete: { deleted },
+    };
+    return Response.json(data[endpoint]);
+  }));
+  const { render, container } = mount();
+  await act(async () => render(<App />));
+  const row = [...container.querySelectorAll('button')].find((item) => item.textContent.includes('demo · projec'));
+  await act(async () => row.click());
+  assert.match(container.textContent, /修复后复发/);
+  assert.match(container.textContent, /已修复/);
+  assert.match(container.textContent, /待核实/);
+  assert.match(container.textContent, /当时的 AI 审查/);
+  const select = container.querySelector('select');
+  await act(async () => {
+    select.value = '1';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  assert.deepEqual(requests.at(-1), ['detail', { project_id: project.id, analysis_id: 1 }]);
+  vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+  click(button('删除项目历史', container));
+  assert.equal(deleted, false);
+  await act(async () => button('删除项目历史', container).click());
+  assert.match(container.textContent, /暂无分析记录/);
+  click(button('返回工作台', container));
+  assert.deepEqual(mocked.context.go.mock.lastCall, ['overview']);
+});
+
+test('history picker joins the selected project and recurring findings link to source', async () => {
+  mocked.context.capabilities = ['project-history'];
+  mocked.context.useHistory = true;
+  mocked.context.setUseHistory = vi.fn();
+  mocked.context.importing = true;
+  const project = { name: 'demo', id: 'project-one', runs: 2 };
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([project])));
+  const { render, container } = mount();
+  await act(async () => render(<App />));
+  const select = container.querySelector('select');
+  act(() => {
+    select.value = project.id;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  const input = container.querySelector('input[type="file"]');
+  const file = new File(['pass'], 'main.py', { type: 'text/plain' });
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
+  act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
+  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], true, project.id]);
+  click(container.querySelector('input[type="checkbox"]'));
+  assert.deepEqual(mocked.context.setUseHistory.mock.lastCall, [false]);
+  click(button('查看项目历史', container));
+  assert.deepEqual(mocked.context.go.mock.lastCall, ['history']);
+  mocked.context.importing = false;
+  mocked.context.route = 'metrics';
+  mocked.context.result.history = { project_id: project.id, analysis_id: 3,
+    recurring: [{ ...finding, streak: 3, first: 1, last: 3, recurred: false }] };
+  render(<App />);
+  assert.match(container.textContent, /连续出现于 3 个不同版本/);
+  click(button(`${finding.file}:${finding.line} · ${finding.rule_id}`, container));
+  assert.deepEqual(mocked.context.locateFinding.mock.lastCall, [finding.id]);
+});
+
+test('history reports service and deletion failures, and logic shows the memory setting and references', async () => {
+  mocked.context.capabilities = ['project-history'];
+  mocked.context.toast = vi.fn();
+  mocked.context.result.history = { project_id: 'demo', analysis_id: 3, recurring: [] };
+  const fail = () => Response.json({ error: '历史暂不可用' }, { status: 500 });
+  const fetch = vi.fn(async (url) => {
+    if (String(url).endsWith('/runs')) return Response.json([{ id: 3, created: '2026-11-14' }]);
+    return fail();
+  });
+  vi.stubGlobal('fetch', fetch);
+  const { render, container } = mount();
+  mocked.context.importing = true;
+  await act(async () => render(<App />));
+  assert.match(container.textContent, /历史暂不可用/);
+  mocked.context.route = 'history';
+  await act(async () => render(<App />));
+  assert.match(container.textContent, /历史暂不可用/);
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  await act(async () => button('删除项目历史', container).click());
+  assert.deepEqual(mocked.context.toast.mock.lastCall, ['历史暂不可用', 'error']);
+  mocked.context.importing = false;
+  mocked.context.route = 'logic';
+  mocked.context.aiReview = { ...report, history_references: [1, 2] };
+  mocked.context.useHistory = true;
+  mocked.context.setUseHistory = vi.fn();
+  await act(async () => render(<App />));
+  assert.match(container.textContent, /参考历史 #1、#2/);
+  click(container.querySelector('input[type="checkbox"]'));
+  assert.deepEqual(mocked.context.setUseHistory.mock.lastCall, [false]);
+});
+
 test('structure displays package and symbol rows, and opens the selected function', () => {
   mocked.context.route = 'structure';
   const result = mocked.context.result;
@@ -248,7 +361,7 @@ test('upload routes file selection and drops through settings validation and ren
   const file = new File(['pass'], 'main.py');
   Object.defineProperty(input, 'files', { value: [file], configurable: true });
   act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
-  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], true]);
+  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], true, undefined]);
   const dropZone = button('选择文件夹', container).parentElement;
   const dataTransfer = { items: [], files: [file] };
   for (const type of ['dragenter', 'dragover', 'dragleave', 'drop']) {
@@ -257,7 +370,7 @@ test('upload routes file selection and drops through settings validation and ren
     assert.equal(event.defaultPrevented, true);
   }
   assert.equal(dataTransfer.dropEffect, 'copy');
-  assert.deepEqual(mocked.context.startFromTransfer.mock.calls, [[dataTransfer, true]]);
+  assert.deepEqual(mocked.context.startFromTransfer.mock.calls, [[dataTransfer, true, undefined]]);
 
   Object.assign(mocked.context, {
     busy: true, phase: 'AI 正在分析', progress: 1, progressTotal: 3, eta: 61,
@@ -289,12 +402,12 @@ test('disabling automatic review hides fields and allows both import methods', (
   const file = new File(['pass'], 'main.py');
   Object.defineProperty(input, 'files', { value: [file], configurable: true });
   act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
-  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], false]);
+  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], false, undefined]);
   const dataTransfer = { items: [], files: [file] };
   act(() => button('选择文件夹', container).parentElement.dispatchEvent(
     Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer }),
   ));
-  assert.deepEqual(mocked.context.startFromTransfer.mock.lastCall, [dataTransfer, false]);
+  assert.deepEqual(mocked.context.startFromTransfer.mock.lastCall, [dataTransfer, false, undefined]);
   assert.equal(mocked.context.applySettings.mock.calls.length, 0);
   click(toggle);
   assert.equal(base().value, 'draft');

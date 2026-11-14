@@ -208,6 +208,7 @@ export interface SequenceInfo {
 }
 
 export interface AnalyzeResult {
+  history?: AnalysisHistory;
   schema_version?: string;
   engine_version?: string;
   project: string;
@@ -234,6 +235,43 @@ export interface AnalyzeResult {
   sequence?: SequenceInfo;
   special_risks?: SpecialRisks;
   language_counts?: Record<string, number>;
+}
+
+export interface HistoryProject {
+  id: string;
+  name: string;
+  runs: number;
+}
+
+export interface HistoryRun {
+  id: number;
+  version: string;
+  created: string;
+  ai_status: string;
+}
+
+export interface HistoricalIssue extends Finding {
+  symbol: string;
+  state: 'present' | 'resolved' | 'unverified';
+  change: 'new' | 'existing' | 'recurred' | 'absent';
+  first: number;
+  last: number;
+  streak: number;
+  recurred: boolean;
+}
+
+export interface AnalysisHistory {
+  project_id: string;
+  analysis_id: number;
+  recurring: HistoricalIssue[];
+}
+
+export interface HistoryDetail {
+  report: AnalyzeResult;
+  changes: { baseline: number | null; rules_changed?: boolean; added: string[]; modified: string[]; missing: string[] };
+  issues: HistoricalIssue[];
+  ai: AiReviewResult | null;
+  ai_status: string;
 }
 
 export interface ExplainCitation {
@@ -277,6 +315,7 @@ export interface AiReviewSection {
 }
 
 export interface AiReviewResult {
+  history_references?: number[];
   scope: 'project';
   model: string;
   project: string;
@@ -306,7 +345,7 @@ export interface LlmSettings {
   apiKey: string;
 }
 
-export type Route = 'overview' | 'structure' | 'logic' | 'metrics' | 'solid' | 'risks';
+export type Route = 'overview' | 'structure' | 'logic' | 'metrics' | 'solid' | 'risks' | 'history';
 
 export type GraphTab = 'calls' | 'dependencies' | 'inheritance' | 'chain';
 

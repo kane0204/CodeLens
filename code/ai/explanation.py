@@ -19,6 +19,7 @@ from langgraph.runtime import Runtime
 from langsmith import tracing_context
 
 from core_engine.engine import analyze
+from backend.history import memory_prompt
 from . import provider
 from .prompts import chat_messages
 
@@ -51,11 +52,13 @@ _REVIEW_JOBS = {}
 _REVIEW_LOCK = threading.Lock()
 
 
-def _review_fingerprint(result, endpoint, model, key, scope="project"):
+def _review_fingerprint(result, endpoint, model, key, scope="project", history_project=None, memory=()):
     """Same project content + same model config => same resumable job."""
     settings = ["review-v1", scope, endpoint, model, MAX_PROJECT_BATCH_CHARS,
                 MAX_REVIEW_SYNTHESIS_CHARS, result.get("project", ""),
                 hashlib.sha256(key.encode("utf-8")).hexdigest()]
+    if history_project:
+        settings.extend((history_project, memory))
     digest = hashlib.sha256(json.dumps(settings).encode("utf-8"))
     for record in result["files"]:
         if record.get("status") != "ok":
@@ -440,7 +443,7 @@ def _review_scope(payload):
     return scope
 
 
-def _review_project(result, endpoint, model, key, progress=None, job=None, scope="project"):
+def _review_project(result, endpoint, model, key, progress=None, job=None, scope="project", memory=()):
     records = [record for record in result["files"] if record["status"] == "ok"]
     if not records:
         raise ValueError("没有成功解析的源码，不能生成全项目审查")
@@ -449,7 +452,7 @@ def _review_project(result, endpoint, model, key, progress=None, job=None, scope
                "end_line": max(1, len(record["source"].splitlines())), "kind": "project"}
               for record in records]
     facts, omitted = _analysis_facts(result)
-    context = _ReviewContext(endpoint, model, key, progress, job)
+    context = _ReviewContext(endpoint, model, key, progress, job, memory)
     with tracing_context(enabled=False):
         review = _REVIEW_GRAPH.invoke(
             {"project": result["project"], "scope": scope, "batches": batches,
@@ -458,7 +461,8 @@ def _review_project(result, endpoint, model, key, progress=None, job=None, scope
     return {"scope": scope, "model": model, "project": result["project"],
             "source_files": len(records), "batch_count": len(batches),
             "context": ranges, "omitted_context": omitted,
-            "sections": review["sections"], "truncated": review["truncated"]}
+            "sections": review["sections"], "truncated": review["truncated"],
+            **review.get("history_metadata", {})}
 
 
 def _bounded_synthesis(notes, facts):
@@ -481,6 +485,7 @@ class _ReviewState(TypedDict, total=False):
     truncated: bool
     text: str
     sections: dict
+    history_metadata: dict
 
 
 @dataclass(frozen=True)
@@ -490,6 +495,7 @@ class _ReviewContext:
     key: str
     progress: object
     job: _ReviewJob | None
+    memory: tuple | list
 
     def emit(self, stage, done, total, label):
         if self.progress:
@@ -542,9 +548,11 @@ def _review_synthesize(state: _ReviewState, runtime: Runtime[_ReviewContext]):
         prompt = _review_prompt(project, len(state["ranges"]), material, facts, batch_count)
     else:
         prompt = _logic_prompt(scope, project, material, facts)
-    text, hit_limit = _chat(context.endpoint, context.model, context.key, system, prompt)
+    history, references = memory_prompt(context.memory, prompt)
+    text, hit_limit = _chat(context.endpoint, context.model, context.key, system, prompt + history)
     context.emit("review", total, total, "综合审查完成")
-    return {"text": text, "truncated": state["truncated"] or hit_limit}
+    return {"text": text, "truncated": state["truncated"] or hit_limit,
+            "history_metadata": {"history_references": references} if references else {}}
 
 
 def _review_sections(text, ranges, default_file, scope):
@@ -578,19 +586,19 @@ def _build_review_graph():
 _REVIEW_GRAPH = _build_review_graph()
 
 
-def review(payload, result=None, progress=None, store=None):
+def review(payload, result=None, progress=None, store=None, *, memory=(), history_project=None):
     """Resume the matching review from memory or the configured local store."""
     endpoint, model, key = _provider_config(payload)
     if result is None:
         result = analyze({"files": payload.get("files"), "project": payload.get("project")})
     scope = _review_scope(payload)
-    fingerprint = _review_fingerprint(result, endpoint, model, key, scope)
+    fingerprint = _review_fingerprint(result, endpoint, model, key, scope, history_project, memory)
     job, state = _claim_review_job(fingerprint, store)
     if state == "done":
         return job.result
     if state == "waiting":
         return _await_review(job, progress)
-    return _run_review_job(job, result, endpoint, model, key, progress, scope)
+    return _run_review_job(job, result, endpoint, model, key, progress, scope, memory)
 
 
 def _claim_review_job(fingerprint, store=None):
@@ -613,10 +621,10 @@ def _resume_job(previous, storage):
     return _ReviewJob(previous.notes, previous.truncated, storage)
 
 
-def cached_review(payload, store):
+def cached_review(payload, store, *, memory=(), history_project=None):
     endpoint, model, key = _provider_config(payload)
     result = analyze({"files": payload.get("files"), "project": payload.get("project")})
-    fingerprint = _review_fingerprint(result, endpoint, model, key, _review_scope(payload))
+    fingerprint = _review_fingerprint(result, endpoint, model, key, _review_scope(payload), history_project, memory)
     with _REVIEW_LOCK:
         job = _REVIEW_JOBS.get(fingerprint) or _restore_job(store, fingerprint)
         return job.result if job is not None else None
@@ -663,9 +671,9 @@ def _await_review(job, progress):
     raise ExplanationError(job.error or "AI 审查失败；未生成替代结论")
 
 
-def _run_review_job(job, result, endpoint, model, key, progress, scope):
+def _run_review_job(job, result, endpoint, model, key, progress, scope, memory):
     try:
-        output = _review_project(result, endpoint, model, key, progress, job, scope)
+        output = _review_project(result, endpoint, model, key, progress, job, scope, memory)
     except ExplanationError as exc:
         _finish_review(job, "failed", error=str(exc))
         raise

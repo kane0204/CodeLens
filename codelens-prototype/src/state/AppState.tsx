@@ -50,6 +50,8 @@ interface AppContextValue {
   result: AnalyzeResult | null;
   route: Route;
   importing: boolean;
+  useHistory: boolean;
+  setUseHistory: (enabled: boolean) => void;
   busy: boolean;
   phase: string;
   progress: number;
@@ -88,8 +90,8 @@ interface AppContextValue {
   sourceTarget: SourceTarget | null;
   connect: () => Promise<void>;
   go: (route: Route) => void;
-  startAnalysis: (raw: RawFile[], autoReview?: boolean) => Promise<void>;
-  startFromTransfer: (transfer: DataTransfer, autoReview?: boolean) => Promise<void>;
+  startAnalysis: (raw: RawFile[], autoReview?: boolean, historyProject?: string | null) => Promise<void>;
+  startFromTransfer: (transfer: DataTransfer, autoReview?: boolean, historyProject?: string | null) => Promise<void>;
   cancelAnalysis: () => void;
   requestReimport: () => void;
   confirmReimportAction: () => void;
@@ -183,7 +185,7 @@ function validBaseUrl(value: string): boolean {
 
 function readHash(): Route {
   const hash = window.location.hash.replace(/^#/, '');
-  const allowed: Route[] = ['overview', 'structure', 'logic', 'metrics', 'solid', 'risks'];
+  const allowed: Route[] = ['overview', 'structure', 'logic', 'metrics', 'solid', 'risks', 'history'];
   return (allowed as string[]).includes(hash) ? (hash as Route) : 'overview';
 }
 
@@ -208,6 +210,7 @@ function functionAtLine(result: AnalyzeResult, file: AnalyzeResult['files'][numb
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const [useHistory, setUseHistory] = useState(true);
   const [status, setStatus] = useState<ConnectionState>('connecting');
   const [token, setToken] = useState('');
   const [version, setVersion] = useState('');
@@ -295,9 +298,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const go = useCallback(
     (next: Route) => {
-      if (!result) {
+      if (!result && next !== 'history') {
         setImporting(true);
-        return;
       }
       setDrawerNode(null);
       if (window.location.hash === `#${next}`) setRoute(next);
@@ -372,7 +374,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       progressClock.current = performance.now();
       try {
         const review = await reviewProject(
-          { project: data.project, files, settings: modelSettings },
+          { project: data.project, files, settings: modelSettings,
+            ...(data.history && { history: data.history, useHistory }) },
           token,
           reportReviewProgress,
           controller.signal,
@@ -399,7 +402,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [token, reportReviewProgress],
+    [token, reportReviewProgress, useHistory],
   );
 
   const announceAnalysis = useCallback(async (data: AnalyzeResult, autoReview: boolean) => {
@@ -426,7 +429,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [executeReview, toast]);
 
   const runWithRaw = useCallback(
-    async (raw: RawFile[], autoReview = true) => {
+    async (raw: RawFile[], autoReview = true, historyProject?: string | null) => {
       if (busy || status !== 'ready') return;
       const prepared = prepareSelection(raw);
       setErrors(prepared.errors);
@@ -449,7 +452,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       try {
         const data = await analyzeProject(
-          { project: prepared.project, files: prepared.files },
+          { project: prepared.project, files: prepared.files, historyProject },
           token,
           reportAnalysisProgress,
           controller.signal,
@@ -476,17 +479,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const startAnalysis = useCallback(
-    async (raw: RawFile[], autoReview = true) => {
-      await runWithRaw(raw, autoReview);
+    async (raw: RawFile[], autoReview = true, historyProject?: string | null) => {
+      await runWithRaw(raw, autoReview, historyProject);
     },
     [runWithRaw],
   );
 
   const startFromTransfer = useCallback(
-    async (transfer: DataTransfer, autoReview = true) => {
+    async (transfer: DataTransfer, autoReview = true, historyProject?: string | null) => {
       try {
         const raw = await filesFromDataTransfer(transfer, new AbortController().signal);
-        await runWithRaw(raw, autoReview);
+        await runWithRaw(raw, autoReview, historyProject);
     } catch (error) {
       logger.warn('analyze', 'drop.read_failed', { message: errorText(error, '') });
       setErrors([errorText(error, '读取拖拽目录失败，请重试。')]);
@@ -718,6 +721,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       result,
       route,
       importing,
+      useHistory,
+      setUseHistory,
       busy,
       phase,
       progress,
@@ -797,6 +802,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       result,
       route,
       importing,
+      useHistory,
       busy,
       phase,
       progress,

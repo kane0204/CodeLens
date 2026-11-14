@@ -2,9 +2,11 @@
 import asyncio
 import json
 import runpy
+import sqlite3
 from pathlib import Path
 import sys
 import threading
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -48,6 +50,42 @@ class FastApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("requestBody", json.loads(body)["paths"]["/api/analyze"]["post"])
         status, body = await self.request("POST", "/api/analyze", self.payload)
         self.assertEqual(json.loads(body)["summary"]["parsed"], 1)
+
+    async def test_project_history_endpoints_and_review_archive(self):
+        directory = self.enterContext(TemporaryDirectory())
+        history = asgi.HistoryStore(Path(directory) / "history.sqlite3")
+        self.app = asgi.create_app(self.store, history)
+        status, body = await self.request("GET", "/api/status")
+        self.assertIn("project-history", json.loads(body)["capabilities"])
+        status, body = await self.request("POST", "/api/analyze", {**self.payload, "history_project": None})
+        self.assertEqual(status, 200)
+        recorded = json.loads(body)["history"]
+        project = {"project_id": recorded["project_id"], "analysis_id": recorded["analysis_id"]}
+        review = {**self.payload, "history_project": project["project_id"], "history_run": project["analysis_id"],
+                  "provider": {"base_url": "https://model.invalid", "model": "mock"}}
+        model = ('{"logic":"用途","design":"设计","risks":"风险"}', False)
+        with patch.object(server.explanation, "_chat", return_value=model):
+            status, body = await self.request("POST", "/api/review", review)
+        self.assertEqual(status, 200)
+        output = json.loads(body.splitlines()[-1])["result"]
+        _, body = await self.request("POST", "/api/review/cached", review)
+        self.assertEqual(json.loads(body)["result"], output)
+        _, body = await self.request("POST", "/api/history/projects", {})
+        self.assertEqual(json.loads(body)[0]["runs"], 1)
+        _, body = await self.request("POST", "/api/history/runs", project)
+        self.assertEqual(json.loads(body)[0]["ai_status"], "done")
+        _, body = await self.request("POST", "/api/history/detail", project)
+        self.assertEqual(json.loads(body)["ai"], output)
+        _, body = await self.request("POST", "/api/history/delete", project)
+        self.assertTrue(json.loads(body)["deleted"])
+        status, _ = await self.request("POST", "/api/history/detail", project)
+        self.assertEqual(status, 400)
+
+    def test_history_archive_failure_is_logged(self):
+        with patch.object(asgi.HistoryStore, "save_review", side_effect=sqlite3.OperationalError), \
+                patch.object(asgi.obs, "log_event") as log:
+            asgi._review_status(asgi.HistoryStore(), {"history_project": "project"}, {"history_run": 1}, "done")
+        self.assertEqual(log.call_args.args[2], "history.write_failed")
 
     async def test_invalid_inputs_preserve_status_and_request_id(self):
         cases = [

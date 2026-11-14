@@ -4,6 +4,7 @@ import { Icon, type IconName } from '../components/Icon';
 import { Badge, Button, Card, CardHeader, Tag } from '../components/Ui';
 import { SEVERITY_WEIGHT, confidenceLabel, evidenceLabel, ruleName } from '../lib/format';
 import type { AnalyzeResult, Finding, FunctionInfo, Severity } from '../types';
+import { RecurringIssues } from './HistoryView';
 
 const CC_THRESHOLD = 10;
 const NESTING_THRESHOLD = 4;
@@ -282,6 +283,7 @@ export function MetricsView() {
           <MetricWarning key={smell.title} smell={smell} />
         ))}
       </div>
+      <RecurringIssues items={result.history?.recurring ?? []} />
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <RuleFindings findings={result.findings} />
         <div className="flex min-h-0 flex-col gap-3">

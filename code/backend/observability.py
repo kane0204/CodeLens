@@ -43,7 +43,8 @@ BACKUP_COUNT = 5
 LEVELS = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING,
           "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
 _API_PATHS = frozenset({"/api/status", "/api/ai/status", "/api/analyze", "/api/ai",
-                        "/api/explain", "/api/review", "/api/review/cached"})
+                        "/api/explain", "/api/review", "/api/review/cached", "/api/history/projects",
+                        "/api/history/runs", "/api/history/detail", "/api/history/delete"})
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 # Defence in depth: even if a future call site passes a raw payload, scrub

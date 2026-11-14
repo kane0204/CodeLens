@@ -1,6 +1,6 @@
 # 本地分析工作台（当前实现）
 
-Python 3.11+，后端仅使用标准库；界面是独立的 `codelens-prototype/`（Vite + React，`localhost:5173`）。`127.0.0.1:18766` 只提供 JSON API 与 NDJSON 进度流，不托管任何静态页面。启动方式见仓库根 README；修改后端后需停止旧进程并重启。
+后端使用 Python 3.11+ 与 FastAPI，在 `127.0.0.1:18766` 提供 JSON API、NDJSON 进度流和 `/docs` 接口文档。界面由 `codelens-prototype/` 使用 Vite 和 React 在 `localhost:5173` 提供。启动方式见仓库根 README。修改后端后需停止旧进程并重启。
 
 ## 架构与数据流
 
@@ -27,6 +27,7 @@ Python 3.11+，后端仅使用标准库；界面是独立的 `codelens-prototype
 | GET `/api/ai/status` | AI 能力状态 |
 | POST `/api/analyze` | 静态分析及派生质量数据 |
 | POST `/api/review` | AI 项目审查，`application/x-ndjson` 流式返回 `progress` / `result` / `error`，支持断点续跑 |
+| POST `/api/review/cached` | 读取相同源码和模型配置下已完成的审查结果 |
 | POST `/api/explain` | 单文件 / 单函数自然语言解读（兼容保留，当前界面主要使用 `/api/review`） |
 | POST `/api/ai` | 旧结构化 AI skill 规则表达层（兼容保留） |
 

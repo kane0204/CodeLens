@@ -285,7 +285,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
       setStatus('offline');
       setToken('');
-      setErrors(['分析服务未连接，请在项目根目录启动 python -B code/backend/server.py']);
+      setErrors(['分析服务未连接，请在项目根目录运行 CodeLens 启动脚本后重试。']);
     }
   }, []);
 

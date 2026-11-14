@@ -59,26 +59,28 @@ CodeLens 的目标是**把 AI 生成的代码从黑盒变成可审查对象**：
 
 ## 快速开始
 
-需要 Python 3.11+ 与 Node 18+。后端服务仅使用 Python 标准库；界面是独立的 Vite + React 应用。
+需要 Python 3.11+ 与 Node.js 22.12+（22 系列）或 24+。后端使用 FastAPI，AI 审查使用 LangGraph 和 LangChain Core，界面使用 Vite + React。
 
-**一键启动（推荐）**：Windows 双击 `start-codelens.cmd`，macOS/Linux 运行 `sh start-codelens.sh`。脚本会在首次运行时安装前端依赖，同时启动后端 API（18766）与 React 界面（5173），并自动打开浏览器。
+**一键启动（推荐）**。Windows 双击 `start-codelens.cmd`，macOS/Linux 运行 `sh start-codelens.sh`。脚本使用项目的 `.venv`，按需安装后端和前端依赖，启动后端 API（18766）与 React 界面（5173），并自动打开浏览器。
 
 手动启动：
 
 ```bash
-python -B code/backend/server.py          # 终端 1：API，127.0.0.1:18766
+python -m pip install -r requirements-backend.txt
+python -B code/backend/asgi.py          # 终端 1：API，127.0.0.1:18766
 cd codelens-prototype && npm install && npm run dev   # 终端 2：界面，localhost:5173
 ```
 
-界面地址是 [http://localhost:5173](http://localhost:5173)；18766 只提供 JSON API，直接打开会返回 404。若后端端口被占用，用 `--port 18767` 启动并给前端设置 `VITE_API_TARGET=http://127.0.0.1:18767`。
+界面地址是 [http://localhost:5173](http://localhost:5173)；18766 提供 FastAPI 接口和 /docs 文档。若后端端口被占用，用 `--port 18767` 启动并给前端设置 `VITE_API_TARGET=http://127.0.0.1:18767`。
 
 静态分析仅在本机服务内存中完成，不执行或导入目标项目。导入时选择的项目源码会分批发送到配置的模型服务用于 AI 项目审查；未配置模型或审查失败时静态结果照常可用，不使用模板替代失败结果。最多 200 个文件、请求体 12 MB；默认排除测试、虚拟环境和构建目录。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
 
-AI 项目审查：在初始化页填写兼容 chat/completions 的 Base URL、模型名称和 API Key，选择项目文件夹后自动完成「静态分析 → AI 审查」。审查结果分为逻辑说明、设计检查、风险评估三段并共享同一份阅读记录；审查意外中断后重新生成会从服务端断点续跑。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。详细范围见 [AI 逻辑解读说明](docs/software/ai-logic-explanation.md)。
+开启自动 AI 审查并填写兼容 chat/completions 的 Base URL、模型名称和 API Key 后，导入文件夹会依次执行静态分析和 AI 审查。逻辑说明、设计检查、风险评估共用同一份阅读记录。审查中断后可以从服务端断点继续。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。详细范围见 [AI 逻辑解读说明](docs/software/ai-logic-explanation.md)。
 
 单元测试集中在 [doc](doc/README.md)，包含 Python 和前端的运行命令、覆盖率报告和验收方法。
 
 ```bash
+python -m pip install -r doc/requirements-test.txt
 python -B -m unittest discover -s doc/unit -v
 ```
 
@@ -97,6 +99,8 @@ npm run build
 python -B -m unittest discover -s tests/integration -v
 python -B tests/evaluate_solid.py
 ```
+
+API 文档可在本机访问 [Swagger UI](http://127.0.0.1:18766/docs)。POST 使用本机来源和状态接口返回的访问令牌。
 
 ## 项目结构
 

@@ -19,6 +19,7 @@ import urllib.error
 import urllib.request
 
 from . import contract
+from .prompts import chat_messages
 
 DEFAULT_TIMEOUT = 20.0
 MAX_RESPONSE_BYTES = 256 * 1024
@@ -106,10 +107,7 @@ class HttpProvider(Provider):
         body = {
             "model": self.model,
             "temperature": 0,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": skill.prompt(ctx)},
-            ],
+            "messages": chat_messages(SYSTEM_PROMPT, skill.prompt(ctx)),
         }
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(self.endpoint, data=payload, method="POST")

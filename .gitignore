@@ -54,6 +54,7 @@ secrets/
 logs/
 data/*.db
 data/*.sqlite3
+data/*.sqlite3-*
 
 # ---- 临时文件 ----
 tmp/

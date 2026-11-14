@@ -13,6 +13,13 @@ from ai import explanation, provider
 
 
 class ExplainTests(unittest.TestCase):
+    def test_model_message_template_preserves_source_braces(self):
+        source = 'const data = {"name": "{value}"};'
+        self.assertEqual(explanation.chat_messages("system {literal}", source), [
+            {"role": "system", "content": "system {literal}"},
+            {"role": "user", "content": source},
+        ])
+
     def setUp(self):
         self.payload = {
             "project": "demo",

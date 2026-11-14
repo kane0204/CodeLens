@@ -26,12 +26,13 @@ from ai import provider as ai_provider
 from ai import runner as ai_runner
 from ai import skills as ai_skills
 from ai import explanation
+from ai.review_store import DEFAULT_PATH, ReviewStore
 from backend import observability as obs
 
 # 18766 只提供 JSON API；界面是独立的 codelens-prototype（Vite，5173）。
 TOKEN = secrets.token_urlsafe(32)
 API_REVISION = 2
-CAPABILITIES = ["analyze", "explain", "explain-context", "project-review", "class-metrics",
+CAPABILITIES = ["analyze", "explain", "explain-context", "project-review", "review-checkpoints", "class-metrics",
                 "duplicates", "class-relations", "multi-language", "special-risks"]
 MAX_BODY = 12 * 1024 * 1024
 MAX_AI_TARGETS = ai_runner.MAX_TARGETS
@@ -272,7 +273,7 @@ class Handler(BaseHTTPRequestHandler):
 
         obs.log_event(logger, logging.INFO, "review.start", request_id=rid)
         try:
-            result = explanation.review(payload, progress=emit)
+            result = self._review(payload, emit)
             emit({"type": "result", "result": result})
             batches = result.get("batch_count") if isinstance(result, dict) else None
             obs.log_event(logger, logging.INFO, "review.done", request_id=rid, batches=batches)
@@ -340,6 +341,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_data(200, ai_status())
         return self.send_data(404,{"error":"接口不存在；界面请访问 http://localhost:5173"})
 
+    def _review(self, payload, progress):
+        store = getattr(self.server, "review_store", None)
+        if store is None:
+            return explanation.review(payload, progress=progress)
+        return explanation.review(payload, progress=progress, store=store)
+
     def handle_post(self):
         logger = obs.get_logger()
         if not self._post_allowed():
@@ -347,7 +354,7 @@ class Handler(BaseHTTPRequestHandler):
                           request_id=self.request_id, reason="guard")
             return self.send_data(403,{"error":"请从本机 CodeLens 页面发起分析"})
         path = self.request_path()
-        if path not in ("/api/analyze", "/api/ai", "/api/explain", "/api/review"):
+        if path not in ("/api/analyze", "/api/ai", "/api/explain", "/api/review", "/api/review/cached"):
             return self.send_data(404,{"error":"接口不存在"})
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
             return self.send_data(415,{"error":"仅支持 JSON 请求"})
@@ -399,6 +406,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_data(200, explanation.explain(payload))
         if path == "/api/review":
             return self.stream_review(payload)
+        if path == "/api/review/cached":
+            return self.send_data(200, {"result": explanation.cached_review(payload, getattr(self.server, "review_store", None))})
         if path == "/api/ai":
             return self.send_data(200, ai_analyze(payload))
         return self.send_data(200, enrich(analyze(payload)))
@@ -435,6 +444,7 @@ def main():
         obs.log_event(logger, logging.ERROR, "startup_failed", port=args.port,
                       type=type(exc).__name__)
         raise SystemExit(f"无法启动端口 {args.port}，可使用 --port 更换端口：{exc}")
+    server.review_store = ReviewStore(os.environ.get("CODELENS_REVIEW_DB") or DEFAULT_PATH)
     print(f"CodeLens {VERSION} API: http://127.0.0.1:{server.server_port} (JSON only)",flush=True)
     print("Open the UI at http://localhost:5173 (see README). Ctrl+C to stop.",flush=True)
     active = obs.active_log_file()

@@ -9,10 +9,11 @@ import { logger } from '../../codelens-prototype/src/lib/logger.ts';
 import { button, click, mount, typeValue } from './dom.mjs';
 import { designFinding, finding, fn, path, projectResult, report } from './fixtures.mjs';
 
-const mocked = vi.hoisted(() => ({ context: {}, selectedReview: vi.fn() }));
+const mocked = vi.hoisted(() => ({ context: {}, selectedReview: vi.fn(), cachedReview: vi.fn() }));
 vi.mock('../../codelens-prototype/src/api/client.ts', async (original) => ({
   ...await original(),
   reviewProject: mocked.selectedReview,
+  readCachedReview: mocked.cachedReview,
 }));
 vi.mock('../../codelens-prototype/src/state/AppState.tsx', () => ({
   useApp: () => mocked.context,
@@ -524,4 +525,28 @@ test('batch reviews later files after a transport error and marks finished targe
   assert.match(container.querySelector('[role="alert"]').textContent, /src\/main.py.*连接中断/);
   assert.doesNotMatch(container.textContent, /旧项目审查错误/);
   assert.match(container.querySelector('button[title="src/nested/helper.py"]').textContent, /已解读/);
+});
+
+test('logic restores a saved file review after reimport without starting a model request', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local', capabilities: ['review-checkpoints'] });
+  const scoped = { ...report, scope: 'file', sections: {
+    logic: { ...report.sections.logic, markdown: '已保存的文件解读' },
+  } };
+  mocked.selectedReview.mockClear();
+  mocked.cachedReview.mockResolvedValueOnce(scoped);
+  const { render, container } = mount();
+  await act(async () => render(<App />));
+  render(<App />);
+  assert.match(container.textContent, /已保存的文件解读/);
+  assert.match(container.textContent, /已解读 1\/2 项/);
+  assert.equal(mocked.selectedReview.mock.calls.length, 0);
+  assert.equal(mocked.cachedReview.mock.lastCall[0].scope, 'file');
+});
+
+test('a failed cache lookup leaves manual generation available', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local', capabilities: ['review-checkpoints'] });
+  mocked.cachedReview.mockRejectedValueOnce(new Error('offline'));
+  const { render, container } = mount();
+  await act(async () => render(<App />));
+  assert.equal(button('解读当前文件', container).disabled, false);
 });

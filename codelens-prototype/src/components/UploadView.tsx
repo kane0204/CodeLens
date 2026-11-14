@@ -220,9 +220,7 @@ function UploadConnectionPrompt() {
       <div className="flex items-start gap-2 text-[12px] text-danger">
         <Icon name="alert" size={15} className="mt-0.5 shrink-0" />
         <p className="leading-relaxed">
-          分析服务未连接。请在项目根目录运行
-          <code className="num mx-1 rounded bg-white px-1 py-0.5 text-[11px]">python -B code/backend/server.py</code>
-          后重试。
+          分析服务未连接。请在项目根目录运行 CodeLens 启动脚本后重试。
         </p>
       </div>
       <Button className="mt-4" variant="primary" icon="refresh" onClick={() => void connect()}>

@@ -1,1 +1,2 @@
+-r ../requirements-backend.txt
 coverage==7.17.2

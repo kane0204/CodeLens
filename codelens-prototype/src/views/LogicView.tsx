@@ -1,4 +1,4 @@
-import { errorText, reviewProject } from '../api/client';
+import { errorText, readCachedReview, reviewProject } from '../api/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, type Highlight } from '../state/AppState';
 import { FileTree } from '../components/FileTree';
@@ -199,6 +199,7 @@ function LogicWorkspace({ result }: { result: AnalyzeResult }) {
   const actions = useScopedReviews(result);
   const selected = reviewKey(folder ? 'folder' : 'file', folder || file);
   const review = actions.reviews.get(selected);
+  useRestoreScopedReview(result, actions.targets.get(selected), review);
   const section = selectedSection(review, aiReview, actions.started);
 
   useEffect(() => {
@@ -327,6 +328,22 @@ function useScopedReviews(result: AnalyzeResult) {
     runSelected: (key: string) => run([...targets.values()].filter((target) => target.key === key)),
     pending: targets.size - reviews.size, total: targets.size,
     runAll: () => run(pendingReviews(targets, reviews)), targets };
+}
+
+function useRestoreScopedReview(result: AnalyzeResult, target: ReviewTarget | undefined, review?: ScopedReviewResult) {
+  const { capabilities, settings, token, saveScopedReview } = useApp();
+  useEffect(() => {
+    if (!capabilities?.includes('review-checkpoints') || !target || review) return;
+    const controller = new AbortController();
+    const restore = async () => {
+      const saved = await readCachedReview(scopedRequest(result.project, target, settings), token, controller.signal);
+      if (saved && !controller.signal.aborted) saveScopedReview(result, target.key, saved);
+    };
+    void restore().catch(() => {
+      // A cache miss or unavailable local store leaves the manual review action available.
+    });
+    return () => controller.abort();
+  }, [capabilities, settings, token, saveScopedReview, result, target, review]);
 }
 
 function stopReview(request: { current: AbortController | undefined }) {

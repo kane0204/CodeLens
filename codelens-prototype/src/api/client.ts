@@ -330,6 +330,19 @@ export interface ReviewRequest {
   settings: LlmSettings;
 }
 
+export async function readCachedReview(
+  request: ReviewRequest & { scope: ScopedReviewResult['scope'] },
+  token: string,
+  signal: AbortSignal,
+): Promise<ScopedReviewResult | null> {
+  const { project, files, settings, scope } = request;
+  const payload = withProvider({ project, files, scope }, settings);
+  const response = await postJson('/api/review/cached', payload, token, signal);
+  const data = await parseJson(response);
+  if (!response.ok) throw apiErrorFrom(data, '读取已保存的解读失败', response.status);
+  return (data as { result: ScopedReviewResult | null }).result;
+}
+
 interface ReviewStreamEvent {
   type: 'progress' | 'result' | 'error';
   stage?: AiReviewProgress['stage'];

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {
-  analyzeProject, ApiError, errorText, explainCode, fetchStatus, isAbortError, reviewProject, toBase64,
+  analyzeProject, ApiError, errorText, explainCode, fetchStatus, isAbortError, readCachedReview, reviewProject, toBase64,
 } from '../../codelens-prototype/src/api/client.ts';
 
 const token = 'unit-token';
@@ -268,4 +268,17 @@ test('review preserves correlation IDs, handles unknown events and unlocks the s
   await assert.rejects(reviewProject(reviewRequest, token, ignoreProgress, signal),
     { message: 'timeout', status: 502, requestId: 'ab12cd34' });
   assert.equal(streamed.body.locked, false);
+});
+
+test('cached review reads only the local cache and handles HTTP errors', async () => {
+  const saved = { scope: 'file', sections: {} };
+  const fetch = vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response(JSON.stringify({ result: saved })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'offline' }), { status: 503 }));
+  const request = { ...reviewRequest, scope: 'file' };
+  const signal = new AbortController().signal;
+  assert.deepEqual(await readCachedReview(request, token, signal), saved);
+  assert.equal(fetch.mock.calls[0][0], '/api/review/cached');
+  assert.equal(JSON.parse(fetch.mock.calls[0][1].body).scope, 'file');
+  await assert.rejects(readCachedReview(request, token, signal), /offline/);
 });

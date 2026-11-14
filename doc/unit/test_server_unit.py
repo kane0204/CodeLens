@@ -215,6 +215,22 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["type"], "error")
         self.assertIn("review_transport_closed", self.logger.log.call_args.args)
 
+    def test_cached_review_uses_the_authenticated_post_route(self):
+        payload = {"project": "demo"}
+        with patch.object(server.explanation, "cached_review", return_value={"scope": "file"}) as cached:
+            status, _, body = self.request("POST", "/api/review/cached", payload=payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"result": {"scope": "file"}})
+        cached.assert_called_once_with(payload, None)
+
+    def test_review_passes_configured_store_to_workflow(self):
+        store = object()
+        handler = SimpleNamespace(server=SimpleNamespace(review_store=store))
+        progress = Mock()
+        with patch.object(server.explanation, "review") as review:
+            server.Handler._review(handler, {}, progress)
+        review.assert_called_once_with({}, progress=progress, store=store)
+
     def test_review_stream_emits_structured_errors(self):
         for error, expected in [
             (server.explanation.ExplanationError("timeout"), "timeout"),

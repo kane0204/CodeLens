@@ -70,9 +70,13 @@ def _decision_count(item):
     if isinstance(item, ast.comprehension):
         return 1 + len(item.ifs)
     if isinstance(item, ast.Match):
-        return sum(not (isinstance(c.pattern, ast.MatchAs) and c.pattern.pattern is None)
-                   for c in item.cases)
+        return _match_decisions(item)
     return 0
+
+
+def _match_decisions(node):
+    return sum(not (isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None)
+               for case in node.cases)
 
 
 def complexity(node):
@@ -140,6 +144,16 @@ def statement_description(node):
             }.get(type(node).__name__, "执行 " + type(node).__name__ + " 语句")
 
 
+def _pop_component(root, stack, active):
+    group = []
+    while True:
+        node = stack.pop()
+        active.remove(node)
+        group.append(node)
+        if node == root:
+            return group
+
+
 def cycles_of(nodes, edges):
     graph = {n: set() for n in nodes}
     for a, b in edges:
@@ -156,13 +170,7 @@ def cycles_of(nodes, edges):
             elif w in active:
                 low[v] = min(low[v], index[w])
         if low[v] == index[v]:
-            group = []
-            while True:
-                w = stack.pop()
-                active.remove(w)
-                group.append(w)
-                if w == v:
-                    break
+            group = _pop_component(v, stack, active)
             if len(group) > 1 or v in graph[v]:
                 result.append(sorted(group))
     for n in sorted(nodes):
@@ -594,16 +602,19 @@ def _check_call(ctx, record, item, scope, valid_defs):
                         evidence="inference", confidence="medium")
 
 
+def _credential_literal(node):
+    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+        return False
+    value = node.value
+    return len(value) >= 8 and not PLACEHOLDER_VALUE_RE.search(value) and bool(value.strip("* ._-<>"))
+
+
 def _check_assignment(ctx, record, item):
     """Flag sensitive-named variables assigned a non-placeholder string literal."""
-    if not isinstance(item.value, ast.Constant) or not isinstance(item.value.value, str):
+    if not _credential_literal(item.value):
         return
     targets = item.targets if isinstance(item, ast.Assign) else [item.target]
-    value = item.value.value
-    names = [target_name(t) for t in targets]
-    sensitive = any(SENSITIVE_NAME_RE.search(name) for name in names)
-    placeholder = PLACEHOLDER_VALUE_RE.search(value)
-    if sensitive and len(value) >= 8 and not placeholder and value.strip("* ._-<>"):
+    if any(SENSITIVE_NAME_RE.search(target_name(target)) for target in targets):
         ctx.finding("A4", "warning", record["path"], item.lineno,
                     "敏感命名变量被直接赋予非占位字符串字面量；值已从报告隐藏。",
                     "确认是否为真实凭据，并检查配置或环境变量读取方式；未验证凭据有效性。")
@@ -664,11 +675,16 @@ def _module_dependencies(ctx):
     return dependencies
 
 
-def _run_rule_checks(ctx):
-    dependencies = _module_dependencies(ctx)
+def _dependency_graph(ctx, dependencies):
     unique_edges = sorted({(d["source"], d["target"]) for d in dependencies if d["internal"]})
     graph_nodes = set(ctx.module_paths) | {r["module"] for r in ctx.records
                                            if r["status"] == "ok" and not r["path"].lower().endswith(".py")}
+    return graph_nodes, unique_edges
+
+
+def _run_rule_checks(ctx):
+    dependencies = _module_dependencies(ctx)
+    graph_nodes, unique_edges = _dependency_graph(ctx, dependencies)
     cycles = cycles_of(graph_nodes, unique_edges)
     for group in cycles:
         evidence = next(d for d in dependencies if d["source"] in group and d["target"] in group)
@@ -726,11 +742,16 @@ def _report_config(language_counts):
             "cc_definition": "Python：初始1；if/三元/assert +1；循环 +1（else再+1）；try按except数（else再+1）；布尔n项+n-1；推导式+1及if数；match非通配case+1。非 Python：初始1，按 if/for/while/case/catch/&&/||/?: 关键字计数。内层函数/类/lambda不计入外层。"}
 
 
-def _assemble_report(ctx, project, dependencies, cycles):
-    errors = [r["error"] for r in ctx.records if "error" in r]
-    parsed = [r for r in ctx.records if r["status"] == "ok"]
+def _parsed_symbols(records):
+    parsed = [r for r in records if r["status"] == "ok"]
     functions = [f for r in parsed for f in r["functions"]]
     classes = [c for r in parsed for c in r["classes"]]
+    return parsed, functions, classes
+
+
+def _assemble_report(ctx, project, dependencies, cycles):
+    errors = [r["error"] for r in ctx.records if "error" in r]
+    parsed, functions, classes = _parsed_symbols(ctx.records)
     _number_findings(ctx.findings)
     status = _status_of(ctx.records, errors)
     language_counts = _language_counts(ctx.records)

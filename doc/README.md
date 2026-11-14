@@ -5,7 +5,7 @@
 
 单元测试模拟外部模型和网络请求。实际本机 HTTP 集成测试位于 [tests/integration](../tests/integration/)。
 
-[复杂度回归测试](unit/test_project_complexity.py) 随 Python 单元测试运行，复扫后端、前端和 DDD 设计示例。每个函数的圈复杂度、有效行数和嵌套深度分别不得超过 10、50 和 4。
+[复杂度回归测试](unit/test_project_complexity.py) 随 Python 单元测试运行，复扫后端、前端和 DDD 设计示例。每个函数的圈复杂度、有效行数和嵌套深度分别不得超过 8、50 和 4。
 
 ## 运行和查看覆盖率
 

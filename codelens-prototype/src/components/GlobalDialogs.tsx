@@ -1,23 +1,17 @@
+import type { SourceTarget } from '../state/AppState';
 import { useApp } from '../state/AppState';
 import { Icon } from './Icon';
 import { Button, Modal } from './Ui';
 
 export function SourceDialog() {
-  const { sourceTarget, closeSource, result } = useApp();
-  const target = sourceTarget;
-  const file = target ? result?.files.find((item) => item.path === target.path) : undefined;
+  const { sourceTarget: target, closeSource, result } = useApp();
+  const file = result?.files.find((item) => item.path === target?.path);
 
   return (
     <Modal
       open={Boolean(target)}
       title={target?.title ?? '源码'}
-      subtitle={
-        target ? (
-          <span className="num">
-            {target.path}:{target.line}–{target.endLine}
-          </span>
-        ) : undefined
-      }
+      subtitle={target && <SourceLocation target={target} />}
       onClose={closeSource}
       width={860}
       footer={
@@ -26,11 +20,11 @@ export function SourceDialog() {
         </Button>
       }
     >
-      {!file ? (
+      {!target || !file ? (
         <p className="text-[12px] text-muted">分析结果中没有该文件的源码。</p>
       ) : (
         <>
-          <SourceLines source={file.source} start={target?.line ?? 1} end={target?.endLine ?? 1} />
+          <SourceLines source={file.source} start={target.line} end={target.endLine} />
           <p className="mt-2 flex items-center gap-1.5 text-[10.5px] text-faint">
             <Icon name="info" size={12} />
             引用来自本次提交给引擎的源码，超出范围的引用不会被标记为有效。
@@ -40,6 +34,15 @@ export function SourceDialog() {
     </Modal>
   );
 }
+
+function SourceLocation({ target }: { target: SourceTarget }) {
+  return (
+    <span className="num">
+      {target.path}:{target.line}–{target.endLine}
+    </span>
+  );
+}
+
 
 interface SourceLinesProps {
   source: string;

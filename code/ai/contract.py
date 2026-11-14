@@ -116,6 +116,9 @@ def new_result(skill, target, status="ok", claims=None, outputs=None, generator=
     }
 
 
+_BRACE_DEPTH = {"{": 1, "}": -1}
+
+
 def _object_end(raw, start):
     """Return the first balanced object's end offset, ignoring braces in strings."""
     depth = 0
@@ -125,19 +128,13 @@ def _object_end(raw, start):
         if escaped:
             escaped = False
             continue
-        if in_string and char == "\\":
-            escaped = True
-            continue
         if char == '"':
             in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
+        elif in_string:
+            escaped = char == "\\"
+        else:
+            depth += _BRACE_DEPTH.get(char, 0)
+            if char == "}" and depth == 0:
                 return index + 1
     return None
 
@@ -249,13 +246,16 @@ def _resolve_evidence(evidence, resolve):
     return refs, ref_reason, total_refs, resolved_refs
 
 
+def _claim_text(value):
+    return " ".join(value.split()) if isinstance(value, str) else ""
+
+
 def _claim_fields(item, allowed):
     if not isinstance(item, dict):
         return None, {"reason": "claim 不是对象", "text": str(item)[:80]}
-    text = item.get("text")
-    if not isinstance(text, str) or not text.strip():
+    text = _claim_text(item.get("text"))
+    if not text:
         return None, {"reason": "claim 缺少正文", "text": ""}
-    text = " ".join(text.split())
     if len(text) > MAX_CLAIM_CHARS:
         return None, {"reason": "正文超过 {} 字".format(MAX_CLAIM_CHARS), "text": text[:80]}
     kind = item.get("kind")

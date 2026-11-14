@@ -119,6 +119,17 @@ class Cache:
 SHARED_CACHE = Cache()
 
 
+def _requested_skills(requested):
+    ordered = []
+    warnings = []
+    for skill_id in requested:
+        if skill_id not in contract.SKILLS:
+            warnings.append({"code": "unknown-skill", "message": "未注册的 skill：" + str(skill_id)[:40]})
+        elif skill_id not in ordered:
+            ordered.append(skill_id)
+    return ordered, warnings
+
+
 class Runner:
     """把一组 (skill, target) 跑成 SkillResult 列表。"""
 
@@ -277,16 +288,8 @@ class Runner:
 
     def run(self, skill_ids, targets=None, per_skill=DEFAULT_PER_SKILL):
         """跑一批目标，返回 `{"results", "summary", "warnings", "limitations"}`。"""
-        if isinstance(skill_ids, str):
-            skill_ids = [skill_ids]
-        ordered_ids = []
-        for skill_id in skill_ids or []:
-            if skill_id in contract.SKILLS and skill_id not in ordered_ids:
-                ordered_ids.append(skill_id)
-        warnings = []
-        for skill_id in skill_ids or []:
-            if skill_id not in contract.SKILLS:
-                warnings.append({"code": "unknown-skill", "message": "未注册的 skill：" + str(skill_id)[:40]})
+        requested = [skill_ids] if isinstance(skill_ids, str) else list(skill_ids or [])
+        ordered_ids, warnings = _requested_skills(requested)
 
         chosen = self.select(ordered_ids, targets=targets, per_skill=per_skill)
         results = [self._one(skill, ref) for skill, ref in chosen]

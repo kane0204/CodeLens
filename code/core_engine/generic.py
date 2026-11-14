@@ -54,6 +54,9 @@ SECRET_RE = re.compile(
     re.I,
 )
 PLACEHOLDER_RE = re.compile(r"demo|example|sample|test|placeholder|changeme|your[_ -]|dummy|xxx|not[_ -]a[_ -]real", re.I)
+COMMENT_MARKER_RE = re.compile(r"//|[#*]")
+
+
 TODO_RE = re.compile(r"(?:\btodo\b|\bfixme\b|\bhack\b|\bxxx\b|待实现|临时方案|未完成)", re.I)
 EMPTY_CATCH_RE = re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}")
 BROAD_CATCH_RE = re.compile(r"catch\s*\(\s*(?:Exception|Throwable|\.\.\.)\b")
@@ -174,17 +177,27 @@ def _params_of(header):
 
 
 def _count_parameters(parameters):
-    depth, count, has_value = 1, 0, False
-    for char in parameters:
-        if char in "()":
-            depth += 1 if char == "(" else -1
-            if depth == 0:
-                break
-        elif depth == 1 and char == ",":
+    count, has_value = 0, False
+    for char in _top_level_parameter_chars(parameters):
+        if char == ",":
             count += 1
-        elif depth == 1 and not char.isspace():
+        elif not char.isspace():
             has_value = True
     return count + 1 if has_value else 0
+
+
+_PAREN_DEPTH = {"(": 1, ")": -1}
+
+
+def _top_level_parameter_chars(parameters):
+    depth = 1
+    for char in parameters:
+        if char in _PAREN_DEPTH:
+            depth += _PAREN_DEPTH[char]
+            if depth == 0:
+                break
+        elif depth == 1:
+            yield char
 
 
 def _effective_lines(source, start_line, end_line):
@@ -219,7 +232,7 @@ def _c_style_function_name(text):
     if "(" not in text or ")" not in text:
         return None
     head = text.split("(")[0].strip()
-    if not head or any(word in head.split() for word in CONTROL_WORDS):
+    if not CONTROL_WORDS.isdisjoint(head.split()):
         return None
     words = head.replace("*", " ").replace("&", " ").split()
     if not words:
@@ -411,7 +424,7 @@ def _line_findings(source, path):
         catch = _catch_finding(line, path, number)
         if catch is not None:
             findings.append(catch)
-        if TODO_RE.search(line) and ("#" in line or "*" in line or "//" in line):
+        if TODO_RE.search(line) and COMMENT_MARKER_RE.search(line):
             findings.append(_finding("CMT-01", "info", path, number,
                                      "存在未完成、临时或占位注释，实现可能与注释描述不一致。",
                                      "核对注释与当前实现，补齐未完成部分或删除过期注释。",
@@ -535,10 +548,7 @@ def _js_edges(source, path, known, push):
             push(target, number, _resolve_js_import(path, target, known))
 
 
-def _resolve_js_import(path, target, known):
-    if not target.startswith("."):
-        return None
-    raw = (PurePosixPath(path).parent / target).as_posix()
+def _relative_import_stem(raw):
     parts = []
     for part in raw.split("/"):
         if part == "..":
@@ -546,13 +556,26 @@ def _resolve_js_import(path, target, known):
                 parts.pop()
         elif part not in ("", "."):
             parts.append(part)
-    stem = "/".join(parts)
+    return "/".join(parts)
+
+
+def _resolve_js_import(path, target, known):
+    if not target.startswith("."):
+        return None
+    raw = (PurePosixPath(path).parent / target).as_posix()
+    stem = _relative_import_stem(raw)
     extensions = (".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js")
     candidates = {stem, *(stem + extension for extension in extensions)}
     return next((item for item in known if item in candidates), None)
 
 
 def _go_edges(source, path, known, push):
+    for number, target in _go_imports(source):
+        internal = next((item for item in known if item.rsplit(".", 1)[0].endswith(target)), None)
+        push(target, number, internal)
+
+
+def _go_imports(source):
     in_block = False
     for number, line in enumerate(source.splitlines(), 1):
         stripped = line.strip()
@@ -562,11 +585,11 @@ def _go_edges(source, path, known, push):
         if in_block and stripped.startswith(")"):
             in_block = False
             continue
-        match = re.search(r"\"([^\"]+)\"", stripped) if (in_block or stripped.startswith("import")) else None
-        if not match:
+        if not (in_block or stripped.startswith("import")):
             continue
-        target = match.group(1)
-        push(target, number, next((item for item in known if item.rsplit(".", 1)[0].endswith(target)), None))
+        match = re.search(r"\"([^\"]+)\"", stripped)
+        if match:
+            yield number, match.group(1)
 
 
 _EDGE_BUILDERS = {

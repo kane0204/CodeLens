@@ -67,6 +67,9 @@ class AIRiskReview(Skill):
                     "findings": findings, "rule_ids": sorted({f.get("rule_id") for f in findings})}
         if not ref.startswith("module:"):
             base.need("refused", "AI 风险审查只接受模块或项目目标：" + str(ref)[:32])
+        return self._module_context(index, ref)
+
+    def _module_context(self, index, ref):
         module = ref.split(":", 1)[1]
         if module not in index.modules:
             base.need("insufficient_evidence", "模块不在本次分析范围内：" + module)

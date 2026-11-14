@@ -129,6 +129,20 @@ export interface GraphPatch {
   query: string;
 }
 
+const GRAPH_DEFAULTS: GraphPatch = {
+  tab: 'calls',
+  entry: '',
+  chainEntry: '',
+  layout: 'layered',
+  granularity: 'function',
+  direction: 'TD',
+  query: '',
+};
+
+const GRAPH_KEYS = Object.keys(GRAPH_DEFAULTS) as (keyof GraphPatch)[];
+const GRAPH_NAVIGATION_KEYS = ['tab', 'entry', 'granularity'] as const;
+
+
 const AppContext = createContext<AppContextValue | null>(null);
 
 function loadSettings(): LlmSettings {
@@ -211,13 +225,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [overOnly, setOverOnlyState] = useState(false);
   const [expandedRules, setExpandedRules] = useState<string[]>([]);
   const [expandedFindings, setExpandedFindings] = useState<string[]>([]);
-  const [graphTab, setGraphTab] = useState<GraphTab>('calls');
-  const [graphEntry, setGraphEntry] = useState('');
-  const [chainEntry, setChainEntry] = useState('');
-  const [graphLayout, setGraphLayout] = useState<'layered' | 'radial'>('layered');
-  const [graphGranularity, setGraphGranularity] = useState<'function' | 'file'>('function');
-  const [graphDirection, setGraphDirection] = useState<'TD' | 'LR'>('TD');
-  const [graphQuery, setGraphQuery] = useState('');
+  const [graph, setGraphState] = useState<GraphPatch>(GRAPH_DEFAULTS);
+  const {
+    tab: graphTab, entry: graphEntry, chainEntry, layout: graphLayout,
+    granularity: graphGranularity, direction: graphDirection, query: graphQuery,
+  } = graph;
   const [drawerNode, setDrawerNode] = useState<string | null>(null);
   const [exportAi, setExportAi] = useState(true);
   const [exportSource, setExportSource] = useState(false);
@@ -298,13 +310,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setOverOnlyState(false);
     setExpandedRules([]);
     setExpandedFindings([]);
-    setGraphTab('calls');
-    setGraphEntry(data.functions[0]?.id ?? '');
-    setChainEntry(data.functions[0]?.id ?? '');
-    setGraphLayout('layered');
-    setGraphGranularity('function');
-    setGraphDirection('TD');
-    setGraphQuery('');
+    const firstFunction = data.functions[0]?.id ?? '';
+    setGraphState({ ...GRAPH_DEFAULTS, entry: firstFunction, chainEntry: firstFunction });
     setDrawerNode(null);
     setAiReview(null);
     setReviewBusy(false);
@@ -560,15 +567,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setGraph = useCallback((patch: Partial<GraphPatch>) => {
-    if (patch.tab !== undefined) setGraphTab(patch.tab);
-    if (patch.entry !== undefined) setGraphEntry(patch.entry);
-    if (patch.chainEntry !== undefined) setChainEntry(patch.chainEntry);
-    if (patch.layout !== undefined) setGraphLayout(patch.layout);
-    if (patch.granularity !== undefined) setGraphGranularity(patch.granularity);
-    if (patch.direction !== undefined) setGraphDirection(patch.direction);
-    if (patch.query !== undefined) setGraphQuery(patch.query);
-    const navigationKeys = ['tab', 'entry', 'granularity'] as const;
-    if (navigationKeys.some((key) => patch[key] !== undefined)) setDrawerNode(null);
+    const changes = GRAPH_KEYS.filter((key) => patch[key] !== undefined);
+    if (!changes.length) return;
+    const updates = Object.fromEntries(changes.map((key) => [key, patch[key]]));
+    setGraphState((current) => ({ ...current, ...updates }));
+    if (GRAPH_NAVIGATION_KEYS.some((key) => patch[key] !== undefined)) setDrawerNode(null);
   }, []);
 
   const runExport = useCallback(

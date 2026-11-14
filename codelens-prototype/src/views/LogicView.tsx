@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { errorText, reviewProject } from '../api/client';
+import { useEffect, useRef, useState } from 'react';
 import { useApp, type Highlight } from '../state/AppState';
 import { FileTree } from '../components/FileTree';
 import { Icon } from '../components/Icon';
@@ -142,7 +143,14 @@ function SourcePreview({ targetFile, highlight }: { targetFile: FileInfo | undef
   );
 }
 
-function LogicFilePanel({ result, selected }: { result: AnalyzeResult; selected: string }) {
+interface LogicFilePanelProps {
+  result: AnalyzeResult;
+  selected: string;
+  onSelectFolder: (path: string) => void;
+  onSelectFile: () => void;
+}
+
+function LogicFilePanel({ result, selected, onSelectFolder, onSelectFile }: LogicFilePanelProps) {
   const { treeSearch, setTreeSearch, selectFile } = useApp();
   return (
     <Card className="min-h-0">
@@ -153,16 +161,28 @@ function LogicFilePanel({ result, selected }: { result: AnalyzeResult; selected:
         selected={selected}
         search={treeSearch}
         onSearch={setTreeSearch}
-        onSelect={selectFile}
+        onSelect={(path) => {
+          onSelectFile();
+          selectFile(path);
+        }}
+        onSelectFolder={onSelectFolder}
       />
     </Card>
   );
 }
 
 export function LogicView() {
-  const { result, file, highlight, aiReview, reviewError, openSettings } = useApp();
+  const { result } = useApp();
+  if (!result) return null;
+  return <LogicWorkspace key={result.project} result={result} />;
+}
+
+function LogicWorkspace({ result }: { result: AnalyzeResult }) {
+  const { file, highlight, aiReview, reviewError, openSettings } = useApp();
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const targetFile = result?.files.find((item) => item.path === file) ?? result?.files[0];
+  const [folder, setFolder] = useState('');
+  const targetFile = result.files.find((item) => item.path === file);
+  useEffect(() => setFolder(''), [result, file, highlight]);
   const section = aiReview?.sections.logic;
 
   useEffect(() => {
@@ -174,16 +194,14 @@ export function LogicView() {
     container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
   }, [highlight, targetFile?.path, section]);
 
-  if (!result) return null;
-
   return (
     <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
-      <LogicFilePanel result={result} selected={targetFile?.path ?? ''} />
+      <LogicFilePanel result={result} selected={folder || file} onSelectFolder={setFolder} onSelectFile={() => setFolder('')} />
       <Card className="min-h-0">
         <CardHeader
           title="AI 逻辑解读"
           icon="code"
-          subtitle="全项目一次生成 · 模块间互为说明"
+          subtitle="解读整个项目、当前文件或当前文件夹"
           actions={
             <Button size="sm" variant="ghost" icon="settings" onClick={openSettings}>
               模型设置
@@ -197,10 +215,80 @@ export function LogicView() {
               {reviewError}
             </div>
           ) : null}
-          <LogicReviewContent />
-          <SourcePreview targetFile={targetFile} highlight={highlight} />
+          <ScopedLogicReview result={result} folder={folder} file={file} />
+          {!folder && <SourcePreview targetFile={targetFile} highlight={highlight} />}
         </div>
       </Card>
     </div>
+  );
+}
+
+interface ScopedLogicProps {
+  result: AnalyzeResult;
+  folder: string;
+  file: string;
+}
+
+function ScopedLogicReview({ result, folder, file }: ScopedLogicProps) {
+  return <SelectedLogicReview key={folder ? 'folder:' + folder : 'file:' + file} result={result} folder={folder} file={file} />;
+}
+
+function selectedSources(result: AnalyzeResult, folder: string, file: string) {
+  return result.files
+    .filter((item) => item.status === 'ok' && typeof item.source === 'string')
+    .filter((item) => folder ? item.path.startsWith(folder + '/') : item.path === file)
+    .map((item) => ({ path: item.path, content: item.source }));
+}
+
+function useSelectedReview(result: AnalyzeResult, folder: string, file: string) {
+  const { token, settings } = useApp();
+  const [review, setReview] = useState<AiReviewResult>();
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const request = useRef<AbortController>();
+  const files = selectedSources(result, folder, file);
+  useEffect(() => {
+    setReview(undefined);
+    setBusy(false);
+    setError('');
+    return () => request.current?.abort();
+  }, [result]);
+
+  const selection = folder ? '文件夹 · ' + folder : '文件 · ' + file;
+  const project = result.project + ' · ' + selection;
+
+  async function run() {
+    if (busy || !files.length) return;
+    setError('');
+    const controller = new AbortController();
+    request.current = controller;
+    setBusy(true);
+    try {
+      const output = await reviewProject({ project, files, settings }, token, () => {}, controller.signal);
+      if (!controller.signal.aborted) setReview(output);
+    } catch (failure) {
+      if (!controller.signal.aborted) setError(errorText(failure, '解读失败，请检查模型设置后重试。'));
+    } finally {
+      if (!controller.signal.aborted) setBusy(false);
+    }
+  }
+
+  return { review, error, busy, canRun: files.length > 0, run };
+}
+
+function SelectedLogicReview({ result, folder, file }: ScopedLogicProps) {
+  const { reviewBusy } = useApp();
+  const { review, error, busy, canRun, run } = useSelectedReview(result, folder, file);
+  const disabled = busy || reviewBusy || !canRun;
+  return (
+    <>
+      <div className="mb-3 flex flex-wrap gap-2">
+        <Button size="sm" disabled={Boolean(folder) || disabled} onClick={() => void run()}>解读当前文件</Button>
+        <Button size="sm" disabled={!folder || disabled} onClick={() => void run()}>解读当前文件夹</Button>
+      </div>
+      {busy && <p role="status">正在解读 {folder || file}…</p>}
+      {error && <p role="alert" className="mb-3 text-danger">{error}</p>}
+      {review ? <LogicReport aiReview={review} section={review.sections.logic} /> : <LogicReviewContent />}
+    </>
   );
 }

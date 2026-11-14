@@ -33,16 +33,17 @@ class SolidReview(Skill):
 
     def candidates(self, env, limit=12):
         index = env["index"]
-        rows = []
-        for ident, entry in index.classes.items():
-            path = entry.get("file")
-            line = entry.get("line") or 0
-            end_line = entry.get("end_line") or line
-            hits = [item for item in index.findings_in(path, line, end_line)
-                    if item.get("rule_id") in RULES]
-            rows.append((-len(hits), -(len(entry.get("methods") or [])), path or "", line, ident))
+        rows = [self._candidate_rank(index, ident, entry) for ident, entry in index.classes.items()]
         rows.sort()
         return ["class:" + row[-1] for row in rows[:limit]]
+
+    def _candidate_rank(self, index, ident, entry):
+        path = entry.get("file")
+        line = entry.get("line") or 0
+        end_line = entry.get("end_line") or line
+        hits = [item for item in index.findings_in(path, line, end_line)
+                if item.get("rule_id") in RULES]
+        return (-len(hits), -(len(entry.get("methods") or [])), path or "", line, ident)
 
     def context(self, env, ref):
         ident, definition, entry = base.symbol_of(env, ref)
@@ -74,19 +75,10 @@ class SolidReview(Skill):
         evidence_head = ["class:" + ctx["ident"], "def:" + ctx["ident"]]
 
         for rule in RULES:
-            items = by_rule.get(rule) or []
-            letter = LETTERS[rule]
-            if items:
-                first = items[0]
-                claims.append(contract.claim(
-                    "{} 的{}：{}（口径值 {}，阈值 {}）。{}".format(
-                        name, letter, first.get("message"),
-                        first.get("actual"), first.get("threshold"), ADVICE[rule]),
-                    base.finding_refs(items, limit=3) + ["def:" + ctx["ident"]],
-                    kind="advice", confidence=first.get("confidence") or "low"))
-                checks.append("{}：命中 {}".format(letter, first.get("actual")))
-            else:
-                checks.append("{}：未发现静态风险".format(letter))
+            check, claim = self._rule_check(ctx, name, rule, by_rule.get(rule))
+            checks.append(check)
+            if claim:
+                claims.append(claim)
 
         if not claims:
             claims.append(contract.claim(
@@ -102,6 +94,18 @@ class SolidReview(Skill):
         headline = base.short("{}：{} 条 SOLID 口径命中".format(name, len(by_rule)), 120)
         return self.envelope(ctx, claims, {"headline": headline, "checks": checks},
                              notes=["口径是计数不是规范判定：命中说明值得复核，未命中不等于符合。"])
+
+    def _rule_check(self, ctx, name, rule, items):
+        letter = LETTERS[rule]
+        if not items:
+            return "{}：未发现静态风险".format(letter), None
+        first = items[0]
+        claim = contract.claim(
+            "{} 的{}：{}（口径值 {}，阈值 {}）。{}".format(
+                name, letter, first.get("message"), first.get("actual"), first.get("threshold"), ADVICE[rule]),
+            base.finding_refs(items, limit=3) + ["def:" + ctx["ident"]],
+            kind="advice", confidence=first.get("confidence") or "low")
+        return "{}：命中 {}".format(letter, first.get("actual")), claim
 
     def prompt(self, ctx):
         rendered = ["{} 第 {} 行：{}（口径值 {}，阈值 {}）".format(

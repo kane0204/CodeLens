@@ -81,11 +81,16 @@ def _resolved_callees(calls, frontier, functions, visited):
     } - visited)
 
 
-def _related_symbols(result, record, start, end):
-    functions = {f['id']: f for f in result['functions'] + result['classes']}
+def _context_roots(result, record, start, end):
     frontier = {f['id'] for f in result['functions'] if f['file'] == record['path'] and start <= f['line'] <= end}
     if start == 1 and end == len(record['source'].splitlines()):
         frontier.add(record['module'])
+    return frontier
+
+
+def _related_symbols(result, record, start, end):
+    functions = {f['id']: f for f in result['functions'] + result['classes']}
+    frontier = _context_roots(result, record, start, end)
     visited = set(frontier)
     for _ in range(2):
         targets = _resolved_callees(result['graph']['calls'], frontier, functions, visited)
@@ -210,10 +215,15 @@ def _project_batches(records):
     return batches
 
 
-def _analysis_facts(result):
+def _evidenced_rows(result):
     dependencies = [edge for edge in result["graph"]["dependencies"] if edge.get("internal")]
     calls = [edge for edge in result["graph"]["calls"] if edge.get("status") == "resolved"]
     findings = result.get("findings") or []
+    return dependencies, calls, findings
+
+
+def _analysis_facts(result):
+    dependencies, calls, findings = _evidenced_rows(result)
     lines = ["以下关系与风险来自静态引擎，可与源码解读互相印证："]
     lines.extend(f"依赖：{edge['source']} -> {edge['target']}" for edge in dependencies[:100])
     lines.extend(f"调用：{edge['source']} -> {edge.get('target')}（{edge.get('file')}:L{edge.get('line')}）"
@@ -222,6 +232,13 @@ def _analysis_facts(result):
                  for item in findings[:100])
     omitted = any(len(rows) > limit for rows, limit in ((dependencies, 100), (calls, 120), (findings, 100)))
     return "\n".join(lines), omitted
+
+
+def _save_batch_note(notes, note, job):
+    with _REVIEW_LOCK:
+        notes.append(note)
+        if job is not None:
+            job.updated = time.time()
 
 
 def _read_batches(batches, project, endpoint, model, key, batch_instruction, reader_system,
@@ -237,19 +254,14 @@ def _read_batches(batches, project, endpoint, model, key, batch_instruction, rea
     resumed = len(notes)
     total = total or len(batches)
     truncated = False
-    for index, batch in enumerate(batches, 1):
-        if index <= resumed:
-            continue
+    for index, batch in enumerate(batches[resumed:], resumed + 1):
         if progress:
             progress({"type": "progress", "stage": "read", "done": index - 1,
                       "total": total, "label": f"阅读第 {index}/{len(batches)} 批源码"})
         prompt = (f"项目：{project}\n这是全项目源码的第 {index}/{len(batches)} 批。"
                   + batch_instruction + "\n\n" + batch)
         note, hit_limit = _chat(endpoint, model, key, reader_system, prompt)
-        with _REVIEW_LOCK:
-            notes.append(f"第 {index} 批阅读记录：\n{note}")
-            if job is not None:
-                job.updated = time.time()
+        _save_batch_note(notes, f"第 {index} 批阅读记录：\n{note}", job)
         truncated = truncated or hit_limit
         if progress:
             progress({"type": "progress", "stage": "read", "done": index,
@@ -313,7 +325,7 @@ def _explain_project(result, endpoint, model, key):
             "truncated": truncated}
 
 
-def _review_json(text):
+def _load_review_json(text):
     try:
         value = json.loads(text)
     except ValueError:
@@ -324,6 +336,11 @@ def _review_json(text):
             value = json.loads(text[start:end + 1])
         except ValueError:
             raise ExplanationError("模型未按约定返回结构化审查结果") from None
+    return value
+
+
+def _review_json(text):
+    value = _load_review_json(text)
     if not isinstance(value, dict):
         raise ExplanationError("模型未按约定返回结构化审查结果")
     sections = {}
@@ -501,12 +518,17 @@ def _completion_endpoint(endpoint):
     return endpoint if endpoint.endswith("/chat/completions") else endpoint + "/chat/completions"
 
 
-def _provider_config(payload):
+def _provider_settings(payload):
     if not isinstance(payload, dict):
         raise ValueError("请求必须为对象")
     settings = payload.get("provider") or {}
     if not isinstance(settings, dict):
         raise ValueError("模型配置必须为对象")
+    return settings
+
+
+def _provider_config(payload):
+    settings = _provider_settings(payload)
     endpoint, model, key = _provider_values(settings)
     if not all(isinstance(x, str) for x in (endpoint, model, key)):
         raise ValueError("模型配置格式无效")

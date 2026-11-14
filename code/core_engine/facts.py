@@ -55,9 +55,13 @@ def _terminates(statements):
     if isinstance(last, ast.If) and last.orelse:
         return _terminates(last.body) and _terminates(last.orelse)
     if isinstance(last, ast.Try):
-        blocks = [last.body, last.orelse, last.finalbody] + [h.body for h in last.handlers]
-        return all(_terminates(block) for block in blocks if block)
+        return _try_terminates(last)
     return False
+
+
+def _try_terminates(node):
+    blocks = [node.body, node.orelse, node.finalbody] + [handler.body for handler in node.handlers]
+    return all(_terminates(block) for block in blocks if block)
 
 
 class _Flow:
@@ -155,13 +159,7 @@ class _Flow:
         if body_entry:
             self.edge(header, body_entry, "seq")
         body_exits = self.build(stmt.body, body_entry, depth + 1, loop, pending_break, pending_continue) if stmt.body else []
-        handler_exits = []
-        for handler in stmt.handlers:
-            entry = self.add(getattr(handler, "lineno", line), getattr(handler, "end_lineno", line),
-                             "except", "except " + _exception_name(handler.type), depth + 1)
-            self.edge(header, entry, "except")
-            handler_exits.extend(self.build(handler.body, entry, depth + 1, loop,
-                                            pending_break, pending_continue))
+        handler_exits = self._except_branches(stmt, header, depth + 1, loop, pending_break, pending_continue)
         if stmt.orelse:
             entry = self.add(getattr(stmt.orelse[0], "lineno", line), line, "branch", "try-else", depth + 1)
             for source in body_exits:
@@ -176,6 +174,17 @@ class _Flow:
                 self.edge(source, entry, "finally")
             exits = self.build(stmt.finalbody, entry, depth + 1, loop, pending_break, pending_continue)
         return header, exits
+
+    def _except_branches(self, stmt, header, depth, loop, pending_break, pending_continue):
+        line = stmt.lineno
+        handler_exits = []
+        for handler in stmt.handlers:
+            entry = self.add(getattr(handler, "lineno", line), getattr(handler, "end_lineno", line),
+                             "except", "except " + _exception_name(handler.type), depth)
+            self.edge(header, entry, "except")
+            handler_exits.extend(self.build(handler.body, entry, depth, loop,
+                                            pending_break, pending_continue))
+        return handler_exits
 
     def _with(self, stmt, depth, loop, pending_break, pending_continue):
         line = stmt.lineno
@@ -316,16 +325,21 @@ def _block_members(leader, outgoing, leaders, block_of):
     return members
 
 
-def _block_record(block_id, members, by_id):
-    nodes = [by_id[member] for member in members]
+def _block_extent(nodes):
     line = min((node["line"] for node in nodes if node["line"] is not None), default=None)
     end_line = max((node["end_line"] or node["line"] or 0 for node in nodes), default=line)
+    return line, end_line
+
+
+def _block_record(block_id, members, by_id):
+    nodes = [by_id[member] for member in members]
+    line, end_line = _block_extent(nodes)
     return {
         "id": block_id,
         "line": line,
         "end_line": end_line,
-        "kinds": sorted({by_id[m]["kind"] for m in members}),
-        "labels": [by_id[m]["label"] for m in members if by_id[m]["label"]],
+        "kinds": sorted({node["kind"] for node in nodes}),
+        "labels": [node["label"] for node in nodes if node["label"]],
         "size": len(members),
     }
 

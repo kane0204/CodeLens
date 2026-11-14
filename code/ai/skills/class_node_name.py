@@ -59,17 +59,22 @@ class ClassNodeName(Skill):
             return name + "（无方法，纯数据容器）"
         parts = []
         if count:
-            names = [method.get("name") for method in ctx["methods"][:MAX_METHODS_IN_LABEL]]
-            parts.append("{} 方法".format(count) if count > MAX_METHODS_IN_LABEL else base.join_limited(names))
+            parts.append(self._method_label(ctx["methods"]))
         if bases:
             parts.append("继承 " + base.join_limited(bases, 2))
         return name + "（" + "，".join(parts) + "）"
+
+    def _method_label(self, methods):
+        if len(methods) > MAX_METHODS_IN_LABEL:
+            return "{} 方法".format(len(methods))
+        return base.join_limited([method.get("name") for method in methods])
 
     def render(self, ctx):
         index = ctx["ident"]
         name = ctx["class"].get("name") or "类"
         module = ctx["module"] or ctx["path"]
         count = len(ctx["methods"])
+        label = self._label(ctx)
         claims = []
 
         evidence = ["class:" + index, "def:" + index]
@@ -77,7 +82,7 @@ class ClassNodeName(Skill):
             evidence.append("function:" + method["id"])
         claims.append(contract.claim(
             "{} 位于模块 {}，共 {} 个方法；节点标签据此写成「{}」，让图上只看名字也能读出它的分工。".format(
-                name, module, count, self._label(ctx)),
+                name, module, count, label),
             evidence, kind="naming", confidence="high"))
 
         claims.extend(self._inheritance_claims(ctx, name))
@@ -87,19 +92,25 @@ class ClassNodeName(Skill):
                 "{} 的方法有 {} 个，只写类名不足以看懂它做什么，标签里应带一句职责短语而不是只列方法名。".format(name, count),
                 evidence, kind="naming", confidence="medium"))
 
-        refs = base.finding_refs(ctx["findings"], limit=2)
-        if refs:
-            rules = base.join_limited([item.get("rule_id") for item in ctx["findings"]], 3)
-            claims.append(contract.claim(
-                "{} 上还有 {} 条规则发现（{}），标签可以带一个提示角标，把注意力引到问题所在的类上。".format(
-                    name, len(ctx["findings"]), rules),
-                refs + ["def:" + index], kind="naming", confidence="medium"))
+        finding_claim = self._finding_claim(ctx, name)
+        if finding_claim:
+            claims.append(finding_claim)
 
-        outputs = {"headline": base.short(self._label(ctx), 80),
+        outputs = {"headline": base.short(label, 80),
                    "subtitle": base.short("{} · {} 行 · {}".format(module, ctx["line"], ctx["path"]), 160),
-                   "tags": [tag for tag in [ctx["module"] or "", "class"] if tag]}
+                   "tags": [ctx["module"], "class"] if ctx["module"] else ["class"]}
         return self.envelope(ctx, claims, outputs,
                              notes=["标签只由类名、方法集合、基类与规则发现构成，未推断类的业务含义。"])
+
+    def _finding_claim(self, ctx, name):
+        refs = base.finding_refs(ctx["findings"], limit=2)
+        if not refs:
+            return None
+        rules = base.join_limited([item.get("rule_id") for item in ctx["findings"]], 3)
+        return contract.claim(
+            "{} 上还有 {} 条规则发现（{}），标签可以带一个提示角标，把注意力引到问题所在的类上。".format(
+                name, len(ctx["findings"]), rules),
+            refs + ["def:" + ctx["ident"]], kind="naming", confidence="medium")
 
     def _inheritance_claims(self, ctx, name):
         if not ctx["inheritance"]:

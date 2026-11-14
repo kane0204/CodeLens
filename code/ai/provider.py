@@ -89,9 +89,9 @@ class HttpProvider(Provider):
     kind = "http"
 
     def __init__(self, endpoint=None, model=None, api_key=None, timeout=None):
-        self.endpoint = endpoint or os.environ.get(ENV_ENDPOINT) or ""
-        self.model = model or os.environ.get(ENV_MODEL) or ""
-        self.api_key = api_key or os.environ.get(ENV_KEY) or ""
+        self.endpoint = endpoint or os.environ.get(ENV_ENDPOINT, "")
+        self.model = model or os.environ.get(ENV_MODEL, "")
+        self.api_key = api_key or os.environ.get(ENV_KEY, "")
         try:
             self.timeout = float(timeout if timeout is not None else os.environ.get(ENV_TIMEOUT, DEFAULT_TIMEOUT))
         except (TypeError, ValueError):

@@ -9,7 +9,11 @@ import { logger } from '../../codelens-prototype/src/lib/logger.ts';
 import { button, click, mount, typeValue } from './dom.mjs';
 import { designFinding, finding, fn, path, projectResult, report } from './fixtures.mjs';
 
-const mocked = vi.hoisted(() => ({ context: {} }));
+const mocked = vi.hoisted(() => ({ context: {}, selectedReview: vi.fn() }));
+vi.mock('../../codelens-prototype/src/api/client.ts', async (original) => ({
+  ...await original(),
+  reviewProject: mocked.selectedReview,
+}));
 vi.mock('../../codelens-prototype/src/state/AppState.tsx', () => ({
   useApp: () => mocked.context,
 }));
@@ -370,4 +374,33 @@ test('review routes show busy and failure states and retain access to retry', ()
   }
   assert.equal(mocked.context.runReview.mock.calls.length, 3);
   assert.equal(mocked.context.cancelReview.mock.calls.length, 3);
+});
+
+test('logic enables only the selected scope and submits its parsed sources', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+  const files = mocked.context.result.files;
+  files.push(
+    { ...files[0], path: 'src/utils/helper.py' },
+    { ...files[0], path: 'src/broken.py', status: 'error' },
+    { ...files[0], path: 'src-other/other.py' },
+  );
+  mocked.selectedReview.mockResolvedValue(report);
+  const { render, container } = mount();
+  render(<App />);
+  const fileButton = () => button('解读当前文件', container);
+  const folderButton = () => button('解读当前文件夹', container);
+  assert.equal(fileButton().disabled, false);
+  assert.equal(folderButton().disabled, true);
+  await act(async () => fileButton().click());
+  assert.deepEqual(mocked.selectedReview.mock.lastCall[0].files.map((item) => item.path), [path]);
+
+  click([...container.querySelectorAll('summary')].find((item) => item.textContent.trim() === 'src'));
+  assert.equal(fileButton().disabled, true);
+  assert.equal(folderButton().disabled, false);
+  await act(async () => folderButton().click());
+  assert.deepEqual(mocked.selectedReview.mock.lastCall[0].files.map((item) => item.path), [path, 'src/utils/helper.py']);
+
+  click(container.querySelector('button[title="' + path + '"]'));
+  assert.equal(fileButton().disabled, false);
+  assert.equal(folderButton().disabled, true);
 });

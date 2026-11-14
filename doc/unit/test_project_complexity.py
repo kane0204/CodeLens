@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "code"))
 from core_engine.engine import analyze
 
-LIMITS = {"cc": 10, "length": 50, "nesting": 4}
+LIMITS = {"cc": 8, "length": 50, "nesting": 4}
 WEB_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx"}
 
 

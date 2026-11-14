@@ -61,19 +61,23 @@ def _positional_parameters(args, skip_receiver):
     return params
 
 
+def _keyword_and_variadic_parameters(args):
+    if args.vararg:
+        yield inspect.Parameter(args.vararg.arg, inspect.Parameter.VAR_POSITIONAL)
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+        yield inspect.Parameter(arg.arg, inspect.Parameter.KEYWORD_ONLY,
+                                        default=inspect.Parameter.empty if default is None else None)
+    if args.kwarg:
+        yield inspect.Parameter(args.kwarg.arg, inspect.Parameter.VAR_KEYWORD)
+
+
 def _signature(method):
     args = method.args
     skip_receiver = _mode(method) != "static"
     if skip_receiver and not (args.posonlyargs or args.args):
         return None
     params = _positional_parameters(args, skip_receiver)
-    if args.vararg:
-        params.append(inspect.Parameter(args.vararg.arg, inspect.Parameter.VAR_POSITIONAL))
-    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
-        params.append(inspect.Parameter(arg.arg, inspect.Parameter.KEYWORD_ONLY,
-                                        default=inspect.Parameter.empty if default is None else None))
-    if args.kwarg:
-        params.append(inspect.Parameter(args.kwarg.arg, inspect.Parameter.VAR_KEYWORD))
+    params.extend(_keyword_and_variadic_parameters(args))
     try:
         return inspect.Signature(params)
     except ValueError:
@@ -131,11 +135,14 @@ def _narrowed(parent, child):
     return _rejected_call(p, c, _call_variants(p, positional, max_pos, extra_keywords))
 
 
+def _non_marker_bases(cls, markers):
+    return [base for base in cls.get("bases") or [] if base not in markers]
+
+
 def _inherited(ident, seen, classes, parents, marker_bases, methods):
     if ident in seen:
         return None
-    cls = classes[ident]
-    bases = [b for b in cls.get("bases") or [] if b not in marker_bases.get(ident, set())]
+    bases = _non_marker_bases(classes[ident], marker_bases.get(ident, set()))
     if not bases:
         return {}
     if len(bases) != 1 or len(parents.get(ident, [])) != 1:
@@ -147,6 +154,10 @@ def _inherited(ident, seen, classes, parents, marker_bases, methods):
     return {**ancestors, **{name: (base_id, m) for name, m in methods[base_id].items()}}
 
 
+def _implements_method(method):
+    return not _abstract(method) and not _refuses(method)
+
+
 def _lsp_reasons(parent, child, witness):
     reasons = []
     if _mode(parent) != _mode(child):
@@ -156,7 +167,7 @@ def _lsp_reasons(parent, child, witness):
     if witness:
         reasons.append("拒绝父方法接受的调用形状（{} 个位置参数，关键字 {}）".format(witness["positional"], ", ".join(witness["keywords"]) or "无"))
     refused = _refuses(child) and not _abstract(child)
-    if refused and not _abstract(parent) and not _refuses(parent):
+    if refused and _implements_method(parent):
         reasons.append("用 NotImplementedError 拒绝父类已实现的方法")
     return reasons, refused
 
@@ -184,8 +195,14 @@ def _check_class_overrides(ident, cls, methods, inherited_methods, gaps, add):
     return checked
 
 
+def _has_static_signatures(parent, child):
+    if _mode(parent) is None or _mode(child) is None:
+        return False
+    return _signature(parent) is not None and _signature(child) is not None
+
+
 def _check_override(ident, cls, name, child, base_id, parent, public_contract, gaps, add):
-    if _mode(parent) is None or _mode(child) is None or _signature(parent) is None or _signature(child) is None:
+    if not _has_static_signatures(parent, child):
         gaps.append({"class": ident, "file": cls["file"], "line": child.lineno,
                      "reason": name + " 的装饰器或绑定签名无法静态检查"})
         return 0
@@ -225,13 +242,16 @@ def _build_marker_bases(result, classes):
 def _marker_aliases(tree):
     aliases = {}
     for statement in tree.body:
-        if isinstance(statement, ast.ImportFrom) and statement.module in {"abc", "typing", "typing_extensions"}:
-            for alias in statement.names:
-                aliases[alias.asname or alias.name] = statement.module + "." + alias.name
-        elif isinstance(statement, ast.Import):
-            for alias in statement.names:
-                aliases[alias.asname or alias.name] = alias.name
+        aliases.update(_marker_imports(statement))
     return aliases
+
+
+def _marker_imports(statement):
+    if isinstance(statement, ast.ImportFrom) and statement.module in {"abc", "typing", "typing_extensions"}:
+        return ((alias.asname or alias.name, statement.module + "." + alias.name) for alias in statement.names)
+    if isinstance(statement, ast.Import):
+        return ((alias.asname or alias.name, alias.name) for alias in statement.names)
+    return ()
 
 
 def _parse_tree(record):

@@ -37,6 +37,15 @@ class LogicSummary(Skill):
         rows.sort()
         return ["def:" + row[-1] for row in rows[:limit]]
 
+    def _side_effects(self, piece):
+        side_effects = []
+        for call in piece.get("calls") or []:
+            expression = call.get("expression") or ""
+            last = expression.rsplit(".", 1)[-1]
+            if last in SIDE_EFFECT_CALLS and call.get("status") == "resolved":
+                side_effects.append(call)
+        return side_effects
+
     def context(self, env, ref):
         ident, definition, _entry = base.symbol_of(env, ref)
         if definition.get("kind") != "function":
@@ -47,19 +56,13 @@ class LogicSummary(Skill):
             base.need("insufficient_evidence", "无法切片该函数：" + ident)
         path = piece.get("file")
         line = piece.get("line")
-        side_effects = []
-        for call in piece.get("calls") or []:
-            expression = call.get("expression") or ""
-            last = expression.rsplit(".", 1)[-1]
-            if last in SIDE_EFFECT_CALLS and call.get("status") == "resolved":
-                side_effects.append(call)
         return {"ref": ref, "ident": ident, "definition": definition, "slice": piece,
                 "path": path, "line": line, "module": piece.get("module"),
                 "statements": piece.get("statements") or [],
                 "truncated": bool(piece.get("statements_truncated")),
                 "findings": piece.get("findings") or [],
                 "callers": index.callers_of(ident),
-                "side_effects": side_effects,
+                "side_effects": self._side_effects(piece),
                 "flow": base.flow_of(env, path, line),
                 "def_use": self._def_use(env, path, line)}
 
@@ -94,15 +97,15 @@ class LogicSummary(Skill):
         flow = ctx["flow"]
         if not flow.get("available"):
             return None
-        branches = sum(1 for edge in flow.get("edges") or []
-                       if edge[-1] in ("true", "false", "loop", "except"))
+        edges = flow.get("edges") or []
+        branches = sum(edge[-1] in ("true", "false", "loop", "except") for edge in edges)
         if not branches:
             return None
         evidence = [base.statement_ref(ctx["ident"], rows[0].get("line")) if rows else "def:" + ctx["ident"],
                     "def:" + ctx["ident"]]
         return contract.claim(
             "控制流切成 {} 个基本块、{} 条分支或循环边；也就是说它有 {} 处「走另一条路」的地方。".format(
-                len(flow.get("blocks") or []), len(flow.get("edges") or []), branches),
+                len(flow.get("blocks") or []), len(edges), branches),
             evidence, kind="branch", confidence="high")
 
     def _callers_claim(self, ctx):

@@ -11,23 +11,35 @@ interface DirNode {
   files: TreeFile[];
 }
 
+function directoryFor(root: DirNode, path: string): DirNode {
+  const parts = path.split('/');
+  let node = root;
+  for (const part of parts.slice(0, -1)) {
+    if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+    node = node.dirs.get(part) as DirNode;
+  }
+  return node;
+}
+
+
 function buildTree(files: FileInfo[], classes: ClassInfo[]): DirNode {
   const root: DirNode = { dirs: new Map(), files: [] };
   const classCount = new Map<string, number>();
   for (const item of classes) classCount.set(item.file, (classCount.get(item.file) ?? 0) + 1);
   for (const file of files) {
-    const parts = file.path.split('/');
-    let node = root;
-    for (const part of parts.slice(0, -1)) {
-      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
-      node = node.dirs.get(part) as DirNode;
-    }
+    const node = directoryFor(root, file.path);
     node.files.push({ ...file, classCount: classCount.get(file.path) ?? 0 });
   }
   return root;
 }
 
-function Directory({ node, depth, selected, onSelect }: { node: DirNode; depth: number; selected: string; onSelect: (path: string) => void }) {
+interface DirectoryProps extends Pick<FileTreeProps, 'selected' | 'onSelect' | 'onSelectFolder'> {
+  node: DirNode;
+  depth: number;
+  prefix: string;
+}
+
+function Directory({ node, depth, prefix, selected, onSelect, onSelectFolder }: DirectoryProps) {
   return (
     <>
       {[...node.dirs.entries()]
@@ -35,14 +47,16 @@ function Directory({ node, depth, selected, onSelect }: { node: DirNode; depth: 
         .map(([name, child]) => (
           <details key={name} open className="group">
             <summary
-              className="flex h-7 items-center gap-1 rounded-[3px] pr-1 text-[11.5px] text-[#57534e] hover:bg-[#f7f3ec]"
+              className="flex h-7 items-center gap-1 rounded-[3px] pr-1 text-[11.5px] text-[#57534e] hover:bg-[#f7f3ec] aria-[current=true]:bg-tint aria-[current=true]:text-primary"
               style={{ paddingLeft: depth * 10 + 4 }}
+              onClick={() => onSelectFolder?.(prefix + name)}
+              aria-current={selected === prefix + name ? 'true' : undefined}
             >
               <Icon name="chevronRight" size={11} className="shrink-0 text-faint transition-transform group-open:rotate-90" />
               <Icon name="folder" size={12} className="shrink-0 text-[#a88c6c]" />
               <span className="truncate">{name}</span>
             </summary>
-            <Directory node={child} depth={depth + 1} selected={selected} onSelect={onSelect} />
+            <Directory node={child} depth={depth + 1} prefix={prefix + name + "/"} selected={selected} onSelect={onSelect} onSelectFolder={onSelectFolder} />
           </details>
         ))}
       {node.files
@@ -81,9 +95,10 @@ interface FileTreeProps {
   search: string;
   onSearch: (value: string) => void;
   onSelect: (path: string) => void;
+  onSelectFolder?: (path: string) => void;
 }
 
-export function FileTree({ files, classes, selected, search, onSearch, onSelect }: FileTreeProps) {
+export function FileTree({ files, classes, selected, search, onSearch, onSelect, onSelectFolder }: FileTreeProps) {
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return query ? files.filter((file) => file.path.toLowerCase().includes(query)) : files;
@@ -106,7 +121,7 @@ export function FileTree({ files, classes, selected, search, onSearch, onSelect 
       </div>
       <div className="scroll-thin min-h-0 flex-1 overflow-auto px-1.5 pb-2">
         {filtered.length ? (
-          <Directory node={tree} depth={0} selected={selected} onSelect={onSelect} />
+          <Directory node={tree} depth={0} prefix="" selected={selected} onSelect={onSelect} onSelectFolder={onSelectFolder} />
         ) : (
           <p className="px-2 py-4 text-[11px] text-faint">没有匹配的文件</p>
         )}

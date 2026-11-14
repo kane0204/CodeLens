@@ -141,19 +141,16 @@ def _is_method_call(call, method_ids):
 
 def _collect_constructed(result, nodes, method_ids):
     classes = result.get("classes") or []
-    constructed = set()
-    for call in (result.get("graph") or {}).get("calls") or []:
-        target = call.get("target")
-        if not _is_method_call(call, method_ids):
-            continue
-        target_cls = next((c for c in classes if c.get("id") == target), None)
-        if target_cls is None:
-            continue
-        target_node = nodes.get((target_cls.get("file"), target_cls.get("line")))
-        if _is_abstract_class(target_node):
-            continue
-        constructed.add(target)
-    return constructed
+    calls = (result.get("graph") or {}).get("calls") or []
+    targets = (call.get("target") for call in calls if _is_method_call(call, method_ids))
+    return {target for target in targets if _is_concrete_class(target, classes, nodes)}
+
+
+def _is_concrete_class(ident, classes, nodes):
+    entry = next((cls for cls in classes if cls.get("id") == ident), None)
+    if entry is None:
+        return False
+    return not _is_abstract_class(nodes.get((entry.get("file"), entry.get("line"))))
 
 
 def _is_abstract_class(node):
@@ -237,15 +234,17 @@ def _python_functions(functions):
         yield fn, ident, name
 
 
+def _is_entry_point(name):
+    return name.startswith(("_", "test")) or name in ENTRY_NAMES
+
+
 def _evaluate_dead(result, metrics, add):
     """A5-DEAD：未被本次分析内任何已解析调用指向的函数。"""
     calls = (result.get("graph") or {}).get("calls") or []
     called, hinted = _call_references(calls)
     for fn, ident, name in _python_functions(result.get("functions") or []):
         metrics["functions"] += 1
-        if name.startswith(("_", "test")) or name in ENTRY_NAMES:
-            continue
-        if ident in called or name in hinted:
+        if _is_entry_point(name) or ident in called or name in hinted:
             continue
         metrics["dead_functions"] += 1
         add("A5-DEAD", "info", fn.get("file"), fn.get("line"),
@@ -328,12 +327,14 @@ def merge(base, extra):
     传 `evaluate()` 的返回值或其中的 findings 列表。
     """
     extra_rows = extra.get("findings") if isinstance(extra, dict) else extra
-    holder = dict(base) if isinstance(base, dict) else None
-    base_rows = holder.get("findings") if holder is not None else base
-    combined = _sorted_findings(base_rows or [], extra_rows or [])
-    if holder is None:
-        return combined
-    holder["findings"] = combined
+    if not isinstance(base, dict):
+        return _sorted_findings(base or [], extra_rows or [])
+    combined = _sorted_findings(base.get("findings") or [], extra_rows or [])
+    return _with_findings(base, extra, combined)
+
+
+def _with_findings(base, extra, combined):
+    holder = {**base, "findings": combined}
     if isinstance(holder.get("summary"), dict):
         holder["summary"] = {**holder["summary"], "findings": len(combined)}
     if isinstance(extra, dict) and "solid" in extra:

@@ -47,13 +47,7 @@ def ai_error(code, message):
 EXTRA_RULE_IDS = ("SRP-01", "OCP-01", "LSP-01", "ISP-01", "DIP-01", "A5-DEAD", "A8-DEFENSIVE")
 
 
-def merge_extra(result):
-    """把补充规则（S/O/D、死代码、防御式捕获）并入引擎结果，返回 (merged, extra)。
-
-    只新增 findings 与 config.rules 里的规则名，不改动引擎已产出的键值。
-    """
-    extra = extra_rules.evaluate(result)
-    merged = extra_rules.merge(result, extra)
+def _register_extra_rules(merged):
     config = merged.get("config")
     if not isinstance(config, dict):
         config = {}
@@ -63,6 +57,16 @@ def merge_extra(result):
         if rule_id not in ids:
             ids.append(rule_id)
     config["rules"] = ids
+
+
+def merge_extra(result):
+    """把补充规则（S/O/D、死代码、防御式捕获）并入引擎结果，返回 (merged, extra)。
+
+    只新增 findings 与 config.rules 里的规则名，不改动引擎已产出的键值。
+    """
+    extra = extra_rules.evaluate(result)
+    merged = extra_rules.merge(result, extra)
+    _register_extra_rules(merged)
     merged["extra_rules"] = {
         "findings": len(extra.get("findings") or []),
         "metrics": extra.get("metrics") or {},
@@ -107,16 +111,19 @@ def ai_status():
     }
 
 
-def _validate_ai_payload(payload):
-    """校验 AI 表达层请求的信封字段，非法时抛 SkillError。"""
-    if not isinstance(payload, dict):
-        raise ai_contract.SkillError("refused", "请求必须是 JSON 对象")
-    skills = payload.get("skills")
+def _validate_ai_skills(skills):
     if not isinstance(skills, list) or not skills:
         raise ai_contract.SkillError("refused", "skills 必须是非空数组")
     unknown = [item for item in skills if not isinstance(item, str) or item not in ai_contract.SKILLS]
     if unknown:
         raise ai_contract.SkillError("refused", "未注册的 skill：" + "、".join(str(x)[:40] for x in unknown[:4]))
+
+
+def _validate_ai_payload(payload):
+    """校验 AI 表达层请求的信封字段，非法时抛 SkillError。"""
+    if not isinstance(payload, dict):
+        raise ai_contract.SkillError("refused", "请求必须是 JSON 对象")
+    _validate_ai_skills(payload.get("skills"))
     _validate_ai_targets(payload.get("targets"))
 
 
@@ -127,6 +134,40 @@ def _validate_ai_targets(targets):
         raise ai_contract.SkillError("refused", "targets 必须是字符串数组或 null")
     if len(targets) > MAX_AI_TARGETS:
         raise ai_contract.SkillError("refused", "targets 超过上限 " + str(MAX_AI_TARGETS))
+
+
+def _empty_ai_result(result):
+    return {
+        "schema_version": ai_contract.SCHEMA_VERSION,
+        "engine_version": VERSION,
+        "project": result.get("project"),
+        "targets": [],
+        "results": [],
+        "summary": {"requested": 0, "ok": 0, "insufficient_evidence": 0,
+                    "need_more": 0, "refused": 0,
+                    "citations": {"count": 0, "resolved": 0, "unresolved": 0, "coverage": 0.0}},
+        "warnings": [{"code": "no-source", "message": "本次没有可分析的源码，AI 层未执行。"}],
+        "limitations": list(ai_runner.LIMITATIONS),
+    }
+
+
+def _ai_results(outcome, include_text):
+    results = outcome["results"]
+    if not include_text:
+        for item in results:
+            item["outputs"] = {}
+            item["notes"] = []
+    return results
+
+
+def _ai_warnings(outcome, extra, degraded):
+    warnings = list(outcome["warnings"])
+    if degraded:
+        warnings.append({"code": "provider-fallback",
+                         "message": "外部模型不可用，已退回确定性模板：" + degraded})
+    if extra.get("notes"):
+        warnings.append({"code": "extra-rules", "message": "；".join(extra["notes"])})
+    return warnings
 
 
 def ai_analyze(payload):
@@ -141,18 +182,7 @@ def ai_analyze(payload):
 
     result = analyze({"project": payload.get("project"), "files": payload.get("files") or []})
     if result.get("status") in ("empty", "failed"):
-        return {
-            "schema_version": ai_contract.SCHEMA_VERSION,
-            "engine_version": VERSION,
-            "project": result.get("project"),
-            "targets": [],
-            "results": [],
-            "summary": {"requested": 0, "ok": 0, "insufficient_evidence": 0,
-                        "need_more": 0, "refused": 0,
-                        "citations": {"count": 0, "resolved": 0, "unresolved": 0, "coverage": 0.0}},
-            "warnings": [{"code": "no-source", "message": "本次没有可分析的源码，AI 层未执行。"}],
-            "limitations": list(ai_runner.LIMITATIONS),
-        }
+        return _empty_ai_result(result)
 
     # 补充规则（SOLID 的 S/O/D、A5、A8）只并入这条 AI 路径，不改 analyze() 的契约。
     merged, extra = merge_extra(result)
@@ -162,17 +192,8 @@ def ai_analyze(payload):
     provider, degraded = ai_provider.resolve_provider()
     outcome = ai_runner.Runner(env, provider=provider).run(skills, targets=targets)
 
-    results = outcome["results"]
-    if not include_text:
-        for item in results:
-            item["outputs"] = {}
-            item["notes"] = []
-    warnings = list(outcome["warnings"])
-    if degraded:
-        warnings.append({"code": "provider-fallback",
-                         "message": "外部模型不可用，已退回确定性模板：" + degraded})
-    if extra.get("notes"):
-        warnings.append({"code": "extra-rules", "message": "；".join(extra["notes"])})
+    results = _ai_results(outcome, include_text)
+    warnings = _ai_warnings(outcome, extra, degraded)
     return {
         "schema_version": ai_contract.SCHEMA_VERSION,
         "engine_version": VERSION,

@@ -64,11 +64,16 @@ function errorObject(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
 }
 
+function nestedErrorMessage(error: unknown): string | undefined {
+  return nonEmptyErrorText(error) || nonEmptyErrorText(errorObject(error)?.message);
+}
+
 function messageFromError(data: unknown, fallback: string): string {
+  const direct = nonEmptyErrorText(data);
+  if (direct !== undefined) return direct;
   const record = errorObject(data);
-  const error = record?.error;
-  return nonEmptyErrorText(data) ?? nonEmptyErrorText(error) ?? nonEmptyErrorText(errorObject(error)?.message)
-    ?? nonEmptyErrorText(record?.message) ?? fallback;
+  if (!record) return fallback;
+  return nestedErrorMessage(record.error) || nonEmptyErrorText(record.message) || fallback;
 }
 
 function requestIdFromError(data: unknown): string | undefined {
@@ -152,18 +157,22 @@ export function fetchStatus(): Promise<StatusInfo> {
   return withLogging('api', '/api/status', {}, fetchStatusInner);
 }
 
+function normalizeStatus(data: Partial<StatusInfo>, status: number): StatusInfo {
+  if (!data.ready || !data.token) throw new ApiError('分析服务未返回可用令牌', status);
+  return {
+    ready: data.ready,
+    engine_version: String(data.engine_version ?? ''),
+    api_revision: Number(data.api_revision ?? 0),
+    capabilities: Array.isArray(data.capabilities) ? data.capabilities : [],
+    token: String(data.token),
+  };
+}
+
 async function fetchStatusInner(): Promise<StatusInfo> {
   const request = fetch('/api/status', { cache: 'no-store' }).then(async (response) => {
     if (!response.ok) throw new ApiError('服务未就绪', response.status);
     const data = (await response.json()) as Partial<StatusInfo>;
-    if (!data.ready || !data.token) throw new ApiError('分析服务未返回可用令牌', response.status);
-    return {
-      ready: data.ready,
-      engine_version: String(data.engine_version ?? ''),
-      api_revision: Number(data.api_revision ?? 0),
-      capabilities: Array.isArray(data.capabilities) ? data.capabilities : [],
-      token: String(data.token),
-    };
+    return normalizeStatus(data, response.status);
   });
   return withTimeout(request, STATUS_TIMEOUT, '连接本机引擎超时');
 }
@@ -292,20 +301,16 @@ function withProvider(payload: Record<string, unknown>, { baseUrl, model, apiKey
 }
 
 function explanationLocation(result: Partial<ExplainResult>, target: ExplainTarget) {
-  return {
-    file: String(result.file ?? target.file),
-    function: result.function ?? null,
-    line: result.line ?? null,
-    end_line: result.end_line ?? null,
-  };
+  const { function: name = null, line = null, end_line = null } = result;
+  return { file: String(result.file ?? target.file), function: name, line, end_line };
 }
 
 function normalizeExplanation(data: unknown, target: ExplainTarget): ExplainResult {
-  if (!data || typeof data !== 'object') throw new ApiError('模型未返回有效解读');
-  const result = data as Partial<ExplainResult>;
-  if (typeof result.text !== 'string' || !result.text.trim()) throw new ApiError('模型未返回有效解读');
+  const result = errorObject(data) as Partial<ExplainResult> | undefined;
+  const text = nonEmptyErrorText(result?.text);
+  if (!result || text === undefined) throw new ApiError('模型未返回有效解读');
   return {
-    text: result.text,
+    text,
     model: String(result.model ?? ''),
     ...explanationLocation(result, target),
     context: Array.isArray(result.context) ? result.context : [],

@@ -49,6 +49,11 @@ def _module_alias(alias):
     return head, head
 
 
+def _imported_symbols(record, statement):
+    prefix = _import_prefix(record, statement)
+    return ((alias.asname or alias.name, prefix + "." + alias.name) for alias in statement.names)
+
+
 def _collect_aliases(result, trees, cls):
     """Build a short-name -> qualified-name map for one class's module imports."""
     aliases = {}
@@ -57,8 +62,7 @@ def _collect_aliases(result, trees, cls):
         if isinstance(item, ast.Import):
             aliases.update(_module_alias(alias) for alias in item.names)
         elif isinstance(item, ast.ImportFrom):
-            prefix = _import_prefix(record, item)
-            aliases.update((alias.asname or alias.name, prefix + "." + alias.name) for alias in item.names)
+            aliases.update(_imported_symbols(record, item))
     return aliases
 
 
@@ -121,14 +125,19 @@ def _emit_annotation_relations(cls, node, methods, aliases, classes, relation):
                 relation(cls["id"], target, kind, cls["file"], item.lineno)
 
 
+def _resolved_constructors(graph, methods, classes):
+    method_ids = set(methods.values())
+    return {(c["line"], c.get("expression")): c["target"] for c in graph.get("calls", [])
+                    if c.get("source") in method_ids and c.get("target") in classes and c.get("status") == "resolved"}
+
+
 def _collect_class_relations(result, cls, classes, functions, nodes, trees, graph, relation):
     """Emit dependency/composition/association edges for one class."""
     node = nodes.get((cls["file"], cls["line"]))
     if not node:
         return
     methods = {functions[m]["line"]: m for m in cls.get("methods", []) if m in functions}
-    constructors = {(c["line"], c.get("expression")): c["target"] for c in graph.get("calls", [])
-                    if c.get("source") in methods.values() and c.get("target") in classes and c.get("status") == "resolved"}
+    constructors = _resolved_constructors(graph, methods, classes)
     _emit_call_relations(cls, node, constructors, relation)
 
     aliases = _collect_aliases(result, trees, cls)
@@ -219,6 +228,14 @@ def _index_trees(result):
     return nodes, trees
 
 
+def _project_class_metrics(classes, functions, nodes, relations, parents):
+    metrics = []
+    for ident, cls in sorted(classes.items()):
+        metrics.append(_class_metrics(ident, cls, functions, nodes, relations))
+        metrics[-1]["dit"] = _depth(ident, set(), classes, parents)
+    return metrics
+
+
 def apply(result):
     classes = {c["id"]: c for c in result.get("classes", [])}
     functions = {f["id"]: f for f in result.get("functions", [])}
@@ -241,11 +258,7 @@ def apply(result):
     for ident, cls in classes.items():
         _collect_class_relations(result, cls, classes, functions, nodes, trees, graph, relation)
 
-    metrics = []
-    for ident, cls in sorted(classes.items()):
-        metrics.append(_class_metrics(ident, cls, functions, nodes, relations))
-        metrics[-1]["dit"] = _depth(ident, set(), classes, parents)
-
+    metrics = _project_class_metrics(classes, functions, nodes, relations, parents)
     duplicate_groups = _detect_clones(functions, nodes)
     findings = _clone_findings(result, duplicate_groups)
     graph["class_relations"] = sorted(relations, key=lambda e: (e["source"], e["target"], e["kind"], e["line"]))

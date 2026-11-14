@@ -114,10 +114,13 @@ class Index:
                 self.classes[ident] = entry
             else:
                 self.functions[ident] = entry
-            for stmt in entry.get("statements") or []:
-                line = stmt.get("line")
-                if isinstance(line, int):
-                    self.statements[(ident, line)] = stmt
+            self._index_statements(ident, entry.get("statements") or [])
+
+    def _index_statements(self, ident, statements):
+        for stmt in statements:
+            line = stmt.get("line")
+            if isinstance(line, int):
+                self.statements[(ident, line)] = stmt
 
     def _index_findings(self, result):
         for finding in result.get("findings") or []:

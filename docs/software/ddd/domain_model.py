@@ -126,10 +126,8 @@ class ReviewReport:
             raise ValueError("报告身份不能为空")
         if not isinstance(self.analysis, AnalysisReference):
             raise ValueError("报告必须引用一次具体分析")
-        paths = tuple(relative_file(p) for p in self.source_files)
-        if len(set(paths)) != len(paths):
-            raise ValueError("源码文件身份不能重复")
-        object.__setattr__(self, "source_files", tuple(sorted(paths)))
+        paths = self._normalized_source_files()
+        object.__setattr__(self, "source_files", paths)
         object.__setattr__(self, "_findings", tuple(self._findings))
         if self.state not in {"draft", "finalized"}:
             raise ValueError("未知报告状态")
@@ -138,6 +136,12 @@ class ReviewReport:
         self._validate_findings(paths)
         if self.state == "finalized":
             self._validate_finalization()
+
+    def _normalized_source_files(self):
+        paths = tuple(relative_file(path) for path in self.source_files)
+        if len(set(paths)) != len(paths):
+            raise ValueError("源码文件身份不能重复")
+        return tuple(sorted(paths))
 
     def _validate_findings(self, paths):
         ids = set()

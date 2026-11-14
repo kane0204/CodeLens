@@ -8,7 +8,9 @@ Behavioral pre/postconditions and arbitrary runtime types require human review.
 import ast
 import inspect
 
-RULE_IDS = ("SRP-01", "OCP-01", "LSP-01", "ISP-01", "DIP-01")
+from . import levels
+
+RULE_IDS = (levels.RULE_SRP, levels.RULE_OCP, levels.RULE_LSP, levels.RULE_ISP, levels.RULE_DIP)
 LIMITATIONS = [
     "SOLID 五项均提供静态检查；未命中不等于符合原则。S/O/D 为设计线索。",
     "L 检查继承方法的调用签名、绑定方式、同步/异步变化和显式拒绝实现；不证明行为契约、前后置条件或类型兼容。",
@@ -213,10 +215,10 @@ def _check_override(ident, cls, name, child, base_id, parent, public_contract, g
         return 0
     reasons, refused = _lsp_reasons(parent, child, witness)
     if reasons:
-        add("LSP-01", cls, child, base_id,
+        add(levels.RULE_LSP, cls, child, base_id,
             "{}.{} 覆盖 {}.{} 时{}；请复核可替换性。".format(ident, name, base_id, name, "；".join(reasons)), reasons)
     if refused and name in public_contract and len(public_contract) >= 2:
-        add("ISP-01", cls, child, base_id,
+        add(levels.RULE_ISP, cls, child, base_id,
             "{} 继承的公开契约有 {} 个方法，但 {} 显式抛出 NotImplementedError，可能被迫依赖不需要的成员。".format(ident, len(public_contract), name),
             {"contract_methods": sorted(public_contract), "refused": name})
     return 1
@@ -280,10 +282,10 @@ def evaluate(result, nodes):
     findings, gaps = [], []
 
     def add(rule, cls, method, base_id, message, actual):
-        findings.append({"rule_id": rule, "severity": "warning", "file": cls["file"],
+        findings.append({"rule_id": rule, "severity": levels.SEVERITY_WARNING, "file": cls["file"],
                          "line": method.lineno, "message": message,
                          "suggestion": "核对父类契约与调用方；保持可替换的签名和行为，或拆分接口并使用组合。",
-                         "evidence_type": "inference", "confidence": "medium",
+                         "evidence_type": levels.EVIDENCE_INFERENCE, "confidence": levels.CONFIDENCE_MEDIUM,
                          "actual": actual, "threshold": None,
                          "related": [{"file": classes[base_id]["file"],
                                       "line": methods[base_id][method.name].lineno}]})

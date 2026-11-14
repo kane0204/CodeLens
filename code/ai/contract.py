@@ -32,7 +32,30 @@ SKILLS = {
 #: 不允许用它触发全局重新规划（外层 DAG 固定）。
 STATUSES = ("ok", "insufficient_evidence", "need_more", "refused")
 
-CONFIDENCES = ("high", "medium", "low")
+CONFIDENCE_HIGH = "high"
+CONFIDENCE_MEDIUM = "medium"
+CONFIDENCE_LOW = "low"
+CONFIDENCES = (CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, CONFIDENCE_LOW)
+
+#: 规则引擎产出的 finding 词汇。表达层只读取这些值，不新增、不修改 id。
+#: 与 core_engine/levels.py 同名，但保持本层不依赖实现层，故各自声明。
+SEVERITY_CRITICAL = "critical"
+SEVERITY_WARNING = "warning"
+SEVERITY_INFO = "info"
+
+RULE_CC = "CC-01"
+RULE_LEN = "LEN-01"
+RULE_DEPTH = "DEPTH-01"
+RULE_A4 = "A4"
+RULE_A3_IO = "A3-IO"
+RULE_CYCLE = "CYCLE-01"
+RULE_A5_DEAD = "A5-DEAD"
+RULE_A8_DEFENSIVE = "A8-DEFENSIVE"
+RULE_SRP = "SRP-01"
+RULE_OCP = "OCP-01"
+RULE_LSP = "LSP-01"
+RULE_ISP = "ISP-01"
+RULE_DIP = "DIP-01"
 
 CLAIM_KINDS = (
     "responsibility",  # 一句话职责
@@ -84,7 +107,7 @@ def short_hash(value):
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def claim(text, evidence, kind="step", confidence="medium"):
+def claim(text, evidence, kind="step", confidence=CONFIDENCE_MEDIUM):
     """构造一条 claim。只做形状规整，真正的合法性在 validate 里判定。"""
     return {
         "kind": kind,

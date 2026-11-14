@@ -20,6 +20,7 @@ from core_engine import rules as extra_rules
 from core_engine import sequence
 from core_engine import quality
 from core_engine import special
+from core_engine import levels
 from core_engine.ir import build_index
 from ai import contract as ai_contract
 from ai import provider as ai_provider
@@ -45,7 +46,8 @@ def ai_error(code, message):
 
 # 补充规则单列在这里：引擎 config.rules 仍然只列引擎自己执行的规则，
 # 前端靠这份清单判断「设计检查」页该展示哪几条。
-EXTRA_RULE_IDS = ("SRP-01", "OCP-01", "LSP-01", "ISP-01", "DIP-01", "A5-DEAD", "A8-DEFENSIVE")
+EXTRA_RULE_IDS = (levels.RULE_SRP, levels.RULE_OCP, levels.RULE_LSP, levels.RULE_ISP,
+                  levels.RULE_DIP, levels.RULE_A5_DEAD, levels.RULE_A8_DEFENSIVE)
 
 
 def _register_extra_rules(merged):
@@ -288,7 +290,7 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             obs.log_event(logger, logging.DEBUG, "review_transport_closed", request_id=rid)
         except Exception as exc:
-            obs.log_exception(logger, exc, rid, method="POST", path="/api/review")
+            obs.log_exception(logger, exc, rid, method="POST", path=obs.API_REVIEW)
             fail("AI 审查失败；未生成替代结论")
 
     def dispatch(self, method, handler):
@@ -334,10 +336,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed_host():
             return self.send_data(403,{"error":"只允许本机访问"})
         path = self.request_path()
-        if path == "/api/status":
+        if path == obs.API_STATUS:
             return self.send_data(200,{"ready":True,"engine_version":VERSION,"api_revision":API_REVISION,
                                       "capabilities":CAPABILITIES,"token":TOKEN})
-        if path == "/api/ai/status":
+        if path == obs.API_AI_STATUS:
             return self.send_data(200, ai_status())
         return self.send_data(404,{"error":"接口不存在；界面请访问 http://localhost:5173"})
 
@@ -354,7 +356,7 @@ class Handler(BaseHTTPRequestHandler):
                           request_id=self.request_id, reason="guard")
             return self.send_data(403,{"error":"请从本机 CodeLens 页面发起分析"})
         path = self.request_path()
-        if path not in ("/api/analyze", "/api/ai", "/api/explain", "/api/review", "/api/review/cached"):
+        if path not in (obs.API_ANALYZE, obs.API_AI, obs.API_EXPLAIN, obs.API_REVIEW, obs.API_REVIEW_CACHED):
             return self.send_data(404,{"error":"接口不存在"})
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
             return self.send_data(415,{"error":"仅支持 JSON 请求"})
@@ -402,23 +404,23 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(data)
 
     def _route_post(self, path, payload):
-        if path == "/api/explain":
+        if path == obs.API_EXPLAIN:
             return self.send_data(200, explanation.explain(payload))
-        if path == "/api/review":
+        if path == obs.API_REVIEW:
             return self.stream_review(payload)
-        if path == "/api/review/cached":
+        if path == obs.API_REVIEW_CACHED:
             return self.send_data(200, {"result": explanation.cached_review(payload, getattr(self.server, "review_store", None))})
-        if path == "/api/ai":
+        if path == obs.API_AI:
             return self.send_data(200, ai_analyze(payload))
         return self.send_data(200, enrich(analyze(payload)))
 
     def _post_skill_error(self, path, exc):
-        if path == "/api/ai":
+        if path == obs.API_AI:
             return self.send_data(400, ai_error(exc.kind, str(exc)[:200]))
         return self.send_data(400, {"error": obs.redact(str(exc))})
 
     def _post_internal_error(self, path):
-        if path == "/api/ai":
+        if path == obs.API_AI:
             return self.send_data(500, ai_error("internal", "AI 解读失败；未生成替代结论"))
         return self.send_data(500,{"error":"分析失败，请缩小项目范围后重试；未生成替代结果"})
 

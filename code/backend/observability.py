@@ -42,8 +42,16 @@ BACKUP_COUNT = 5
 
 LEVELS = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING,
           "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
-_API_PATHS = frozenset({"/api/status", "/api/ai/status", "/api/analyze", "/api/ai",
-                        "/api/explain", "/api/review", "/api/review/cached"})
+
+API_STATUS = "/api/status"
+API_AI_STATUS = "/api/ai/status"
+API_ANALYZE = "/api/analyze"
+API_AI = "/api/ai"
+API_EXPLAIN = "/api/explain"
+API_REVIEW = "/api/review"
+API_REVIEW_CACHED = "/api/review/cached"
+API_PATHS = frozenset({API_STATUS, API_AI_STATUS, API_ANALYZE, API_AI,
+                       API_EXPLAIN, API_REVIEW, API_REVIEW_CACHED})
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 # Defence in depth: even if a future call site passes a raw payload, scrub
@@ -83,7 +91,7 @@ def redact(value: Any, limit: int = MAX_MESSAGE) -> str:
 
 def safe_path(path: str) -> str:
     """Only known API routes are logged verbatim; everything else is opaque."""
-    return path if path in _API_PATHS else "<other>"
+    return path if path in API_PATHS else "<other>"
 
 
 def format_fields(fields: dict[str, Any]) -> str:

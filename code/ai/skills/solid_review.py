@@ -6,16 +6,16 @@ from . import base
 from .base import Skill
 
 #: 本 skill 负责解释的规则。顺序即呈现顺序。
-RULES = ("SRP-01", "OCP-01", "LSP-01", "ISP-01", "DIP-01")
+RULES = (contract.RULE_SRP, contract.RULE_OCP, contract.RULE_LSP, contract.RULE_ISP, contract.RULE_DIP)
 
-LETTERS = {"LSP-01": "LSP（里氏替换）", "ISP-01": "ISP（接口隔离）", "SRP-01": "SRP（单一职责）", "OCP-01": "OCP（开闭）", "DIP-01": "DIP（依赖倒置）"}
+LETTERS = {contract.RULE_LSP: "LSP（里氏替换）", contract.RULE_ISP: "ISP（接口隔离）", contract.RULE_SRP: "SRP（单一职责）", contract.RULE_OCP: "OCP（开闭）", contract.RULE_DIP: "DIP（依赖倒置）"}
 
 ADVICE = {
-    "LSP-01": "保持父方法接受的调用与行为契约；复核覆盖方法。",
-    "ISP-01": "拆分被显式拒绝的接口职责，或改用组合。",
-    "SRP-01": "按「数据 + 行为」切分：把操作同一组字段的方法聚在一起，其余迁出；方法多本身不是错，只是更难说清它负责什么。",
-    "OCP-01": "如果这些分支处理的是彼此独立的行为，把差异下沉到各自类型的实现里；分支少的时候条件判断更好读，不必强改。",
-    "DIP-01": "核对这几处构造是否需要可替换：需要就改成由调用方传入；不需要时直接构造是更简单的选择。",
+    contract.RULE_LSP: "保持父方法接受的调用与行为契约；复核覆盖方法。",
+    contract.RULE_ISP: "拆分被显式拒绝的接口职责，或改用组合。",
+    contract.RULE_SRP: "按「数据 + 行为」切分：把操作同一组字段的方法聚在一起，其余迁出；方法多本身不是错，只是更难说清它负责什么。",
+    contract.RULE_OCP: "如果这些分支处理的是彼此独立的行为，把差异下沉到各自类型的实现里；分支少的时候条件判断更好读，不必强改。",
+    contract.RULE_DIP: "核对这几处构造是否需要可替换：需要就改成由调用方传入；不需要时直接构造是更简单的选择。",
 }
 
 
@@ -85,11 +85,11 @@ class SolidReview(Skill):
                 "{} 在{}五项静态检查中没有命中规则（方法数 {}）。"
                 "这只说明当前静态规则未命中，不等于这个类就符合 SOLID。".format(
                     name, "、".join(LETTERS[rule] for rule in RULES), len(ctx["methods"])),
-                evidence_head, kind="advice", confidence="low"))
+                evidence_head, kind="advice", confidence=contract.CONFIDENCE_LOW))
 
         claims.append(contract.claim(
             "本次提供 S、O、L、I、D 五项静态检查。L 与 I 只覆盖已解析的单继承方法契约与显式拒绝；外部父类、多继承、自定义装饰器及行为契约仍需人工复核。",
-            evidence_head, kind="advice", confidence="high"))
+            evidence_head, kind="advice", confidence=contract.CONFIDENCE_HIGH))
 
         headline = base.short("{}：{} 条 SOLID 口径命中".format(name, len(by_rule)), 120)
         return self.envelope(ctx, claims, {"headline": headline, "checks": checks},
@@ -104,7 +104,7 @@ class SolidReview(Skill):
             "{} 的{}：{}（口径值 {}，阈值 {}）。{}".format(
                 name, letter, first.get("message"), first.get("actual"), first.get("threshold"), ADVICE[rule]),
             base.finding_refs(items, limit=3) + ["def:" + ctx["ident"]],
-            kind="advice", confidence=first.get("confidence") or "low")
+            kind="advice", confidence=first.get("confidence") or contract.CONFIDENCE_LOW)
         return "{}：命中 {}".format(letter, first.get("actual")), claim
 
     def prompt(self, ctx):

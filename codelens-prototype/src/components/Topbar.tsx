@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../state/AppState';
 import type { Route } from '../types';
 import { Icon, LensMark } from './Icon';
-import { Button, IconButton } from './Ui';
+import { Button } from './Ui';
 
 export const ROUTES: { key: Route; label: string }[] = [
   { key: 'overview', label: '总览' },
@@ -15,7 +15,7 @@ export const ROUTES: { key: Route; label: string }[] = [
 ];
 
 export function Topbar() {
-  const { route, go, result, requestReimport, openSettings } = useApp();
+  const { route, go, result, busy, reviewBusy, requestReimport, openSettings } = useApp();
   return (
     <>
       <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line bg-card px-4">
@@ -31,8 +31,8 @@ export function Topbar() {
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <IconButton icon="settings" label="模型设置" onClick={openSettings} />
-          <Button size="sm" icon="refresh" onClick={requestReimport} className="hidden sm:inline-flex">
+          <Button size="sm" icon="apiSettings" onClick={openSettings}>模型设置</Button>
+          <Button size="sm" icon="refresh" onClick={requestReimport} disabled={busy || reviewBusy} className="hidden sm:inline-flex">
             重新导入
           </Button>
           <ExportMenu />

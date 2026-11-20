@@ -32,6 +32,14 @@ const paths: Record<string, ReactNode> = {
       <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" />
     </>
   ),
+  apiSettings: (
+    <>
+      <path d="M4 6h16M4 12h16M4 18h16" />
+      <circle cx="8" cy="6" r="2" fill="var(--color-card)" />
+      <circle cx="15" cy="12" r="2" fill="var(--color-card)" />
+      <circle cx="10" cy="18" r="2" fill="var(--color-card)" />
+    </>
+  ),
   download: (
     <>
       <path d="M12 4v12" />

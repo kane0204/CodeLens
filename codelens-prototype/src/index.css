@@ -94,6 +94,14 @@
 }
 
 @layer utilities {
+  .text-\[9\.5px\], .text-\[10px\], .text-\[10\.5px\], .text-\[11px\] {
+    font-size: 0.8125rem;
+  }
+
+  .text-\[11\.5px\], .text-\[12px\], .text-\[12\.5px\], .text-\[13px\] {
+    font-size: 0.875rem;
+  }
+
   .num {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
@@ -142,7 +150,7 @@
 /* 源码行 */
 .source-block {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.7;
   tab-size: 2;
 }
@@ -200,7 +208,7 @@
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .data-table thead th {
@@ -212,7 +220,7 @@
   padding: 7px 10px;
   text-align: left;
   font-weight: 600;
-  font-size: 11px;
+  font-size: 13px;
   letter-spacing: 0.04em;
   color: #78716c;
   white-space: nowrap;

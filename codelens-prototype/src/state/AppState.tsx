@@ -429,20 +429,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [executeReview, toast]);
 
   const runWithRaw = useCallback(
-    async (raw: RawFile[], autoReview = true, historyProject?: string | null) => {
-      if (busy || status !== 'ready') return;
-      const prepared = prepareSelection(raw);
-      setErrors(prepared.errors);
-      setIgnored(prepared.ignored);
-      if (prepared.errors.length) {
-        toast('文件不符合分析限制，请查看提示', 'warning');
-        return;
-      }
-
+    async (source: RawFile[] | DataTransfer, autoReview = true, historyProject?: string | null) => {
+      if (analyzeController.current || status !== 'ready') return;
       setBusy(true);
-      setPhase('读取项目文件');
+      setErrors([]);
+      setIgnored({});
+      setPhase('正在检查项目文件');
       setProgress(0);
-      setProgressTotal(prepared.files.length);
+      setProgressTotal(1);
       setEta(null);
       setImporting(true);
 
@@ -451,6 +445,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       progressClock.current = performance.now();
 
       try {
+        const raw = Array.isArray(source) ? source : await filesFromDataTransfer(source, controller.signal);
+        controller.signal.throwIfAborted();
+        const prepared = prepareSelection(raw);
+        setErrors(prepared.errors);
+        setIgnored(prepared.ignored);
+        if (prepared.errors.length) {
+          toast('文件不符合分析限制，请查看提示', 'warning');
+          return;
+        }
+        setPhase('读取项目文件');
+        setProgressTotal(prepared.files.length);
         const data = await analyzeProject(
           { project: prepared.project, files: prepared.files, historyProject },
           token,
@@ -475,7 +480,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setBusy(false);
       }
     },
-    [busy, status, token, toast, resetAfterResult, reportAnalysisProgress, announceAnalysis],
+    [status, token, toast, resetAfterResult, reportAnalysisProgress, announceAnalysis],
   );
 
   const startAnalysis = useCallback(
@@ -487,13 +492,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const startFromTransfer = useCallback(
     async (transfer: DataTransfer, autoReview = true, historyProject?: string | null) => {
-      try {
-        const raw = await filesFromDataTransfer(transfer, new AbortController().signal);
-        await runWithRaw(raw, autoReview, historyProject);
-    } catch (error) {
-      logger.warn('analyze', 'drop.read_failed', { message: errorText(error, '') });
-      setErrors([errorText(error, '读取拖拽目录失败，请重试。')]);
-    }
+      await runWithRaw(transfer, autoReview, historyProject);
     },
     [runWithRaw],
   );

@@ -135,42 +135,53 @@ function readDirectoryEntries(reader: FileSystemDirectoryReader): Promise<FileSy
   });
 }
 
-async function walkEntry(entry: FileSystemEntry, prefix: string, signal: AbortSignal): Promise<RawFile[]> {
-  if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+async function collectEntries(
+  entry: FileSystemEntry, prefix: string, signal: AbortSignal,
+  output: Array<{ entry: FileSystemFileEntry; path: string }>,
+): Promise<void> {
+  signal.throwIfAborted();
+  const path = prefix + entry.name;
   if (entry.isFile) {
-    const file = await readEntryFile(entry as FileSystemFileEntry);
-    return [{ file, path: prefix + entry.name }];
+    if (!isExcluded(path)) output.push({ entry: entry as FileSystemFileEntry, path });
+    return;
   }
-  if (!entry.isDirectory) return [];
+  if (!entry.isDirectory || isExcluded(`${path}/_`)) return;
   const reader = (entry as FileSystemDirectoryEntry).createReader();
-  const output: RawFile[] = [];
   for (;;) {
+    signal.throwIfAborted();
     const batch = await readDirectoryEntries(reader);
     if (!batch.length) break;
     for (const child of batch) {
-      output.push(...(await walkEntry(child, `${prefix}${entry.name}/`, signal)));
+      await collectEntries(child, `${path}/`, signal, output);
     }
   }
-  return output;
 }
 
 export async function filesFromDataTransfer(
   transfer: DataTransfer,
   signal: AbortSignal,
 ): Promise<RawFile[]> {
+  signal.throwIfAborted();
   const items = [...transfer.items].filter((item) => item.kind === 'file');
-  const entries: FileSystemEntry[] = [];
-  for (const item of items) {
-    const entry = item.webkitGetAsEntry();
-    if (entry) entries.push(entry);
-  }
-  if (!entries.length) {
-    return [...transfer.files].map((file) => ({ file, path: file.name }));
-  }
+  const sources = items.map((item) => ({ item, entry: item.webkitGetAsEntry?.() }));
+  const entries = sources.flatMap(({ entry }) => entry ? [entry] : []);
+  if (!entries.length) return filesFromInput(transfer.files);
+  const fallback = sources.flatMap(({ item, entry }) => entry ? [] : [item.getAsFile()]);
+  const fileEntries: Array<{ entry: FileSystemFileEntry; path: string }> = [];
   const output: RawFile[] = [];
   for (const entry of entries) {
-    output.push(...(await walkEntry(entry, '', signal)));
+    await collectEntries(entry, '', signal, fileEntries);
   }
+  const batchSize = 16;
+  for (let offset = 0; offset < fileEntries.length; offset += batchSize) {
+    signal.throwIfAborted();
+    const files = await Promise.all(fileEntries.slice(offset, offset + batchSize).map(async ({ entry, path }) => ({
+      path, file: await readEntryFile(entry),
+    })));
+    output.push(...files);
+  }
+  signal.throwIfAborted();
+  for (const file of fallback) if (file) output.push({ file, path: file.name });
   return output;
 }
 

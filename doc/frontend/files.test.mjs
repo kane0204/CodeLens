@@ -90,7 +90,11 @@ test('directory drop drains every reader batch and preserves nested paths', asyn
     name, isDirectory: true,
     createReader: () => ({ readEntries: (read) => read(batches.shift() ?? []) }),
   });
-  const entry = directory('demo', [[fileEntry(main)], [directory('src', [[fileEntry(app)]])]]);
+  const excluded = {
+    name: 'node_modules', isDirectory: true,
+    createReader: () => assert.fail('excluded directory must not be enumerated'),
+  };
+  const entry = directory('demo', [[excluded, fileEntry(main)], [directory('src', [[fileEntry(app)]])]]);
   const transfer = {
     items: [{ kind: 'file', webkitGetAsEntry: () => entry }],
     files: [],

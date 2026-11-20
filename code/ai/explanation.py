@@ -1,5 +1,6 @@
 """On-demand natural-language source explanations. No template fallback."""
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 import http.client
 import logging
@@ -50,6 +51,20 @@ class _ReviewJob:
 
 _REVIEW_JOBS = {}
 _REVIEW_LOCK = threading.Lock()
+
+
+@lru_cache(maxsize=1)
+def _analyze_review_input(source_payload):
+    return analyze(json.loads(source_payload))
+
+
+def _review_input(payload):
+    source = {"files": payload.get("files"), "project": payload.get("project")}
+    try:
+        serialized = json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError, RecursionError):
+        return analyze(source)
+    return _analyze_review_input(serialized)
 
 
 def _review_fingerprint(result, endpoint, model, key, scope="project", history_project=None, memory=()):
@@ -166,10 +181,18 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _TRANSPORT_ERRORS = (urllib.error.URLError, OSError, http.client.HTTPException)
+_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
 
 
 def _transport_reason(exc):
     return exc.reason if isinstance(exc, urllib.error.URLError) else exc
+
+
+def _retry_delay(headers, attempt):
+    retry_after = headers.get("Retry-After", "").strip() if headers else ""
+    if len(retry_after) <= 9 and retry_after.isascii() and retry_after.isdecimal():
+        return min(int(retry_after), 30)
+    return attempt
 
 
 def _read_model_response(request):
@@ -178,8 +201,12 @@ def _read_model_response(request):
         try:
             with opener.open(request, timeout=_CHAT_TIMEOUT) as response:
                 return response.read(MAX_RESPONSE_BYTES + 1)
-        except urllib.error.HTTPError:
-            raise
+        except urllib.error.HTTPError as exc:
+            if attempt == 3 or exc.code not in _RETRYABLE_STATUS:
+                raise
+            delay = _retry_delay(exc.headers, attempt)
+            exc.close()
+            time.sleep(delay)
         except _TRANSPORT_ERRORS as exc:
             reason = _transport_reason(exc)
             logging.getLogger("codelens").warning(
@@ -590,7 +617,7 @@ def review(payload, result=None, progress=None, store=None, *, memory=(), histor
     """Resume the matching review from memory or the configured local store."""
     endpoint, model, key = _provider_config(payload)
     if result is None:
-        result = analyze({"files": payload.get("files"), "project": payload.get("project")})
+        result = _review_input(payload)
     scope = _review_scope(payload)
     fingerprint = _review_fingerprint(result, endpoint, model, key, scope, history_project, memory)
     job, state = _claim_review_job(fingerprint, store)
@@ -623,7 +650,7 @@ def _resume_job(previous, storage):
 
 def cached_review(payload, store, *, memory=(), history_project=None):
     endpoint, model, key = _provider_config(payload)
-    result = analyze({"files": payload.get("files"), "project": payload.get("project")})
+    result = _review_input(payload)
     fingerprint = _review_fingerprint(result, endpoint, model, key, _review_scope(payload), history_project, memory)
     with _REVIEW_LOCK:
         job = _REVIEW_JOBS.get(fingerprint) or _restore_job(store, fingerprint)
@@ -703,6 +730,9 @@ def _completion_endpoint(endpoint):
     if parts.scheme not in {"http", "https"} or not parts.hostname or any(
             (parts.username, parts.password, parts.query, parts.fragment)):
         raise ValueError("模型接口须为不含账号、查询参数或片段的 HTTP/HTTPS 地址")
+    # Accessing port validates both syntax and range before the HTTP request.
+    if parts.port == 0:
+        raise ValueError("模型接口端口必须在 1 到 65535 之间")
     endpoint = endpoint.rstrip("/")
     return endpoint if endpoint.endswith("/chat/completions") else endpoint + "/chat/completions"
 

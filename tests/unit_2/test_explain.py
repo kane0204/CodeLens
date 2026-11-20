@@ -174,6 +174,16 @@ class ModelTransportTests(unittest.TestCase):
         self.assertIn("type=TimeoutError", logs.output[0])
         self.assertNotIn("private data", logs.output[0])
 
+    def test_rate_limit_honors_retry_after_then_recovers(self):
+        response = io.BytesIO(b'{"choices":[{"message":{"content":"recovered"}}]}')
+        throttled = HTTPError(self.endpoint, 429, "rate limited", {"Retry-After": "5"}, io.BytesIO())
+        with patch.object(explanation.urllib.request, "build_opener") as build, \
+                patch.object(explanation.time, "sleep") as sleep:
+            build.return_value.open.side_effect = [throttled, response]
+            self.assertEqual(explanation._chat(self.endpoint, "unit", "", "system", "source"),
+                             ("recovered", False))
+        sleep.assert_called_once_with(5)
+
     def test_truncated_response_and_tls_eof_can_recover_on_third_attempt(self):
         import http.client
         import ssl

@@ -95,9 +95,14 @@ class ProjectReviewTests(unittest.TestCase):
 
     def test_completed_review_is_reused_only_for_matching_source_and_model(self):
         self.chat.return_value = (self.report, False)
-        first = explanation.review(self.payload)
+        explanation._analyze_review_input.cache_clear()
+        self.addCleanup(explanation._analyze_review_input.cache_clear)
+        with patch.object(explanation, "analyze", wraps=explanation.analyze) as analyze:
+            self.assertIsNone(explanation.cached_review(self.payload, None))
+            first = explanation.review(self.payload)
+            self.assertEqual(explanation.review(self.payload), first)
+            analyze.assert_called_once()
 
-        self.assertEqual(explanation.review(self.payload), first)
         self.chat.assert_called_once()
 
         changed = {**self.payload, "files": [

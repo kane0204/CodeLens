@@ -36,18 +36,20 @@ if errorlevel 1 (
   if errorlevel 1 goto backend_setup_failed
 )
 
-rem --- Install frontend dependencies on first run ---
-if not exist "codelens-prototype\node_modules\vite" (
-  echo Installing frontend dependencies ^(first run only^)...
-  pushd "codelens-prototype"
-  call npm install
+rem --- Restore missing or incompatible packages from the lockfile ---
+pushd "codelens-prototype"
+call npm ls --depth=0 >nul 2>&1
+if errorlevel 1 (
+  echo Installing frontend dependencies...
+  call npm ci --no-audit --no-fund
   if errorlevel 1 (
-    echo Frontend install failed; backend will still start. See README for manual setup.
     popd
-    goto backend
+    echo Frontend setup failed. Check Node.js and npm, then rerun this script.
+    pause
+    exit /b 1
   )
-  popd
 )
+popd
 
 rem --- Start the React dev server; --strictPort fails loudly if 5173 is occupied ---
 pushd "codelens-prototype"
@@ -57,7 +59,6 @@ popd
 rem --- Check the UI and its API proxy while the backend starts below ---
 start "" /b powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 30; $i++){ try { $null=Invoke-WebRequest -UseBasicParsing -Uri '%UIURL%' -TimeoutSec 2; $api=Invoke-RestMethod -Uri '%UIURL%api/status' -TimeoutSec 2; if($api.ready){$ok=$true;break} } catch {}; Start-Sleep -Seconds 1 }; if($ok){ Start-Process '%UIURL%' -WindowStyle Normal } else { Write-Host 'WARNING: UI or API not ready; check the startup logs.' }"
 
-:backend
 echo.
 echo Backend API %APIURL%  ^|  React UI %UIURL%
 echo Keep this window open. Closing it stops the backend.

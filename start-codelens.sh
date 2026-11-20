@@ -27,9 +27,9 @@ if ! "$BACKEND_PYTHON" -B code/backend/asgi.py --help >/dev/null 2>&1; then
 fi
 
 # New React workbench (codelens-prototype)
-if [ ! -d codelens-prototype/node_modules ]; then
-  echo "Installing frontend dependencies (first run only)..."
-  (cd codelens-prototype && npm install)
+if ! (cd codelens-prototype && npm ls --depth=0 >/dev/null 2>&1); then
+  echo "Installing frontend dependencies..."
+  (cd codelens-prototype && npm ci --no-audit --no-fund)
 fi
 
 # --strictPort: fail loudly instead of silently moving to 5174

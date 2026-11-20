@@ -9,7 +9,7 @@ const SEVERITIES: Severity[] = ['critical', 'warning', 'info'];
 
 function Gauge({ maxCc, averageCc }: { maxCc: number | null; averageCc: number | null }) {
   if (maxCc === null) {
-    return <EmptyState compact title="引擎未产出圈复杂度" hint="本次响应中没有可用的 max_cc。" />;
+    return <EmptyState compact title="没有可用的函数复杂度数据" />;
   }
   const radius = 68;
   const circumference = 2 * Math.PI * radius;
@@ -56,7 +56,7 @@ function Gauge({ maxCc, averageCc }: { maxCc: number | null; averageCc: number |
       <div className="min-w-0">
         <p className={`text-[12.5px] font-semibold ${maxCc > 10 ? 'text-warning' : 'text-primary'}`}>{verdict}</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted">
-          圆弧按 0–20 映射；超出部分不再延长圆弧。该图只描述函数复杂度，不代表健康度评分。
+          分值越高，函数中的分支越多，阅读和测试也越费力。圆弧最多显示到 20。
         </p>
       </div>
     </div>
@@ -66,7 +66,7 @@ function Gauge({ maxCc, averageCc }: { maxCc: number | null; averageCc: number |
 function RiskPie({ counts }: { counts: Record<Severity, number> }) {
   const total = SEVERITIES.reduce((sum, key) => sum + counts[key], 0);
   if (!total) {
-    return <EmptyState compact title="当前分析没有风险条目" hint="findings 为空时不会绘制分布。" />;
+    return <EmptyState compact title="本次分析没有发现风险" />;
   }
   const radius = 52;
   const circumference = 2 * Math.PI * radius;

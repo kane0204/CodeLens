@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type KeyboardEvent } from 'react';
 import type { ClassInfo, FileInfo } from '../types';
 import { Icon } from './Icon';
 
@@ -47,6 +47,7 @@ function Directory({ node, depth, prefix, selected, onSelect, onSelectFolder, is
         .map(([name, child]) => (
           <details key={name} open className="file-tree-directory">
             <summary
+              data-tree-item
               className="flex h-7 items-center gap-1 rounded-[3px] pr-1 text-[11.5px] text-[#57534e] hover:bg-[#f7f3ec] aria-[current=true]:bg-tint aria-[current=true]:text-primary"
               style={{ paddingLeft: depth * 10 + 4 }}
               onClick={() => onSelectFolder?.(prefix + name)}
@@ -69,6 +70,7 @@ function Directory({ node, depth, prefix, selected, onSelect, onSelectFolder, is
           return (
             <button
               key={file.path}
+              data-tree-item
               type="button"
               title={file.path}
               onClick={() => onSelect(file.path)}
@@ -106,6 +108,39 @@ interface FileTreeProps {
   isReviewed?: (kind: "file" | "folder", path: string) => boolean;
 }
 
+function visibleTreeItems(tree: HTMLDivElement) {
+  return Array.from(tree.querySelectorAll<HTMLElement>('[data-tree-item]'))
+    .filter((node) => !(node.matches('summary') ? node.parentElement?.parentElement : node.parentElement)
+      ?.closest('details:not([open])'));
+}
+
+function moveFolderFocus(item: HTMLElement, next: HTMLElement | undefined, expand: boolean) {
+  const directory = item.matches('summary') ? item.closest('details') : null;
+  if (expand) {
+    if (directory?.open) next?.focus();
+    else if (directory) directory.open = true;
+  } else if (directory?.open) {
+    directory.open = false;
+  } else {
+    (directory?.parentElement ?? item.parentElement)?.closest('details')?.querySelector('summary')?.focus();
+  }
+}
+
+function moveTreeFocus(event: KeyboardEvent<HTMLDivElement>) {
+  if (!(event.target instanceof HTMLElement) || !event.target.matches('[data-tree-item]')) return;
+  const item = event.target;
+  const visible = visibleTreeItems(event.currentTarget);
+  const position = visible.indexOf(item);
+  switch (event.key) {
+    case 'ArrowDown': visible[position + 1]?.focus(); break;
+    case 'ArrowUp': visible[position - 1]?.focus(); break;
+    case 'ArrowRight': moveFolderFocus(item, visible[position + 1], true); break;
+    case 'ArrowLeft': moveFolderFocus(item, undefined, false); break;
+    default: return;
+  }
+  event.preventDefault();
+}
+
 export function FileTree({ files, classes, selected, search, onSearch, onSelect, onSelectFolder, isReviewed }: FileTreeProps) {
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -127,7 +162,7 @@ export function FileTree({ files, classes, selected, search, onSearch, onSelect,
           className="h-7 w-full rounded-[4px] border border-line bg-card pl-7 pr-2 text-[11px] outline-none transition-colors placeholder:text-faint focus:border-primary"
         />
       </div>
-      <div className="scroll-thin min-h-0 flex-1 overflow-auto px-1.5 pb-2">
+      <div className="scroll-thin min-h-0 flex-1 overflow-auto px-1.5 pb-2" onKeyDown={moveTreeFocus}>
         {filtered.length ? (
           <Directory node={tree} depth={0} prefix="" selected={selected} onSelect={onSelect} onSelectFolder={onSelectFolder} isReviewed={isReviewed} />
         ) : (

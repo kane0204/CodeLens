@@ -57,9 +57,13 @@ function UploadModelForm({ model }: { model: ReturnType<typeof useUploadModel> }
 }
 
 function UploadModelFields({ model, busy }: { model: ReturnType<typeof useUploadModel>; busy: boolean }) {
-  const { form, setForm, formError, aiConfigured } = model;
+  const { form, setForm, formError, aiConfigured, persistForm } = model;
+  const { toast } = useApp();
   return (
-    <div id="upload-ai-fields">
+    <form id="upload-ai-fields" onSubmit={(event) => {
+      event.preventDefault();
+      if (!busy && persistForm()) toast('模型设置已应用', 'success');
+    }}>
       <p className="mt-2 text-[10px] text-muted">
         {aiConfigured ? '导入后自动执行 AI 审查' : '填写接口地址和模型后，导入时自动审查'}
       </p>
@@ -110,7 +114,8 @@ function UploadModelFields({ model, busy }: { model: ReturnType<typeof useUpload
           {formError}
         </p>
       ) : null}
-    </div>
+      <Button type="submit" size="sm" className="mt-2" disabled={busy}>应用模型设置</Button>
+    </form>
   );
 }
 

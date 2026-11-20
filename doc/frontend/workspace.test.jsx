@@ -420,8 +420,8 @@ test('overview distinguishes unavailable complexity and an empty risk report', (
   mocked.context.result = result;
   const { render, container } = mount();
   render(<App />);
-  assert.match(container.textContent, /引擎未产出圈复杂度/);
-  assert.match(container.textContent, /当前分析没有风险条目/);
+  assert.match(container.textContent, /没有可用的函数复杂度数据/);
+  assert.match(container.textContent, /本次分析没有发现风险/);
 });
 
 test('offline upload can reconnect or return to the last result', () => {
@@ -493,6 +493,29 @@ test('file tree sorts directories and files, filters by path and selects error r
   assert.equal(container.querySelectorAll('button').length, 1);
   render(tree('missing'));
   assert.match(container.textContent, /没有匹配的文件/);
+});
+
+test('file tree navigates visible entries and expands folders with the arrow keys', () => {
+  const main = projectResult().files[0];
+  const { render, container } = mount();
+  render(<FileTree files={[main, { ...main, path: 'z/next.py' }]} classes={[]}
+    selected="" search="" onSearch={vi.fn()} onSelect={vi.fn()} />);
+  const [folder, nextFolder] = container.querySelectorAll('summary');
+  const file = container.querySelector('button');
+  const press = (key) => act(() => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })));
+  folder.focus();
+  press('ArrowRight');
+  assert.equal(document.activeElement, file);
+  press('ArrowLeft');
+  assert.equal(document.activeElement, folder);
+  press('ArrowLeft');
+  assert.equal(folder.parentElement.open, false);
+  press('ArrowDown');
+  assert.equal(document.activeElement, nextFolder);
+  press('ArrowUp');
+  assert.equal(document.activeElement, folder);
+  press('ArrowRight');
+  assert.equal(folder.parentElement.open, true);
 });
 
 test('review routes show busy and failure states and retain access to retry', () => {

@@ -407,25 +407,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const announceAnalysis = useCallback(async (data: AnalyzeResult, autoReview: boolean) => {
     const settings = currentSettings.current;
-    let message = `分析完成：${data.summary.parsed} 个文件，${data.summary.findings} 条风险`;
-    let kind: ToastKind = 'success';
-    if (autoReview && settings.baseUrl.trim() && settings.model.trim()) {
-      setImporting(true);
-      setPhase('准备 AI 审查');
-      setProgress(0);
-      setProgressTotal(1);
-      const review = await executeReview(data, settings);
-      if (review) {
-        message = `静态分析与 AI 审查完成：${data.summary.parsed} 个文件`;
-      } else {
-        message = `${message}；AI 审查未完成，可在页面中重试`;
-        kind = 'warning';
-      }
-      setImporting(false);
-    }
     if (window.location.hash !== '#overview') window.location.hash = 'overview';
     setRoute('overview');
-    toast(message, kind);
+    toast(`分析完成：${data.summary.parsed} 个文件，${data.summary.findings} 条风险`, 'success');
+    const recurring = data.history?.recurring.length ?? 0;
+    if (recurring) toast(`发现 ${recurring} 个反复出现的问题，可在「质量体检」中查看`, 'warning');
+    if (autoReview && settings.baseUrl.trim() && settings.model.trim()) {
+      const review = await executeReview(data, settings);
+      if (review) {
+        toast('AI 审查完成', 'success');
+      } else {
+        toast('AI 审查未完成，可在逻辑说明中继续', 'warning');
+      }
+    }
   }, [executeReview, toast]);
 
   const runWithRaw = useCallback(

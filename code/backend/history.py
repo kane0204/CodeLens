@@ -118,7 +118,7 @@ def _track(result, before, manifest, run_id, version, comparable):
 
 def _priority(issue):
     return (-int(issue["recurred"]), -issue["streak"],
-            {"high": 0, "medium": 1, "low": 2}.get(issue["severity"], 3), issue["file"], issue["rule_id"])
+            {"critical": 0, "warning": 1, "info": 2}.get(issue["severity"], 3), issue["file"], issue["rule_id"])
 
 
 def _recurring(issues):

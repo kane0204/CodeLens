@@ -117,16 +117,19 @@ function UploadModelFields({ model, busy }: { model: ReturnType<typeof useUpload
 function UploadProgress() {
   const { phase, progress, progressTotal, eta, cancelAnalysis } = useApp();
   const reviewStage = phase.startsWith('AI');
+  const measured = progressTotal > 1;
   return (
     <div role="status" className="py-1">
       <div className="mb-3 flex items-center justify-between gap-3 text-[11px] text-muted">
         <span className="min-w-0 truncate font-medium text-ink">{phase || '处理中'}</span>
-        <span className="num shrink-0">
-          {progressTotal > 1 ? `${progress}/${progressTotal}` : ''} · 剩余 {formatEta(eta)}
-        </span>
+        {measured && <span className="num shrink-0">
+          {progress}/{progressTotal}{eta !== null ? ` · 剩余 ${formatEta(eta)}` : ''}
+        </span>}
       </div>
-      <ProgressBar value={progress} max={Math.max(progressTotal, 1)} />
-      <p className="mt-2 text-[10.5px] text-faint">
+      {measured ? <ProgressBar value={progress} max={progressTotal} /> : (
+        <progress aria-label={phase || '处理中'} className="h-1.5 w-full accent-primary" />
+      )}
+        <p className="mt-2 text-[10.5px] text-faint" role="status">
         {reviewStage
           ? 'AI 正在分批阅读源码并交叉核对，大项目需要一些时间，可随时取消'
           : '读取与静态分析在本机完成，速度取决于项目规模'}

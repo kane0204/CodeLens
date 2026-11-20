@@ -17,6 +17,15 @@ def run_files(files):
 
 
 class EngineTests(unittest.TestCase):
+    def test_parameter_limit_flags_python_and_javascript_functions(self):
+        result = run_files({
+            "main.py": "def fine(a, b, c, d): pass\ndef long(a, /, b, *args, c, **kwargs): pass\n",
+            "main.js": "function long(a, b, c, d, e) { return a; }\n",
+        })
+        findings = [row for row in result["findings"] if row["rule_id"] == "PARAM-01"]
+        self.assertEqual({(row["file"], row["line"], row["actual"], row["threshold"]) for row in findings},
+                         {("main.py", 2, 5, 4), ("main.js", 1, 5, 4)})
+
     def test_dead_code_keeps_registered_callbacks_and_http_handlers(self):
         from core_engine.rules import evaluate
 

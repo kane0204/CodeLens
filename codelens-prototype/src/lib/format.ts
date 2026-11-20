@@ -4,6 +4,7 @@ export const RULE_NAMES: Record<string, string> = {
   'CC-01': '圈复杂度',
   'LEN-01': '函数长度',
   'DEPTH-01': '嵌套深度',
+  'PARAM-01': '函数参数过多',
   A4: '硬编码密钥',
   'A3-IO': '边界输入',
   'CYCLE-01': '循环依赖',

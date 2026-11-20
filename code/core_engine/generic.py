@@ -446,6 +446,11 @@ def _threshold_findings(functions, path):
             findings.append(_finding(levels.RULE_DEPTH, levels.SEVERITY_WARNING, path, item["line"],
                                      f"{item['id']} 的控制结构嵌套深度为 {item['nesting']}，超过阈值 4。",
                                      "优先用提前返回或拆分函数降低嵌套。", actual=item["nesting"], threshold=4))
+        params = item["params"]
+        if params > levels.MAX_PARAMETERS:
+            findings.append(_finding(levels.RULE_PARAMS, levels.SEVERITY_WARNING, path, item["line"],
+                                     f"{item['id']} 有 {params} 个参数，超过 {levels.MAX_PARAMETERS} 个。",
+                                     levels.PARAMETER_SUGGESTION, actual=params, threshold=levels.MAX_PARAMETERS))
     return findings
 
 

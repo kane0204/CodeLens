@@ -11,6 +11,9 @@ from __future__ import annotations
 RULE_CC = "CC-01"
 RULE_LEN = "LEN-01"
 RULE_DEPTH = "DEPTH-01"
+RULE_PARAMS = "PARAM-01"
+MAX_PARAMETERS = 4
+PARAMETER_SUGGESTION = "检查是否能拆分职责，或用一个对象传入一组始终一起使用的参数。"
 RULE_A4 = "A4"
 RULE_A3_IO = "A3-IO"
 RULE_CYCLE = "CYCLE-01"

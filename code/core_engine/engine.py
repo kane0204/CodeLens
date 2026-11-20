@@ -22,7 +22,8 @@ EXCLUDED_TEST_DIRS = {("doc", "unit"), ("doc", "frontend")}
 MAX_FILES = 200
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
-RULES = [levels.RULE_CC, levels.RULE_LEN, levels.RULE_DEPTH, levels.RULE_A4, levels.RULE_A3_IO, levels.RULE_CYCLE]
+RULES = [levels.RULE_CC, levels.RULE_LEN, levels.RULE_DEPTH, levels.RULE_PARAMS,
+         levels.RULE_A4, levels.RULE_A3_IO, levels.RULE_CYCLE]
 SENSITIVE_NAME_RE = re.compile(r"(?:^|[._])(password|passwd|secret|token|api_?key|access_?key)(?:$|_)", re.I)
 PLACEHOLDER_VALUE_RE = re.compile(r"demo|example|sample|test|placeholder|changeme|your[_ -]|not[_ -]a[_ -]real|dummy|xxx", re.I)
 LIMITATIONS = [
@@ -535,6 +536,10 @@ def _score_function(ctx, function, active_lines):
     function["statements"] = [{"line": s.lineno, "end_line": s.end_lineno, "ast_type": type(s).__name__,
                                "description": statement_description(s), "evidence_type": levels.EVIDENCE_FACT}
                               for s in statements]
+    _check_function_limits(ctx, function)
+
+
+def _check_function_limits(ctx, function):
     for key, rule, threshold, label in [("cc", levels.RULE_CC, 10, "圈复杂度"),
                                         ("length", levels.RULE_LEN, 50, "有效代码行数"),
                                         ("nesting", levels.RULE_DEPTH, 4, "控制结构嵌套深度")]:
@@ -544,6 +549,11 @@ def _score_function(ctx, function, active_lines):
                         function["file"], function["line"],
                         f"{function['id']} 的{label}为 {value}，超过阈值 {threshold}。",
                         "检查复杂路径与职责边界，考虑拆分独立逻辑。", actual=value, threshold=threshold)
+    params = function["params"]
+    if params > levels.MAX_PARAMETERS:
+        ctx.finding(levels.RULE_PARAMS, levels.SEVERITY_WARNING, function["file"], function["line"],
+                    f"{function['id']} 有 {params} 个参数，超过 {levels.MAX_PARAMETERS} 个。",
+                    levels.PARAMETER_SUGGESTION, actual=params, threshold=levels.MAX_PARAMETERS)
 
 
 def _score_python(ctx, record):

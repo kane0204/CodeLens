@@ -250,8 +250,8 @@ MEM --> IR
 </div>
 
 ---
-
-
+layout: center
+---
 
 # 谢谢！
 

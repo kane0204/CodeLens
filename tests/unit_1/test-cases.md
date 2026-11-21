@@ -1,7 +1,7 @@
 # CodeLens 测试用例文档
 
 > 覆盖等价类划分、边界值分析、场景法三类设计方法，每条均含预期结果，并记录执行结果。
-> 数据口径来源：[前端文件校验 `codelens-prototype/src/lib/files.ts`](../../codelens-prototype/src/lib/files.ts) 与 [本地工作台说明 `docs/software/local-workbench.md`](local-workbench.md)。
+> 数据口径来源：[前端文件校验 `codelens-prototype/src/lib/files.ts`](../../codelens-prototype/src/lib/files.ts) 与 [本地工作台说明 `docs/software/local-workbench.md`](../../docs/software/local-workbench.md)。
 > 关键边界：最多 **200** 个源码文件、单文件 **1 MB**、源码总量 **8 MB**、请求体 **12 MB**；默认排除 `tests`、虚拟环境、构建及依赖目录；支持扩展名 `py / c / h / cc / cpp / cxx / hpp / java / js / jsx / ts / tsx / go`。
 
 ## 用例清单
@@ -36,9 +36,9 @@
 
 ## 执行结果说明
 
-- **自动化通过（14 条）**：TC-001 ~ TC-012、TC-015、TC-016 的规则断言已由项目自带测试套件覆盖并全部通过。实测结果：Python 单元测试 **255 通过 / 0 失败**，集成测试 **28 通过 / 0 失败**，前端测试 **语句覆盖率 97.38%、行覆盖率 100%**。
+- **自动化通过（14 条）**：TC-001 ~ TC-012、TC-015、TC-016 的规则断言已由项目自带测试套件覆盖并全部通过。实测结果：Python 单元测试 **303 通过 / 0 失败**，集成测试 **28 通过 / 0 失败**，前端测试 **语句覆盖率 97.52%、行覆盖率 100%**。
   - 文件导入限制、排除目录、扩展名过滤 → `doc/frontend/files.test.mjs`
-  - AI 审查流分片解析、并发/断点续跑 → `doc/unit/test_review.py`、`doc/unit/test_ai.py`、`doc/frontend/state.test.jsx`
+  - AI 审查流分片解析、并发/断点续跑 → `tests/unit_2/test_review.py`、`tests/unit_2/test_ai.py`、`doc/frontend/state.test.jsx`
   - 报告导出 → `doc/frontend/report.test.mjs`、`src/lib/export.ts`
   - 服务端校验与静态分析 → `tests/integration/test_server.py`
 - **手工验证通过（2 条）**：TC-013（六页逐页浏览）、TC-014（真实模型端到端 AI 审查）已在浏览器中人工执行确认，结果正常。

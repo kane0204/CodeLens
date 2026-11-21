@@ -8,14 +8,14 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
 
 from ai import explanation
-from backend.history import HistoryStore, MEMORY_BYTES, memory_prompt
+from backend.history import HistoryStore, MEMORY_BYTES, _recurring, memory_prompt
 from backend.server import analyze, enrich
 
 
 def report(content, *, path="main.py", issue=True, name="same"):
     result = enrich(analyze({"project": name, "files": [{"path": path, "content": content}]}))
     result["findings"] = ([{"id": "F1", "rule_id": "CC-01", "file": path,
-                           "severity": "medium", "line": result["functions"][0]["line"],
+                           "severity": "warning", "line": result["functions"][0]["line"],
                            "message": "复杂度超限"}] if issue else [])
     return result
 
@@ -61,6 +61,15 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(memory[0]["analysis_id"], again["analysis_id"])
         self.assertEqual(self.store.memory(project, third["analysis_id"], ["other.py"], True), [])
         self.assertEqual(self.store.memory(project, third["analysis_id"], ["main.py"], False), [])
+
+    def test_recurring_priority_uses_current_severity_levels(self):
+        issues = {
+            severity: {"severity": severity, "recurred": False, "streak": 3,
+                       "state": "present", "file": "main.py", "rule_id": "CC-01"}
+            for severity in ("info", "critical", "warning")
+        }
+        self.assertEqual([row["severity"] for row in _recurring(issues)],
+                         ["critical", "warning", "info"])
 
     def test_recurrence_and_unknown_coverage(self):
         first = self.record("def run():\n    return 1")

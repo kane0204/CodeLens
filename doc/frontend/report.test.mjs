@@ -70,7 +70,8 @@ test('Markdown includes chosen review sections and escapes report fields', async
   exportReport(result, 'md', { includeAi: true, includeSource: false, review: report });
   const { text, type } = await download.read('md');
   assert.equal(type, 'text/markdown;charset=utf-8');
-  for (const expected of ['a\\|b', '\\<invalid\\>', 'Complex branch', 'Logic', 'Design notes', 'Risk notes',
+  for (const expected of ['a\\|b', '\\<invalid\\>', 'Complex branch', 'AI 逻辑解读', 'Flow',
+    'AI 设计检查', 'Design notes', 'AI 风险评估', 'Risk notes',
     'WMC=2 DIT=未知', 'main.py:8 / copy.py:9', 'A → B', 'Known bases only', '89 · 良好']) {
     assert.ok(text.includes(expected), expected);
   }

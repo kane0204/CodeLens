@@ -54,7 +54,7 @@ FastAPI 默认监听 `127.0.0.1:18766`。接口文档位于 `/docs`，OpenAPI �
   ```
 
 - 前端：`codelens-prototype/src/lib/logger.ts` 为 200 条内存环形缓冲 + 脱敏；`info / warn / error` 同步写入本机 `localStorage`（键 `codelens.diag.v1`，上限 100 条），刷新或崩溃后自动恢复，可在「模型设置 → 下载诊断日志」导出含历史记录的 JSON；`ErrorBoundary` 兜底渲染崩溃并提供同一入口；全局 `error` / `unhandledrejection` / `pagehide` 也入日志。日志不上传，不含源码与密钥。
-- 回归测试：`doc/unit/test_observability.py`、`tests/integration/test_error_handling.py`。
+- 回归测试：`tests/unit_2/test_observability.py`、`tests/integration/test_error_handling.py`。
 
 ## 待补充
 

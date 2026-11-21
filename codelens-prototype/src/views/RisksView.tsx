@@ -117,7 +117,8 @@ function RiskEvidence() {
   const { result, locateFinding } = useApp();
   const severeFindings = useMemo<Finding[]>(() => {
     if (!result) return [];
-    return result.findings.filter((finding) => finding.severity === 'critical');
+    return result.findings.filter((finding) =>
+      finding.severity === 'critical' || finding.rule_id === 'PRIVACY-01');
   }, [result]);
 
   const severeGroups = useMemo(() => {
@@ -132,14 +133,14 @@ function RiskEvidence() {
   return (
     <details className="shrink-0 rounded-[6px] border border-line bg-card px-3 py-2 shadow-[0_1px_2px_#0000000d]">
       <summary className="flex items-center gap-2 text-[10.5px] font-medium text-primary">
-        静态高危证据
+        静态风险证据
         <span className="num text-faint">{severeFindings.length ? `${severeFindings.length} 条 · ${severeGroups.length} 类` : '无高级别条目'}</span>
       </summary>
       <div className="scroll-thin mt-2 max-h-48 overflow-auto border-t border-line pt-2">
         {severeGroups.length ? (
           <RiskEvidenceGroups groups={severeGroups} locate={locateFinding} />
         ) : (
-          <EmptyState compact title="没有高级别（critical）静态条目" hint="中低危条目与未覆盖检测不在此展示。" />
+          <EmptyState compact title="没有高风险或隐私条目" hint="其他风险与未覆盖检测不在此展示。" />
         )}
       </div>
     </details>

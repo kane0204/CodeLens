@@ -1,20 +1,28 @@
-# CodeLens 单元测试
+# CodeLens 测试入口
 
-- [Python](unit/) 使用标准库 `unittest`，覆盖分析引擎、证据索引、AI 审查、风险与指标，以及内存中的 HTTP 适配层。
+- [Python 边界测试](../tests/unit_1/) 和 [Python 核心测试](../tests/unit_2/) 使用标准库 `unittest`，覆盖分析引擎、证据索引、AI 审查、风险与指标，以及内存中的 HTTP 适配层。
 - [JavaScript / TypeScript](frontend/) 使用 Vitest 和 jsdom，覆盖文件导入、API、审查流、报告导出、工作台状态与组件交互。
-- [单元测试报告](unit-test-report.md) 记录本轮实际执行结果、覆盖率和复现命令。
+- [单元测试报告](../tests/unit_2/unit-test-report.md) 记录本轮实际执行结果、覆盖率和复现命令。
 
 单元测试模拟外部模型和网络请求。实际本机 HTTP 集成测试位于 [tests/integration](../tests/integration/)。
 
-[复杂度回归测试](unit/test_project_complexity.py) 随 Python 单元测试运行，复扫后端、前端和 DDD 设计示例。每个函数的圈复杂度、有效行数和嵌套深度分别不得超过 8、50 和 4。
+[复杂度回归测试](../tests/unit_2/test_project_complexity.py) 随 Python 单元测试运行，复扫后端、前端和 DDD 设计示例。每个函数的圈复杂度、有效行数和嵌套深度分别不得超过 8、50 和 4。
 
 ## 运行和查看覆盖率
 
-在仓库根目录安装 Python 测试依赖。只执行单元测试时运行 `python -B -m unittest discover -s doc/unit -v`。
+在仓库根目录安装 Python 测试依赖。只执行单元测试时分别运行两个测试目录：
 
 ```sh
 python -m pip install -r doc/requirements-test.txt
-python -B -m coverage run --rcfile=doc/.coveragerc -m unittest discover -s doc/unit -v
+python -B -m unittest discover -s tests/unit_1 -v
+python -B -m unittest discover -s tests/unit_2 -v
+```
+
+生成合并的 Python 覆盖率报告：
+
+```sh
+python -B -m coverage run --rcfile=doc/.coveragerc -m unittest discover -s tests/unit_1 -v
+python -B -m coverage run --append --rcfile=doc/.coveragerc -m unittest discover -s tests/unit_2 -v
 python -B -m coverage report --rcfile=doc/.coveragerc
 python -B -m coverage html --rcfile=doc/.coveragerc
 ```

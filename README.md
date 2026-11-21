@@ -40,7 +40,7 @@ CodeLens 的目标是**把 AI 生成的代码从黑盒变成可审查对象**：
 | **代码逻辑** | 语句级轨迹（AST 类型 + 目标）、控制流图（CFG）、def-use 数据流、副作用、隐含假设 | 这段代码到底在做什么？ |
 | **质量体检** | 圈复杂度、认知复杂度、函数长度、嵌套、WMC/DIT/CBO/LCOM、坏味清单 | 哪里最难维护？ |
 | **设计检查** | SOLID 规则 | 哪里违反了设计原则？ |
-| **风险清单** | AI 代码特有风险：重复实现、未处理异常、硬编码、死代码、可疑依赖 | 哪里最可能出问题？ |
+| **风险清单** | AI 代码特有风险：隐私与凭据泄漏、重复实现、未处理异常、硬编码、死代码、可疑依赖 | 哪里最可能出问题？ |
 | **审查报告** | 证据等级 + 代码位置 + 建议复核点，可导出 Markdown / JSON | 我该重点看哪里？ |
 
 
@@ -75,13 +75,14 @@ cd codelens-prototype && npm install && npm run dev   # 终端 2：界面，loca
 
 静态分析仅在本机服务内存中完成，不执行或导入目标项目。导入时选择的项目源码会分批发送到配置的模型服务用于 AI 项目审查；未配置模型或审查失败时静态结果照常可用，不使用模板替代失败结果。最多 200 个文件、请求体 12 MB；默认排除测试、虚拟环境和构建目录。详细范围与限制见 [工作台说明](docs/software/local-workbench.md)。
 
-开启自动 AI 审查并填写兼容 chat/completions 的 Base URL、模型名称和 API Key 后，导入文件夹会依次执行静态分析和 AI 审查。逻辑说明、设计检查、风险评估共用同一份阅读记录。审查中断后可以从服务端断点继续。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。详细范围见 [AI 逻辑解读说明](docs/software/ai-logic-explanation.md)。
+首页只负责导入与本机静态分析，不展示 API 设置，也不会自动调用模型。进入结果页后，在顶部「模型设置」中填写兼容 `chat/completions` 的 Base URL、模型名称和 API Key，再按需生成逻辑说明、设计检查与风险评估。「导出报告」展开后会直接预览这三部分内容。审查中断后可以从服务端断点继续。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。
 
 单元测试集中在 [doc](doc/README.md)，包含 Python 和前端的运行命令、覆盖率报告和验收方法。
 
 ```bash
 python -m pip install -r doc/requirements-test.txt
-python -B -m unittest discover -s doc/unit -v
+python -B -m unittest discover -s tests/unit_1 -v
+python -B -m unittest discover -s tests/unit_2 -v
 ```
 
 运行前端单元测试和生产构建（测试需要 Node.js 22.12+ 或 24+）：
@@ -117,9 +118,10 @@ CodeLens/
 │   └── core_engine/      # 核心引擎：解析、逻辑建模、图、指标、规则
 ├── codelens-prototype/   # Vite + React 界面（5173）
 ├── doc/
-│   ├── unit/              # Python 单元测试
 │   └── frontend/          # JavaScript / TypeScript 单元测试
 ├── tests/                 # 集成测试、SOLID 基准与测试样本
+│   ├── unit_1/            # 引擎边界与输入校验单元测试
+│   └── unit_2/            # Python 核心、AI 与接口单元测试
 └── .github/
     ├── workflows/
     └── ISSUE_TEMPLATE/

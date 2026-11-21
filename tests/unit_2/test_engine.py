@@ -304,6 +304,27 @@ def run():
         self.assertEqual(len(fs),1)
         self.assertNotIn(value,json.dumps(fs))
 
+    def test_privacy_detection_reports_types_without_values(self):
+        values = {
+            "id": "11010519491231002X",
+            "phone": "13912345678",
+            "email": "person@real-company.example",
+            "token": "sk-" + "a" * 24,
+        }
+        source = (
+            f"customer_id = {values['id']!r}\n"
+            f"mobile = {values['phone']!r}\n"
+            f"contact = {values['email']!r}\n"
+            f"credential = {values['token']!r}\n"
+        )
+        result = run_files({"main.py": source})
+        findings = [row for row in result["findings"] if row["rule_id"] == "PRIVACY-01"]
+        self.assertEqual(len(findings), 4)
+        self.assertEqual({row["line"] for row in findings}, {1, 2, 3, 4})
+        encoded = json.dumps(findings)
+        for value in values.values():
+            self.assertNotIn(value, encoded)
+
     def test_deterministic(self):
         files={"b.py":"def go(x):\n    return x\n", "a.py":"from b import go\ngo(1)\n"}
         a=run_files(files)

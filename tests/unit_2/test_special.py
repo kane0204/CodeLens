@@ -22,6 +22,7 @@ class SpecialRiskTests(unittest.TestCase):
         categories = {item["id"]: item for item in build(result)["categories"]}
         self.assertIn("Python", categories["unhandled-exception"]["reason"])
         self.assertIn("非 Python", categories["dead-code"]["reason"])
+        self.assertIn("privacy-content", categories)
 
     def test_missing_input_and_duplicate_group_without_occurrences(self):
         self.assertEqual(build(None), {"categories": []})

@@ -15,7 +15,8 @@
 在仓库根目录运行单元测试，无需启动后端或连接模型服务。
 
 ```sh
-python -B -m unittest discover -s doc/unit -v
+python -B -m unittest discover -s tests/unit_1 -v
+python -B -m unittest discover -s tests/unit_2 -v
 ```
 
 针对解析、逻辑建模、指标、规则与导出的测试，快速、无外部依赖。

@@ -33,11 +33,12 @@ beforeEach(() => {
     applySettings: vi.fn(() => true), startAnalysis: vi.fn(), startFromTransfer: vi.fn(),
     connect: vi.fn(), cancelAnalysis: vi.fn(), returnToResult: vi.fn(), closeSettings: vi.fn(),
     saveSettings: vi.fn(), setExportAi: vi.fn(), setExportSource: vi.fn(), exportAi: true,
-    exportSource: false,
+    exportSource: false, toast: vi.fn(),
   };
 });
 
 test('overview renders summary and opens or dismisses the export menu', () => {
+  mocked.context.aiReview = report;
   const { render, container } = mount();
   render(<App />);
   assert.match(container.textContent, /复杂度参考/);
@@ -48,6 +49,10 @@ test('overview renders summary and opens or dismisses the export menu', () => {
   click(risks);
   assert.deepEqual(mocked.context.go.mock.lastCall, ['risks']);
   click(button('导出报告', container));
+  assert.match(container.textContent, /报告内容预览/);
+  assert.match(container.textContent, /逻辑说明[\s\S]*Flow/);
+  assert.match(container.textContent, /设计检查[\s\S]*Design notes/);
+  assert.match(container.textContent, /风险评估[\s\S]*Risk notes/);
   click(container.querySelector('[role="menuitem"]'));
   assert.deepEqual(mocked.context.runExport.mock.calls, [['md']]);
   assert.equal(container.querySelector('[role="menu"]'), null);
@@ -62,6 +67,17 @@ test('overview renders summary and opens or dismisses the export menu', () => {
   click(button('导出报告', container));
   act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
   assert.equal(container.querySelector('[role="menu"]'), null);
+});
+
+test('export preview explains missing or disabled AI content', () => {
+  mocked.context.aiReview = null;
+  const { render, container } = mount();
+  render(<App />);
+  click(button('导出报告', container));
+  assert.match(container.textContent, /尚未生成逻辑说明、设计检查和风险评估/);
+  mocked.context.exportAi = false;
+  render(<App />);
+  assert.match(container.textContent, /本次只导出静态分析结果/);
 });
 
 test('history opens without a current import, loads an archived run and deletes the project', async () => {
@@ -115,8 +131,6 @@ test('history opens without a current import, loads an archived run and deletes 
 
 test('history picker joins the selected project and recurring findings link to source', async () => {
   mocked.context.capabilities = ['project-history'];
-  mocked.context.useHistory = true;
-  mocked.context.setUseHistory = vi.fn();
   mocked.context.importing = true;
   const project = { name: 'demo', id: 'project-one', runs: 2 };
   vi.stubGlobal('fetch', vi.fn(async () => Response.json([project])));
@@ -131,9 +145,7 @@ test('history picker joins the selected project and recurring findings link to s
   const file = new File(['pass'], 'main.py', { type: 'text/plain' });
   Object.defineProperty(input, 'files', { value: [file], configurable: true });
   act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
-  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], true, project.id]);
-  click(container.querySelector('input[type="checkbox"]'));
-  assert.deepEqual(mocked.context.setUseHistory.mock.lastCall, [false]);
+  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], false, project.id]);
   click(button('查看项目历史', container));
   assert.deepEqual(mocked.context.go.mock.lastCall, ['history']);
   mocked.context.importing = false;
@@ -332,36 +344,22 @@ test('model settings protect the key by default, submit edited values and clear 
   assert.equal(download.mock.calls.length, 1);
 });
 
-test('upload routes file selection and drops through settings validation and renders progress', () => {
+test('upload starts static-only analysis and renders progress', () => {
   mocked.context.importing = true;
   const { render, container } = mount();
   render(<App />);
+  assert.equal(container.querySelector('#upload-ai-fields'), null);
+  assert.equal(container.querySelector('[role="switch"]'), null);
+  assert.doesNotMatch(container.textContent, /配置模型/);
   const input = container.querySelector('input[type=file]');
   const choose = vi.spyOn(input, 'click').mockImplementation(() => {});
-  const base = container.querySelector('input[placeholder="https://api.example.com/v1"]');
-  const model = container.querySelector('input[placeholder="gpt-4o-mini"]');
-  const key = container.querySelector('input[type=password]');
-  typeValue(base, 'https://model.invalid/v1');
-  typeValue(model, 'unit');
-  typeValue(key, 'fake-key');
-  for (const field of [base, model, key]) {
-    act(() => field.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
-  }
-  mocked.context.applySettings.mockReturnValueOnce(false);
-  click(button('选择文件夹', container));
-  assert.equal(choose.mock.calls.length, 0);
-  assert.ok(container.querySelector('[role="alert"]'));
   click(button('选择文件夹', container));
   assert.equal(choose.mock.calls.length, 1);
-  assert.equal(container.querySelector('[role="alert"]'), null);
-  assert.deepEqual(mocked.context.applySettings.mock.lastCall, [
-    { baseUrl: 'https://model.invalid/v1', model: 'unit', apiKey: 'fake-key' },
-  ]);
 
   const file = new File(['pass'], 'main.py');
   Object.defineProperty(input, 'files', { value: [file], configurable: true });
   act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
-  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], true, undefined]);
+  assert.deepEqual(mocked.context.startAnalysis.mock.lastCall, [[{ file, path: 'main.py' }], false, undefined]);
   const dropZone = button('选择文件夹', container).parentElement;
   const dataTransfer = { items: [], files: [file] };
   for (const type of ['dragenter', 'dragover', 'dragleave', 'drop']) {
@@ -370,7 +368,7 @@ test('upload routes file selection and drops through settings validation and ren
     assert.equal(event.defaultPrevented, true);
   }
   assert.equal(dataTransfer.dropEffect, 'copy');
-  assert.deepEqual(mocked.context.startFromTransfer.mock.calls, [[dataTransfer, true, undefined]]);
+  assert.deepEqual(mocked.context.startFromTransfer.mock.calls, [[dataTransfer, false, undefined]]);
 
   Object.assign(mocked.context, {
     busy: true, phase: 'AI 正在分析', progress: 1, progressTotal: 3, eta: 61,
@@ -385,16 +383,12 @@ test('upload routes file selection and drops through settings validation and ren
   assert.equal(mocked.context.cancelAnalysis.mock.calls.length, 1);
 });
 
-test('disabling automatic review hides fields and allows both import methods', () => {
+test('upload keeps AI configuration and automatic review off the landing page', () => {
   mocked.context.importing = true;
   const { render, container } = mount();
   render(<App />);
-  const toggle = container.querySelector('[role="switch"]');
-  const base = () => container.querySelector('input[placeholder="https://api.example.com/v1"]');
-  typeValue(base(), 'draft');
-  click(toggle);
-  assert.equal(toggle.getAttribute('aria-checked'), 'false');
-  assert.equal(base(), null);
+  assert.doesNotMatch(container.textContent, /AI 审查配置|自动审查/);
+  assert.equal(container.querySelector('input[placeholder="https://api.example.com/v1"]'), null);
   const input = container.querySelector('input[type=file]');
   const choose = vi.spyOn(input, 'click').mockImplementation(() => {});
   click(button('选择文件夹', container));
@@ -408,9 +402,6 @@ test('disabling automatic review hides fields and allows both import methods', (
     Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer }),
   ));
   assert.deepEqual(mocked.context.startFromTransfer.mock.lastCall, [dataTransfer, false, undefined]);
-  assert.equal(mocked.context.applySettings.mock.calls.length, 0);
-  click(toggle);
-  assert.equal(base().value, 'draft');
 });
 
 test('overview distinguishes unavailable complexity and an empty risk report', () => {
@@ -516,6 +507,10 @@ test('file tree navigates visible entries and expands folders with the arrow key
   assert.equal(document.activeElement, folder);
   press('ArrowRight');
   assert.equal(folder.parentElement.open, true);
+  const ignored = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  act(() => folder.dispatchEvent(ignored));
+  assert.equal(ignored.defaultPrevented, false);
+  assert.equal(document.activeElement, folder);
 });
 
 test('review routes show busy and failure states and retain access to retry', () => {
@@ -595,6 +590,32 @@ test('folder review shows batch progress from the review stream', async () => {
   click(button('解读当前文件夹', container));
   assert.match(container.querySelector('[role="status"]').textContent, /正在阅读源码.*1\/3/);
   await act(async () => complete(report));
+});
+
+test('bulk scoped review runs up to three model requests concurrently', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+  mocked.context.result.files.push(
+    { ...mocked.context.result.files[0], path: 'src/one.py' },
+    { ...mocked.context.result.files[0], path: 'src/two.py' },
+  );
+  const pending = [];
+  mocked.selectedReview.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+  const { render, container } = mount();
+  render(<App />);
+  act(() => button('一键解读所有文件和文件夹', container).click());
+  await act(async () => { await Promise.resolve(); });
+  assert.equal(mocked.selectedReview.mock.calls.length, 3);
+
+  await act(async () => {
+    pending.splice(0, 3).forEach((resolve) => resolve(report));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  assert.equal(mocked.selectedReview.mock.calls.length, 4);
+  await act(async () => {
+    pending.shift()?.(report);
+    await Promise.resolve();
+  });
 });
 
 test('batch review pauses between targets, resumes, and shows cached reports when selecting folders', async () => {

@@ -43,6 +43,7 @@ POST 使用本机 Host、Origin 和 `X-CodeLens-Token` 校验。请求体上限 
 | A4 / A3-IO / CYCLE-01 | 参数与 I/O 线索、模块循环依赖 |
 | A5-DEAD / A8-DEFENSIVE / CMT-01 | 死代码、 defensive 写法、注释线索（限 Python） |
 | DUP-01 | 结构重复函数体 |
+| PRIVACY-01 | 高置信身份证号、手机号、邮箱及常见 API/云令牌形状；报告只保留类型，不回显原值 |
 | SOLID 五项 | S/O/L/I/D 静态线索，均为 `inference`，附覆盖缺口 |
 
 规则 ID 为 provisional，以算法文档定稿为准。非 Python 语言走词法与花括号路径，口径与 Python AST 路径不完全等价，报告会标注限制。
@@ -57,12 +58,13 @@ POST 使用本机 Host、Origin 和 `X-CodeLens-Token` 校验。请求体上限 
 
 ## 安全与数据
 
-静态分析不连接模型，也不执行目标源码。在初始化页配置模型后，导入会把项目源码分批发送到用户指定的兼容 `chat/completions` 服务；未配置或审查失败时静态结果照常可用，不以模板替代失败结论。密钥仅存当前页面内存，不写入报告或项目文件。导出默认剔除源码，可选择是否包含 AI 结果。
+静态分析不连接模型，也不执行目标源码。首页不展示 API 设置，也不会自动调用模型；导入只执行本机静态分析。用户进入结果页后可主动打开「模型设置」，项目源码才会分批发送到指定的兼容 `chat/completions` 服务；未配置或审查失败时静态结果照常可用，不以模板替代失败结论。密钥仅存当前页面内存，不写入报告或项目文件。「导出报告」面板会预览逻辑说明、设计检查和风险评估，导出默认剔除源码。
 
 ## 验证
 
 ```sh
-python -B -m unittest discover -s doc/unit -v
+python -B -m unittest discover -s tests/unit_1 -v
+python -B -m unittest discover -s tests/unit_2 -v
 python -B -m unittest discover -s tests/integration -v
 python -B tests/evaluate_solid.py
 cd codelens-prototype && npm ci && npm run build

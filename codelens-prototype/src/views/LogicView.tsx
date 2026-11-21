@@ -103,7 +103,7 @@ function LogicReviewPrompt() {
       <div className="w-full max-w-[620px] rounded-[6px] border border-dashed border-[#ddd4c8] bg-[#faf8f4] px-6 py-7">
         <h3 className="serif text-[15px] font-semibold text-ink">生成文件与文件夹解读</h3>
         <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
-          一键解读会逐项处理已解析文件及其文件夹。完成后点击左侧文件或文件夹即可查看。
+          一键解读会并行处理已解析文件及其文件夹，最多同时运行 3 项。完成后点击左侧文件或文件夹即可查看。
         </p>
         <ul className="mt-3 space-y-1.5 text-[11px] leading-relaxed text-muted">
           {['项目做什么、入口与主流程', '模块之间如何协作、数据如何流转', '异常边界与需要人工复核的地方'].map((item) => (
@@ -384,11 +384,17 @@ function compareReviewTargets(a: ReviewTarget, b: ReviewTarget) {
 async function runQueue(queue: ReviewTarget[], signal: AbortSignal,
   generate: (target: ReviewTarget, signal: AbortSignal) => Promise<void>) {
   const failed: string[] = [];
-  for (const target of queue) {
-    if (signal.aborted) break;
-    const failure = await tryGenerate(target, signal, generate);
-    if (failure) failed.push(failure);
+  let next = 0;
+  async function worker() {
+    while (!signal.aborted) {
+      const target = queue[next];
+      next += 1;
+      if (!target) return;
+      const failure = await tryGenerate(target, signal, generate);
+      if (failure) failed.push(failure);
+    }
   }
+  await Promise.all(Array.from({ length: Math.min(3, queue.length) }, () => worker()));
   return failed;
 }
 

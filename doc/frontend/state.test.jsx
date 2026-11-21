@@ -64,6 +64,8 @@ test('connect exposes ready state and can retry after an offline response', asyn
 
 test('analysis initializes workspace and finding navigation and export use the latest result', async () => {
   const state = await renderProvider();
+  act(() => state().locateFinding('not-loaded'));
+  assert.equal(state().route, 'overview');
   act(() => state().go('metrics'));
   assert.equal(state().importing, true);
   await act(() => state().startAnalysis(selection));
@@ -285,6 +287,9 @@ test('source navigation prefers the innermost function and handles unavailable s
   assert.equal(state().file, path);
   act(() => state().locateFinding('missing'));
   assert.match(state().toasts.at(-1).message, /没有对应源码/);
+  const notices = state().toasts.length;
+  act(() => state().locateFinding('not-present'));
+  assert.equal(state().toasts.length, notices);
   act(() => state().openCitation({ file: path, line: 1, end_line: 2 }));
   assert.deepEqual(state().sourceTarget, { title: '源码引用', path, line: 1, endLine: 2 });
   act(() => state().closeSource());

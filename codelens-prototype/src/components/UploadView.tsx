@@ -14,111 +14,6 @@ function formatEta(seconds: number | null): string {
   return rest ? `约 ${minutes} 分 ${rest} 秒` : `约 ${minutes} 分钟`;
 }
 
-function useUploadModel() {
-  const { settings, applySettings } = useApp();
-  const [form, setForm] = useState({ baseUrl: settings.baseUrl, model: settings.model, apiKey: settings.apiKey });
-  const [formError, setFormError] = useState('');
-
-  const [autoReview, setAutoReview] = useState(true);
-
-  const persistForm = (): boolean => {
-    if (!autoReview) return true;
-    const ok = applySettings(form);
-    setFormError(ok ? '' : '接口地址需为不含账号、查询参数或片段的 HTTP/HTTPS 地址');
-    return ok;
-  };
-  const aiConfigured = Boolean(form.baseUrl.trim() && form.model.trim());
-  return { form, setForm, formError, persistForm, aiConfigured, autoReview, setAutoReview };
-}
-
-function UploadModelForm({ model }: { model: ReturnType<typeof useUploadModel> }) {
-  const { busy } = useApp();
-  const { autoReview, setAutoReview } = model;
-  return (
-    <div className="mt-4 rounded-[6px] border border-line bg-[#fdfbf8] px-3.5 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold text-ink">AI 审查配置</p>
-        <button
-          type="button"
-          role="switch"
-          aria-label="导入后自动执行 AI 审查"
-          aria-checked={autoReview}
-          aria-controls="upload-ai-fields"
-          disabled={busy}
-          onClick={() => setAutoReview(!autoReview)}
-          className="rounded-[4px] border border-line px-2 py-1 text-[10px] text-muted aria-checked:border-primary aria-checked:text-primary disabled:opacity-60"
-        >
-          {autoReview ? '自动审查已开启' : '自动审查已关闭'}
-        </button>
-      </div>
-      {autoReview && <UploadModelFields model={model} busy={busy} />}
-    </div>
-  );
-}
-
-function UploadModelFields({ model, busy }: { model: ReturnType<typeof useUploadModel>; busy: boolean }) {
-  const { form, setForm, formError, aiConfigured, persistForm } = model;
-  const { toast } = useApp();
-  return (
-    <form id="upload-ai-fields" onSubmit={(event) => {
-      event.preventDefault();
-      if (!busy && persistForm()) toast('模型设置已应用', 'success');
-    }}>
-      <p className="mt-2 text-[10px] text-muted">
-        {aiConfigured ? '导入后自动执行 AI 审查' : '填写接口地址和模型后，导入时自动审查'}
-      </p>
-      <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <label className="block sm:col-span-2">
-          <span className="mb-1 block text-[10px] text-faint">接口地址（OpenAI 兼容）</span>
-          <input
-            value={form.baseUrl}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setForm((current) => ({ ...current, baseUrl: value }));
-            }}
-            placeholder="https://api.example.com/v1"
-            disabled={busy}
-            className="num h-8 w-full rounded-[4px] border border-line bg-card px-2 text-[11.5px] outline-none transition-colors focus:border-primary disabled:opacity-60"
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-[10px] text-faint">模型名称</span>
-          <input
-            value={form.model}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setForm((current) => ({ ...current, model: value }));
-            }}
-            placeholder="gpt-4o-mini"
-            disabled={busy}
-            className="num h-8 w-full rounded-[4px] border border-line bg-card px-2 text-[11.5px] outline-none transition-colors focus:border-primary disabled:opacity-60"
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-[10px] text-faint">API Key（仅内存，不保存）</span>
-          <input
-            type="password"
-            value={form.apiKey}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setForm((current) => ({ ...current, apiKey: value }));
-            }}
-            placeholder="sk-…"
-            disabled={busy}
-            className="num h-8 w-full rounded-[4px] border border-line bg-card px-2 text-[11.5px] outline-none transition-colors focus:border-primary disabled:opacity-60"
-          />
-        </label>
-      </div>
-      {formError ? (
-        <p className="mt-2 text-[10.5px] leading-relaxed text-danger" role="alert">
-          {formError}
-        </p>
-      ) : null}
-      <Button type="submit" size="sm" className="mt-2" disabled={busy}>应用模型设置</Button>
-    </form>
-  );
-}
-
 function UploadProgress() {
   const { phase, progress, progressTotal, eta, cancelAnalysis } = useApp();
   const reviewStage = phase.startsWith('AI');
@@ -146,7 +41,7 @@ function UploadProgress() {
   );
 }
 
-function useFolderDrop(persistForm: () => boolean, autoReview: boolean, historyProject?: string | null) {
+function useFolderDrop(historyProject?: string | null) {
   const { busy, startFromTransfer } = useApp();
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -171,17 +66,15 @@ function useFolderDrop(persistForm: () => boolean, autoReview: boolean, historyP
     dragDepth.current = 0;
     setDragging(false);
     if (busy) return;
-    if (!persistForm()) return;
-    void startFromTransfer(event.dataTransfer, autoReview, historyProject);
+    void startFromTransfer(event.dataTransfer, false, historyProject);
   };
   return { dragging, onDragEnter, onDragLeave, onDragOver, onDrop };
 }
 
 function FolderDropZone({
-  drop, aiConfigured, onChoose,
+  drop, onChoose,
 }: {
   drop: ReturnType<typeof useFolderDrop>;
-  aiConfigured: boolean;
   onChoose: () => void;
 }) {
   const { busy } = useApp();
@@ -200,7 +93,7 @@ function FolderDropZone({
           </span>
           <p className="text-[13px] font-medium text-ink">将项目文件夹拖到此处</p>
           <p className="mt-1 text-[11px] text-muted">
-            导入后自动完成静态分析{aiConfigured ? '与 AI 审查' : ''}
+            导入后在本机完成扫描、结构与质量分析
           </p>
           <Button
             className="mt-4"
@@ -240,19 +133,13 @@ function UploadConnectionPrompt() {
   );
 }
 
-interface ProjectPickerProps {
-  persistForm: () => boolean;
-  aiConfigured: boolean;
-  autoReview: boolean;
-}
-
-function ProjectPicker({ persistForm, aiConfigured, autoReview }: ProjectPickerProps) {
+function ProjectPicker() {
   const { status, startAnalysis, capabilities, result } = useApp();
   const enabled = capabilities?.includes('project-history');
   const [project, setProject] = useState(result?.history?.project_id ?? '');
   const historyProject = enabled ? project || null : undefined;
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const drop = useFolderDrop(persistForm, autoReview, historyProject);
+  const drop = useFolderDrop(historyProject);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -262,14 +149,14 @@ function ProjectPicker({ persistForm, aiConfigured, autoReview }: ProjectPickerP
   }, []);
 
   function chooseFolder() {
-    if (persistForm()) inputRef.current?.click();
+    inputRef.current?.click();
   }
 
   return (
     <>
       {enabled && <HistoryPicker project={project} setProject={setProject} />}
       {status === 'ready'
-        ? <FolderDropZone drop={drop} aiConfigured={aiConfigured} onChoose={chooseFolder} />
+        ? <FolderDropZone drop={drop} onChoose={chooseFolder} />
         : <UploadConnectionPrompt />}
       <input
         ref={inputRef}
@@ -279,7 +166,7 @@ function ProjectPicker({ persistForm, aiConfigured, autoReview }: ProjectPickerP
         aria-label="选择项目文件夹"
         onChange={(event) => {
           if (!event.target.files?.length) return;
-          void startAnalysis(filesFromInput(event.target.files), autoReview, historyProject);
+          void startAnalysis(filesFromInput(event.target.files), false, historyProject);
           event.target.value = '';
         }}
       />
@@ -290,7 +177,7 @@ function ProjectPicker({ persistForm, aiConfigured, autoReview }: ProjectPickerP
 function HistoryPicker({ project, setProject }: {
   project: string; setProject: React.Dispatch<React.SetStateAction<string>>;
 }) {
-  const { token, busy, go, useHistory, setUseHistory } = useApp();
+  const { token, busy, go } = useApp();
   const [projects, setProjects] = useState<HistoryProject[]>([]);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -314,12 +201,6 @@ function HistoryPicker({ project, setProject }: {
           {projects.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id.slice(0, 6)}</option>)}
         </select>
       </label>
-      <label className="flex items-center gap-2">
-        <input type="checkbox" checked={useHistory} disabled={busy}
-          onChange={(event) => setUseHistory(event.target.checked)} />
-        AI 可参考本项目的历史问题摘要
-      </label>
-      <p className="text-faint">开启后，相关摘要会随综合审查发送到已配置的模型服务。</p>
       {error && <p role="alert">{error}</p>}
       <button type="button" className="text-primary hover:underline" disabled={busy} onClick={() => go('history')}>查看项目历史</button>
     </div>
@@ -385,7 +266,7 @@ function ConnectionFooter() {
         <span className="num">{version || '—'}</span>
       </div>
       <p className="mt-2 text-[10px] leading-relaxed text-faint">
-        静态分析在本机内存中完成；AI 审查会把已解析源码发送到你配置的模型服务。
+        静态分析在本机内存中完成，不执行或导入目标源码。
       </p>
     </>
   );
@@ -403,13 +284,13 @@ function UploadIntro() {
         make code visible
       </h1>
       <p className="mt-5 max-w-[44ch] text-[13px] leading-7 text-muted">
-        本机静态引擎解析结构与复杂度，AI 审查把逻辑、设计与风险串成一份可核对的报告。所有数字来自真实分析响应。
+        本机静态引擎解析结构、复杂度与风险，所有数字来自真实分析响应。
       </p>
       <dl className="mt-9 grid max-w-[440px] grid-cols-2 gap-x-6 gap-y-4 border-t border-line/80 pt-6">
         {[
           ['结构视角', '文件树 · 模块与包 · 符号'],
           ['质量体检', '高复杂度 · 高嵌套 · 坏味'],
-          ['AI 审查', '逻辑 · 设计 · 严重风险'],
+          ['项目历史', '版本对比 · 反复问题 · 复核线索'],
           ['证据引用', '行号定位 · 回到源码核对'],
         ].map(([term, desc]) => (
           <div key={term}>
@@ -423,7 +304,6 @@ function UploadIntro() {
 }
 
 export function UploadView() {
-  const model = useUploadModel();
   return (
     <div className="paper-grid relative flex h-full w-full items-center justify-center overflow-auto bg-paper px-6 py-10">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-[#f3ead9]/60 to-transparent" />
@@ -435,12 +315,11 @@ export function UploadView() {
             <span className="serif text-[17px] font-semibold">CodeLens</span>
           </div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">开始使用</p>
-          <h2 className="serif mt-1 text-[22px] font-semibold tracking-[-0.01em]">配置模型，导入项目</h2>
+          <h2 className="serif mt-1 text-[22px] font-semibold tracking-[-0.01em]">导入项目，开始分析</h2>
           <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
             支持 {SUPPORTED_LABEL}；自动排除 .git、依赖与构建目录。
           </p>
-          <UploadModelForm model={model} />
-          <ProjectPicker persistForm={model.persistForm} aiConfigured={model.autoReview && model.aiConfigured} autoReview={model.autoReview} />
+          <ProjectPicker />
           <ImportFeedback />
           <ConnectionFooter />
         </section>

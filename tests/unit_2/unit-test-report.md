@@ -1,46 +1,38 @@
 # CodeLens 单元测试报告
 
-## 项目历史与长期记忆回归
+## 当前测试基线
 
-2026-11-14 在 Windows 上测试了以 `96572da` 为基础的本地工作区，包含项目历史、反复问题和 AI 历史上下文改动。
+2026-11-21 在 Windows 上验证了当前 `main` 工作区，包含项目历史、反复问题、AI 历史上下文、后台审查和测试目录迁移。
 
 | 检查 | 通过 | 失败 | 行覆盖率 |
 | --- | ---: | ---: | --- |
-| Python 单元测试 | 290 | 0 | 100%，4,726 / 4,726 |
-| 前端单元测试 | 92 | 0 | 100%，1,548 / 1,548 |
+| Python 单元测试 | 303 | 0 | 100%，4,855 / 4,855 |
+| 前端单元测试 | 95 | 0 | 100%，1,560 / 1,560 |
 | 本机 HTTP 集成测试 | 28 | 0 | — |
 
 - 项目历史覆盖同名项目隔离、源码版本去重、历史回看、AI 结果归档和删除项目后的数据清理。
 - 反复问题覆盖同一规则和符号跨行追踪、连续三个不同版本出现、确认修复后复发，以及规则变更或文件未覆盖时保留待核实状态。
 - AI 记忆覆盖按项目和文件范围检索、关闭历史参考、在超长输入时舍弃历史、在综合阶段附上历史来源，以及审查缓存隔离。模型响应使用模拟数据。
 - UI 回归覆盖导入时选择已有项目、打开历史和不同分析记录、查看反复问题并定位源码，以及历史服务异常和删除失败。
+- CI 回归同时执行 `tests/unit_1` 与 `tests/unit_2`，覆盖新严重等级排序、审查存储恢复/异常降级和缓存路由。
+- 新增隐私检测、报告预览和 3 路并行批量解读回归。
 
 第一版保存文件级差异，未保存供逐行比较的旧源码快照。AI 参考本项目的静态问题记忆，历史页可回看归档的项目级 AI 审查。这一轮未用真实模型账号验证解读效果。
 
-## FastAPI 与 Agent 接入基线
+## 环境与构建
 
-- 执行日期为 2026-11-14（UTC+8）。测试对象为基于 `f6fb180` 的本地工作区，包含本轮未提交的 FastAPI、SQLite 和 Agent 层改动。
-- 环境为 Windows、Python 3.14.6、Coverage.py 7.17.2、Node.js 24.19.0、npm 12.2.1 和 Vitest 5.1.0。
-
-## 实际执行结果
-
-| 测试 | 通过 | 失败 | 跳过 | 耗时 |
-| --- | ---: | ---: | ---: | ---: |
-| Python 单元测试 | 282 | 0 | 0 | 10.153 秒 |
-| JavaScript / TypeScript 单元测试（8 个文件） | 89 | 0 | 0 | 6.34 秒 |
-| 本机 HTTP 集成测试 | 28 | 0 | 0 | 3.645 秒 |
-
-前端类型检查与生产构建通过。项目复杂度回归用例通过，圈复杂度、函数有效行数和嵌套深度分别在 8、50 和 4 的门槛内。
+- 2026-11-21 使用 Windows、Python 3.13、Coverage.py 7.17.2、Node.js 24.11.0、npm 11.6.1 和 Vitest 5.1.0 验证。
+- 前端类型检查与生产构建通过。项目复杂度回归用例通过，圈复杂度、函数有效行数和嵌套深度分别在 8、50 和 4 的门槛内。
 
 ## 覆盖率
 
 | 统计项 | 覆盖数 / 总数 | 覆盖率 |
 | --- | ---: | ---: |
-| Python 可执行行 | 4,504 / 4,504 | **100.00%** |
-| 前端行 | 1,449 / 1,449 | **100%** |
-| 前端语句 | 1,637 / 1,681 | 97.38% |
-| 前端函数 | 484 / 489 | 98.97% |
-| 前端分支 | 961 / 1,134 | 84.74% |
+| Python 可执行行 | 4,855 / 4,855 | **100.00%** |
+| 前端行 | 1,560 / 1,560 | **100%** |
+| 前端语句 | 1,776 / 1,821 | 97.52% |
+| 前端函数 | 537 / 542 | 99.07% |
+| 前端分支 | 1,062 / 1,255 | 84.62% |
 
 统计范围为 `code/` 下的 Python 生产代码和 `codelens-prototype/src/` 下的 TypeScript / TSX 生产代码。Python 本轮未启用分支覆盖率统计。两个测试套件均通过现有的 100% 行覆盖率命令。
 
@@ -69,7 +61,8 @@
 
 ```sh
 python -m pip install -r doc/requirements-test.txt
-python -B -m coverage run --rcfile=doc/.coveragerc -m unittest discover -s doc/unit -v
+python -B -m coverage run --rcfile=doc/.coveragerc -m unittest discover -s tests/unit_1 -v
+python -B -m coverage run --append --rcfile=doc/.coveragerc -m unittest discover -s tests/unit_2 -v
 python -B -m coverage report --rcfile=doc/.coveragerc --fail-under=100
 python -B -m coverage html --rcfile=doc/.coveragerc
 python -B -m unittest discover -s tests/integration -v
@@ -83,4 +76,4 @@ npm run test:coverage:check
 npm run build
 ```
 
-逐文件覆盖率可在本次生成的 [Python HTML 报告](../htmlcov/python/index.html) 和 [前端 HTML 报告](../htmlcov/frontend/index.html) 中查看。HTML 文件由上述命令生成，保存在本机。
+逐文件覆盖率可在本次生成的 [Python HTML 报告](../../htmlcov/python/index.html) 和 [前端 HTML 报告](../../htmlcov/frontend/index.html) 中查看。HTML 文件由上述命令生成，保存在本机。

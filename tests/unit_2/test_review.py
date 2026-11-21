@@ -5,10 +5,12 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
-from unittest.mock import patch
+from tempfile import TemporaryDirectory
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
 from ai import explanation
+from ai.review_store import ReviewStore
 
 
 class ProjectReviewTests(unittest.TestCase):
@@ -280,3 +282,33 @@ class ProjectReviewTests(unittest.TestCase):
             self.assertEqual(self.chat.call_count, 3)
             explanation.review(first)
         self.assertEqual(self.chat.call_count, 4)
+
+
+class ReviewStoreTests(unittest.TestCase):
+    def test_store_round_trips_updates_and_bounds_checkpoints(self):
+        with TemporaryDirectory() as directory:
+            store = ReviewStore(Path(directory) / "nested" / "reviews.sqlite3")
+            self.assertIsNone(store.load("missing"))
+            for index in range(256):
+                store.save(str(index), {"index": index}, index)
+            store.save("255", {"index": "updated"}, 300)
+            self.assertEqual(store.load("255"), {"index": "updated"})
+            store.save("new", {"index": 256}, 301)
+            self.assertIsNone(store.load("0"))
+            self.assertEqual(store.load("new"), {"index": 256})
+
+    def test_restore_and_storage_failures_degrade_without_losing_ownership(self):
+        store = Mock()
+        store.load.return_value = {"notes": ["complete"], "truncated": True, "result": {"ok": True}}
+        job = explanation._restore_job(store, "fingerprint")
+        self.assertEqual((job.notes, job.truncated, job.status, job.result),
+                         (["complete"], True, "done", {"ok": True}))
+
+        store.load.side_effect = OSError("unreadable")
+        with self.assertLogs("codelens", level="WARNING"):
+            self.assertIsNone(explanation._load_checkpoint(store, "fingerprint"))
+
+        store.save.side_effect = OSError("read-only")
+        job = explanation._ReviewJob(notes=["pending"], storage=(store, "fingerprint"))
+        with self.assertLogs("codelens", level="WARNING"):
+            explanation._persist_review(job)

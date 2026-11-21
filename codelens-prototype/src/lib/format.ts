@@ -6,6 +6,7 @@ export const RULE_NAMES: Record<string, string> = {
   'DEPTH-01': '嵌套深度',
   'PARAM-01': '函数参数过多',
   A4: '硬编码密钥',
+  'PRIVACY-01': '隐私与凭据泄漏',
   'A3-IO': '边界输入',
   'CYCLE-01': '循环依赖',
   'SRP-01': '单一职责',

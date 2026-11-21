@@ -64,7 +64,8 @@ ${escapeMarkdown(item.message)}
 ${(['logic', 'design', 'risks'] as const)
   .map((id) => {
     const section = review.sections[id];
-    return `### ${escapeMarkdown(section.title)}
+    const heading = { logic: 'AI 逻辑解读', design: 'AI 设计检查', risks: 'AI 风险评估' }[id];
+    return `## ${heading}
 
 ${section.markdown}`;
   })
@@ -123,8 +124,6 @@ ${(result.duplicates ?? [])
 ${(result.graph?.class_relations ?? [])
   .map((edge) => `- ${escapeMarkdown(edge.source)} → ${escapeMarkdown(edge.target)}：${escapeMarkdown(edge.kind)}（${escapeMarkdown(edge.file)}:${edge.line ?? '—'}）`)
   .join('\n') || '无'}
-
-## AI 逻辑解读
 
 ${explanations}${scopedMarkdown(options)}
 `;

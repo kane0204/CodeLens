@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../state/AppState';
 import type { Route } from '../types';
 import { Icon, LensMark } from './Icon';
+import { ReviewMarkdown } from './ReviewMarkdown';
 import { Button } from './Ui';
 
 export const ROUTES: { key: Route; label: string }[] = [
@@ -85,13 +86,45 @@ function ExportMenu() {
       {exportOpen ? (
         <div
           role="menu"
-          className="absolute right-0 top-[calc(100%+6px)] z-40 w-[248px] overflow-hidden rounded-[6px] border border-line bg-card shadow-[0_16px_36px_#2925241c] animate-fade"
+          className="absolute right-0 top-[calc(100%+6px)] z-40 w-[min(92vw,620px)] overflow-hidden rounded-[6px] border border-line bg-card shadow-[0_16px_36px_#2925241c] animate-fade"
         >
           <ExportOptions />
+          <ExportReviewPreview />
           <ExportFormats onExport={exportReport} />
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ExportReviewPreview() {
+  const { aiReview, exportAi, result } = useApp();
+  if (!exportAi) {
+    return <p className="border-b border-line px-3 py-2.5 text-[11px] text-muted">已关闭 AI 内容，本次只导出静态分析结果。</p>;
+  }
+  if (!aiReview) {
+    return <p className="border-b border-line px-3 py-2.5 text-[11px] text-muted">尚未生成逻辑说明、设计检查和风险评估。</p>;
+  }
+  const sections = [
+    ['逻辑说明', aiReview.sections.logic],
+    ['设计检查', aiReview.sections.design],
+    ['风险评估', aiReview.sections.risks],
+  ] as const;
+  return (
+    <section className="border-b border-line">
+      <div className="flex items-center justify-between gap-3 px-3 py-2">
+        <span className="text-[11px] font-semibold text-ink">报告内容预览</span>
+        <span className="num text-[10px] text-faint">{result?.summary.parsed ?? 0} 个文件</span>
+      </div>
+      <div className="scroll-thin max-h-[44vh] overflow-auto px-3 pb-3">
+        {sections.map(([title, section]) => (
+          <article key={section.id} className="mt-2 rounded-[4px] border border-line bg-[#fdfbf8] p-2.5">
+            <h3 className="mb-1.5 text-[11.5px] font-semibold text-primary">{title}</h3>
+            <ReviewMarkdown markdown={section.markdown} citations={section.citations} />
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -106,7 +139,7 @@ function ExportOptions() {
           checked={exportAi}
           onChange={(event) => setExportAi(event.target.checked)}
         />
-        包含已生成的 AI 解读
+        包含逻辑说明、设计检查与风险评估
       </label>
       <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-ink">
         <input

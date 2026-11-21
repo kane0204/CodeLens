@@ -19,7 +19,9 @@
 
 `src/components/UploadView.tsx`，标语 `make code visible`。导入与 AI 模型配置放在同一页：
 
-- 选择项目文件夹；填写兼容 `chat/completions` 的 Base URL、模型名称、API Key，也支持服务端环境变量 `CODELENS_AI_ENDPOINT` / `CODELENS_AI_MODEL` / `CODELENS_AI_KEY`。
+- 首页只负责选择项目和本机静态分析，不展示 API 字段，也不会自动调用模型。
+- 模型在结果页顶部「模型设置」中按需配置；「导出报告」展开的预览面板直接展示逻辑说明、设计检查和风险评估。
+- 文件与文件夹批量解读最多并行 3 项，单项完成后立即更新，暂停时取消当前请求。
 - 导入后自动完成「静态分析 → AI 项目审查」，不需再逐页点击生成。
 - 分阶段进度条与预计剩余时间；AI 请求不设页面或前端超时，避免长项目被提前掐断。
 - 审查意外中断后重新生成会从服务端断点续跑（项目与模型指纹相同的未完成任务可 attach）。
@@ -57,7 +59,9 @@
 ## 6. 验收
 
 ```sh
-python -B -m unittest discover -s tests -p 'test_*.py' -v   # 单元 + 集成
+python -B -m unittest discover -s tests/unit_1 -v            # Python 边界单元测试
+python -B -m unittest discover -s tests/unit_2 -v            # Python 核心单元测试
+python -B -m unittest discover -s tests/integration -v       # 集成测试
 cd codelens-prototype && npm ci && npm run build                # 前端构建（CI 同样执行）
 ```
 

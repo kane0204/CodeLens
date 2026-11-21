@@ -209,6 +209,21 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(service.call_count, 2)
         self.assertEqual(completed, ["demo"])
 
+    def test_review_and_cached_routes_use_the_configured_checkpoint_store(self):
+        store = Mock()
+        handler = object.__new__(server.Handler)
+        handler.server = SimpleNamespace(review_store=store)
+        handler.send_data = Mock(return_value=200)
+        progress = Mock()
+        with patch.object(server.explanation, "review", return_value={"ok": True}) as review:
+            self.assertEqual(handler._review({"project": "demo"}, progress), {"ok": True})
+        review.assert_called_once_with({"project": "demo"}, progress=progress, store=store)
+
+        with patch.object(server.explanation, "cached_review", return_value={"cached": True}) as cached:
+            self.assertEqual(handler._route_post(server.obs.API_REVIEW_CACHED, {"project": "demo"}), 200)
+        cached.assert_called_once_with({"project": "demo"}, store)
+        handler.send_data.assert_called_once_with(200, {"result": {"cached": True}})
+
     def test_review_error_handles_closed_client(self):
         with patch.object(server.explanation, "review", side_effect=server.explanation.ExplanationError("offline")):
             _, _, body = self.request("POST", "/api/review", payload={}, write_error=BrokenPipeError())

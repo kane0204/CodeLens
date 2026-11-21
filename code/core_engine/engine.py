@@ -12,6 +12,7 @@ from pathlib import PurePosixPath
 
 from . import generic
 from . import levels
+from . import privacy
 
 VERSION = "0.4.0"
 EXCLUDED = {
@@ -23,7 +24,7 @@ MAX_FILES = 200
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
 RULES = [levels.RULE_CC, levels.RULE_LEN, levels.RULE_DEPTH, levels.RULE_PARAMS,
-         levels.RULE_A4, levels.RULE_A3_IO, levels.RULE_CYCLE]
+         levels.RULE_A4, levels.RULE_PRIVACY, levels.RULE_A3_IO, levels.RULE_CYCLE]
 SENSITIVE_NAME_RE = re.compile(r"(?:^|[._])(password|passwd|secret|token|api_?key|access_?key)(?:$|_)", re.I)
 PLACEHOLDER_VALUE_RE = re.compile(r"demo|example|sample|test|placeholder|changeme|your[_ -]|not[_ -]a[_ -]real|dummy|xxx", re.I)
 LIMITATIONS = [
@@ -588,8 +589,9 @@ def _parse_sources(ctx):
             continue
         if not record["path"].lower().endswith(".py"):
             _parse_nonpython(ctx, record)
-            continue
-        _score_python(ctx, record)
+        else:
+            _score_python(ctx, record)
+        ctx.findings.extend(privacy.findings(record["source"], record["path"]))
 
 
 # -- stage 3: resolve relations (calls, inheritance, secrets, IO) ------------

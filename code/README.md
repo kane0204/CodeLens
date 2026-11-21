@@ -28,7 +28,7 @@ code/
 
 | 文件 | 职责 | 技术要点 |
 |---|---|---|
-| `engine.py` | 入口 `analyze(payload)`，五阶段流水线 | Python `ast.parse(feature_version=(3,11))`；非 Python 走 `generic.py`；硬上限 200 文件 / 单文件 1MB / 总量 8MB / AST 10 万节点；CC 口径：if/三元/assert +1，循环 +1（else 再 +1），try 按 except 数，BoolOp n 项 +n−1，推导式 +1+if 数，match 非通配 case +1；A–F 分档边界 5/10/20/30/40；循环依赖用 Tarjan 式 SCC 产出 `CYCLE-01`；A3-IO 沿 AST 父链找 try+OSError 判定未捕获 `open`；A4 只输出「敏感变量被赋非占位字符串」不回显原值；名称解析保守——多重绑定记 None、星号导入不绑定；调用只有唯一绑定才 resolved（`fact`），否则 `inference` |
+| `engine.py` | 入口 `analyze(payload)`，五阶段流水线 | Python `ast.parse(feature_version=(3,11))`；非 Python 走 `generic.py`；硬上限 200 文件 / 单文件 1MB / 总量 8MB / AST 10 万节点；CC 口径：if/三元/assert +1，循环 +1（else 再 +1），try 按 except 数，BoolOp n 项 +n−1，推导式 +1+if 数，match 非通配 case +1；A–F 分档边界 5/10/20/30/40；循环依赖用 Tarjan 式 SCC 产出 `CYCLE-01`；A3-IO 沿 AST 父链找 try+OSError 判定未捕获 `open`；A4 只输出「敏感变量被赋非占位字符串」不回显原值；`PRIVACY-01` 识别高置信身份证号、手机号、邮箱和常见令牌形状，同样不回显匹配值；名称解析保守——多重绑定记 None、星号导入不绑定；调用只有唯一绑定才 resolved（`fact`），否则 `inference` |
 | `ir.py` | 统一中间表示：`build_index(result)` 产出只读 `Index` | 13 种引用类型 `kind:payload`（`def:`、`finding:`、`call:`…）；`fingerprint` 只取实际相关事实的 sha256 而非整份结果 hash，避免无关改动击穿缓存；切片上限每函数 60 语句 / 40 调用，超出标 `truncated`；A4 原始敏感值不进入切片输出；对 AI 层零依赖（引用解析靠注入回调） |
 | `facts.py` | CFG 与 def-use 数据流 | 纯函数，节点/边确定性排序；语句超 150 整体降级为 `available: False`，不给半截图；基本块按经典 leader 三规则合并；边带语义标签（seq/true/false/loop/back/except/…）；def-use 只统计 `ast.Name` 级，上限 120，口径写进输出 `notes` 防漂移 |
 | `generic.py` | 非 Python（C/C++/Java/JS/TS/Go）近似分析 | 先空白化注释与字符串体但保留偏移，再花括号配对 + 二分行号索引；函数识别覆盖 C 风格、JS 箭头函数、Go func；CC 用分支关键字正则（与 Python AST 口径不等价）；依赖边按语言分派（#include / java import / js require / go import）；不产出 SOLID、类指标、结构重复与调用序列 |
@@ -80,7 +80,7 @@ python -B code/backend/server.py            # 127.0.0.1:18766
 start-codelens.cmd / sh start-codelens.sh
 
 # 测试与覆盖率
-# 见根目录 doc/README.md 与 tests/（单元：doc/unit/，集成：tests/integration/）
+# 见根目录 doc/README.md 与 tests/（单元：tests/unit_1、tests/unit_2，集成：tests/integration/）
 ```
 
 ## 进一步阅读

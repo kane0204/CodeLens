@@ -56,6 +56,7 @@ class ExplainTests(unittest.TestCase):
         for payload in (None, {"provider": [1]}, {"provider": {"base_url": 1}},
                         {"provider": {"model": "unit"}},
                         {"provider": {"base_url": "file:///tmp/model", "model": "unit"}},
+                        {"provider": {"base_url": "https://model.invalid:0", "model": "unit"}},
                         {"provider": {"base_url": "https://user@model.invalid", "model": "unit"}},
                         {"provider": {"base_url": "https://model.invalid?key=1", "model": "unit"}},
                         {"provider": {"base_url": "https://model.invalid", "model": "unit\nother"}}):
@@ -184,6 +185,16 @@ class ModelTransportTests(unittest.TestCase):
                              ("recovered", False))
         sleep.assert_called_once_with(5)
 
+    def test_retryable_status_without_retry_after_uses_backoff_attempt(self):
+        response = io.BytesIO(b'{"choices":[{"message":{"content":"recovered"}}]}')
+        unavailable = HTTPError(self.endpoint, 503, "unavailable", {}, io.BytesIO())
+        with patch.object(explanation.urllib.request, "build_opener") as build, \
+                patch.object(explanation.time, "sleep") as sleep:
+            build.return_value.open.side_effect = [unavailable, response]
+            self.assertEqual(explanation._chat(self.endpoint, "unit", "", "system", "source"),
+                             ("recovered", False))
+        sleep.assert_called_once_with(1)
+
     def test_truncated_response_and_tls_eof_can_recover_on_third_attempt(self):
         import http.client
         import ssl
@@ -213,3 +224,9 @@ class ModelTransportTests(unittest.TestCase):
                 with self.assertRaisesRegex(explanation.ExplanationError, message):
                     explanation._chat(self.endpoint, "unit", "", "system", "source")
                 self.assertIsNone(build.return_value.open.call_args.args[0].get_header("Authorization"))
+
+    def test_uncacheable_review_input_falls_back_to_direct_analysis(self):
+        source = {"project": "demo", "files": {("main.py", "x")}}
+        with patch.object(explanation, "analyze", return_value={"fallback": True}) as analyze:
+            self.assertEqual(explanation._review_input(source), {"fallback": True})
+        analyze.assert_called_once_with(source)

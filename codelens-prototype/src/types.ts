@@ -241,6 +241,9 @@ export interface HistoryProject {
   id: string;
   name: string;
   runs: number;
+  analysis_id: number | null;
+  updated: string | null;
+  ai_status: string | null;
 }
 
 export interface HistoryRun {

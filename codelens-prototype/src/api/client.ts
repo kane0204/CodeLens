@@ -10,7 +10,6 @@ import type {
   StatusInfo,
   AnalysisHistory,
   HistoryProject,
-  HistoryRun,
   HistoryDetail,
 } from '../types';
 import { logger } from '../lib/logger';
@@ -200,7 +199,6 @@ export interface AnalyzeProgress {
 export interface AnalyzeRequest {
   project: string;
   files: SelectedFile[];
-  historyProject?: string | null;
 }
 
 export function analyzeProject(
@@ -228,7 +226,7 @@ async function analyzeProjectInner(
   onProgress({ phase: 'upload', done: request.files.length, total: request.files.length });
 
   const response = await postJson('/api/analyze', {
-    project: request.project, files: encoded, history_project: request.historyProject,
+    project: request.project, files: encoded,
   }, token, signal);
   const data = await parseJson(response);
   if (!response.ok) {
@@ -349,14 +347,11 @@ async function historyRequest<T>(endpoint: string, body: object, token: string, 
 export const historyProjects = (token: string, signal: AbortSignal) =>
   historyRequest<HistoryProject[]>('projects', {}, token, signal);
 
-export const historyRuns = (project: string, token: string, signal: AbortSignal) =>
-  historyRequest<HistoryRun[]>('runs', { project_id: project }, token, signal);
-
 export const historyDetail = (project: string, run: number, token: string, signal: AbortSignal) =>
   historyRequest<HistoryDetail>('detail', { project_id: project, analysis_id: run }, token, signal);
 
-export const deleteHistory = (project: string, token: string, signal: AbortSignal) =>
-  historyRequest<{ deleted: boolean }>('delete', { project_id: project }, token, signal);
+export const deleteHistory = (project: string, run: number, token: string, signal: AbortSignal) =>
+  historyRequest<{ deleted: boolean }>('delete', { project_id: project, analysis_id: run }, token, signal);
 
 function reviewPayload(request: ReviewRequest & { scope?: ScopedReviewResult['scope'] }) {
   return withProvider({

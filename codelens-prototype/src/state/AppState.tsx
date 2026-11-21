@@ -10,6 +10,7 @@ import type {
   AnalyzeResult,
   ExplainCitation,
   GraphTab,
+  HistoryDetail,
   LlmSettings,
   Route,
   StatusInfo,
@@ -90,8 +91,8 @@ interface AppContextValue {
   sourceTarget: SourceTarget | null;
   connect: () => Promise<void>;
   go: (route: Route) => void;
-  startAnalysis: (raw: RawFile[], autoReview?: boolean, historyProject?: string | null) => Promise<void>;
-  startFromTransfer: (transfer: DataTransfer, autoReview?: boolean, historyProject?: string | null) => Promise<void>;
+  startAnalysis: (raw: RawFile[], autoReview?: boolean) => Promise<void>;
+  startFromTransfer: (transfer: DataTransfer, autoReview?: boolean) => Promise<void>;
   cancelAnalysis: () => void;
   requestReimport: () => void;
   confirmReimportAction: () => void;
@@ -119,6 +120,7 @@ interface AppContextValue {
   closeSource: () => void;
   openCitation: (citation: ExplainCitation) => void;
   locateFinding: (findingId: string) => void;
+  openHistoryResult: (projectId: string, analysisId: number, detail: HistoryDetail) => void;
   runReview: () => Promise<void>;
   cancelReview: () => void;
   resetToOverview: () => void;
@@ -383,6 +385,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setAiReview(review);
         return review;
       } catch (error) {
+        if (reviewController.current !== controller) return null;
         logger.warn('review', 'review.stopped', {
           aborted: isAbortError(error),
           message: errorText(error, ''),
@@ -422,8 +425,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [executeReview, toast]);
 
+  const openHistoryResult = useCallback((projectId: string, analysisId: number, detail: HistoryDetail) => {
+    const data: AnalyzeResult = {
+      ...detail.report,
+      history: { project_id: projectId, analysis_id: analysisId, recurring: [] },
+    };
+    analyzeController.current?.abort();
+    reviewController.current?.abort();
+    reviewController.current = null;
+    resetAfterResult(data);
+    setAiReview(detail.ai);
+    setReviewError(detail.ai
+      ? ''
+      : '历史快照不含原始源码，无法重新运行 AI 审查；可导入当前项目生成新结果。');
+    if (window.location.hash !== '#overview') window.location.hash = 'overview';
+    setRoute('overview');
+    toast('已打开历史分析记录', 'success');
+  }, [resetAfterResult, toast]);
+
   const runWithRaw = useCallback(
-    async (source: RawFile[] | DataTransfer, autoReview = true, historyProject?: string | null) => {
+    async (source: RawFile[] | DataTransfer, autoReview = true) => {
       if (analyzeController.current || status !== 'ready') return;
       setBusy(true);
       setErrors([]);
@@ -451,7 +472,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setPhase('读取项目文件');
         setProgressTotal(prepared.files.length);
         const data = await analyzeProject(
-          { project: prepared.project, files: prepared.files, historyProject },
+          { project: prepared.project, files: prepared.files },
           token,
           reportAnalysisProgress,
           controller.signal,
@@ -478,15 +499,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const startAnalysis = useCallback(
-    async (raw: RawFile[], autoReview = true, historyProject?: string | null) => {
-      await runWithRaw(raw, autoReview, historyProject);
+    async (raw: RawFile[], autoReview = true) => {
+      await runWithRaw(raw, autoReview);
     },
     [runWithRaw],
   );
 
   const startFromTransfer = useCallback(
-    async (transfer: DataTransfer, autoReview = true, historyProject?: string | null) => {
-      await runWithRaw(transfer, autoReview, historyProject);
+    async (transfer: DataTransfer, autoReview = true) => {
+      await runWithRaw(transfer, autoReview);
     },
     [runWithRaw],
   );
@@ -783,6 +804,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeSource,
       openCitation,
       locateFinding,
+      openHistoryResult,
       runReview,
       cancelReview,
       resetToOverview,
@@ -863,6 +885,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       closeSource,
       openCitation,
       locateFinding,
+      openHistoryResult,
       runReview,
       cancelReview,
       resetToOverview,

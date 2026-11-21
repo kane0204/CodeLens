@@ -77,6 +77,8 @@ cd codelens-prototype && npm install && npm run dev   # 终端 2：界面，loca
 
 首页只负责导入与本机静态分析，不展示 API 设置，也不会自动调用模型。进入结果页后，在顶部「模型设置」中填写兼容 `chat/completions` 的 Base URL、模型名称和 API Key，再按需生成逻辑说明、设计检查与风险评估。「导出报告」展开后会直接预览这三部分内容。审查中断后可以从服务端断点继续。密钥仅保存在当前页面内存，刷新需重填。也可配置服务端 `CODELENS_AI_ENDPOINT`（完整端点）、`CODELENS_AI_MODEL`、`CODELENS_AI_KEY` 环境变量。
 
+每次导入分析都会生成一条独立的历史记录，不把同名项目的多次分析合并成版本序列。点击「分析历史」中的任意记录，会直接恢复当时的静态结果和已归档 AI 审查。
+
 单元测试集中在 [doc](doc/README.md)，包含 Python 和前端的运行命令、覆盖率报告和验收方法。
 
 ```bash

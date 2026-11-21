@@ -212,6 +212,27 @@ test('AI cancellation retains the checkpoint message and later reports a missing
   assert.equal(state().reviewBusy, false);
 });
 
+test('opens an archived analysis with its stored AI review', async () => {
+  const state = await renderProvider();
+  const archived = projectResult({ files: [] });
+  const detail = {
+    report: archived,
+    changes: { baseline: null, added: [], modified: [], missing: [] },
+    issues: [],
+    ai_status: 'done',
+    ai: report,
+  };
+  act(() => state().openHistoryResult('project-one', 3, detail));
+  assert.equal(state().result.project, archived.project);
+  assert.equal(state().result.history.project_id, 'project-one');
+  assert.equal(state().result.history.analysis_id, 3);
+  assert.deepEqual(state().result.history.recurring, []);
+  assert.deepEqual(state().aiReview, report);
+  assert.equal(state().route, 'overview');
+  assert.equal(state().importing, false);
+  assert.match(state().toasts.at(-1).message, /历史分析记录/);
+});
+
 test('file drop errors and HTTP failures remain visible without discarding an existing result', async () => {
   const state = await renderProvider();
   await act(() => state().startFromTransfer({ items: [], files: [selection[0].file] }));

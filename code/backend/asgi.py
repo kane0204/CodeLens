@@ -243,8 +243,8 @@ def _routes(app, store, history):
     @app.post(obs.API_ANALYZE, openapi_extra=_schema(SourceRequest))
     def analyze(payload=Depends(_read_payload)):
         result = core.enrich(core.analyze(_validate(payload, SourceRequest)))
-        if history is not None and "history_project" in payload and result["summary"]["parsed"]:
-            result["history"] = history.record(result, payload["history_project"])
+        if history is not None and result["summary"]["parsed"]:
+            result["history"] = history.record(result, None)
         return result
 
     @app.post(obs.API_EXPLAIN, openapi_extra=_schema(ExplainRequest))
@@ -282,7 +282,8 @@ def _history_routes(app, history):
 
     @app.post("/api/history/delete", openapi_extra=_schema(HistoryRequest))
     def delete(payload=Depends(_read_payload)):
-        history.delete(_validate(payload, HistoryRequest)["project_id"])
+        request = HistoryRequest.model_validate(_validate(payload, HistoryRequest))
+        history.delete(request.project_id, request.analysis_id)
         return {"deleted": True}
 
 

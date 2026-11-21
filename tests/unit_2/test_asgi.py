@@ -60,6 +60,9 @@ class FastApiTests(unittest.IsolatedAsyncioTestCase):
         status, body = await self.request("POST", "/api/analyze", {**self.payload, "history_project": None})
         self.assertEqual(status, 200)
         recorded = json.loads(body)["history"]
+        _, repeat_body = await self.request("POST", "/api/analyze", self.payload)
+        repeated = json.loads(repeat_body)["history"]
+        self.assertNotEqual(recorded["project_id"], repeated["project_id"])
         project = {"project_id": recorded["project_id"], "analysis_id": recorded["analysis_id"]}
         review = {**self.payload, "history_project": project["project_id"], "history_run": project["analysis_id"],
                   "provider": {"base_url": "https://model.invalid", "model": "mock"}}
@@ -71,7 +74,9 @@ class FastApiTests(unittest.IsolatedAsyncioTestCase):
         _, body = await self.request("POST", "/api/review/cached", review)
         self.assertEqual(json.loads(body)["result"], output)
         _, body = await self.request("POST", "/api/history/projects", {})
-        self.assertEqual(json.loads(body)[0]["runs"], 1)
+        projects = json.loads(body)
+        self.assertEqual(len(projects), 2)
+        self.assertTrue(all(item["runs"] == 1 and item["analysis_id"] for item in projects))
         _, body = await self.request("POST", "/api/history/runs", project)
         self.assertEqual(json.loads(body)[0]["ai_status"], "done")
         _, body = await self.request("POST", "/api/history/detail", project)

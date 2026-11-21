@@ -46,7 +46,7 @@ class HistoryTests(unittest.TestCase):
             self.store.detail(other["project_id"], repeat["analysis_id"])
         with self.assertRaisesRegex(ValueError, "项目历史不存在"):
             self.record(source, "missing")
-        self.assertEqual(len(self.store.projects()), 2)
+        self.assertEqual(len(self.store.projects()), 3)
 
     def test_streak_requires_three_distinct_versions_and_line_can_move(self):
         first = self.record("def run():\n    return 1")

@@ -166,9 +166,10 @@ class HistoryStore:
     def projects(self):
         with self._db() as db:
             return [dict(row) for row in db.execute("""
-                SELECT p.id, p.name, COUNT(a.id) AS runs, MAX(a.created) AS updated
-                FROM project p LEFT JOIN analysis a ON a.project_id = p.id
-                GROUP BY p.id ORDER BY MAX(a.id) DESC
+                SELECT p.id, p.name, 1 AS runs, a.id AS analysis_id,
+                       a.created AS updated, a.ai_status
+                FROM project p JOIN analysis a ON a.project_id = p.id
+                ORDER BY a.id DESC
             """)]
 
     def runs(self, project_id):
@@ -177,9 +178,15 @@ class HistoryStore:
                 SELECT id, version, created, ai_status FROM analysis WHERE project_id = ? ORDER BY id DESC
             """, (project_id,))]
 
-    def delete(self, project_id):
+    def delete(self, project_id, analysis_id=None):
         with self._db(write=True) as db:
-            db.execute("DELETE FROM project WHERE id = ?", (project_id,))
+            if analysis_id is None:
+                db.execute("DELETE FROM project WHERE id = ?", (project_id,))
+                return
+            db.execute("DELETE FROM analysis WHERE project_id = ? AND id = ?", (project_id, analysis_id))
+            db.execute("""DELETE FROM project WHERE id = ?
+                          AND NOT EXISTS (SELECT 1 FROM analysis WHERE project_id = ?)""",
+                       (project_id, project_id))
 
     def checkpoints(self, project_id):
         return ProjectCheckpoints(self, project_id)

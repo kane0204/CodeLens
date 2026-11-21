@@ -26,7 +26,6 @@ function LogicToolbar({ section, actions }: { section: LogicSection | undefined;
         {actions.paused ? '继续解读' : '一键解读所有文件和文件夹'}
       </Button>
       <ReviewPause actions={actions} reviewBusy={reviewBusy} cancelReview={cancelReview} />
-      <HistoryReviewOption disabled={reviewBusy || Boolean(actions.active)} />
       {section ? (
         <Button size="sm" variant="ghost" icon="copy" onClick={() => void copyText(section.markdown)}>
           复制解读
@@ -45,17 +44,6 @@ function LogicToolbar({ section, actions }: { section: LogicSection | undefined;
       ) : null}
     </div>
   );
-}
-
-function HistoryReviewOption({ disabled }: { disabled: boolean }) {
-  const { result, useHistory, setUseHistory } = useApp();
-  if (!result?.history) return null;
-  return <label className="flex items-center gap-1 text-[10.5px] text-muted"
-    title="相关摘要会随综合审查发送到已配置的模型服务">
-    <input type="checkbox" checked={useHistory} disabled={disabled}
-      onChange={(event) => setUseHistory(event.target.checked)} />
-    参考项目历史
-  </label>;
 }
 
 function ReviewPause({ actions, reviewBusy, cancelReview }: {
@@ -81,7 +69,6 @@ function LogicReport({ aiReview, section }: { aiReview: AiReviewResult | ScopedR
           覆盖 {aiReview.source_files ?? 0} 个已解析文件{aiReview.batch_count > 1 ? ` · ${aiReview.batch_count} 批` : ''}
         </span>
         <span>解读基于完整源码与静态分析事实，点击引用回到源码核对</span>
-        {aiReview.history_references?.length ? <span>参考历史 {aiReview.history_references.map((id) => `#${id}`).join('、')}</span> : null}
       </div>
       {aiReview.omitted_context ? (
         <p className="mt-2 rounded-[4px] border border-[#fed7aa] bg-[#fff7ed] px-3 py-1.5 text-[10.5px] text-warning">

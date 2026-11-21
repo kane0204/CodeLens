@@ -1,4 +1,5 @@
 import { errorText, providerConfigured, readCachedReview, reviewProject } from '../api/client';
+import { ReviewLimits } from '../components/ReviewLimits';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, type Highlight } from '../state/AppState';
 import { FileTree } from '../components/FileTree';
@@ -70,16 +71,7 @@ function LogicReport({ aiReview, section }: { aiReview: AiReviewResult | ScopedR
         </span>
         <span>解读基于完整源码与静态分析事实，点击引用回到源码核对</span>
       </div>
-      {aiReview.omitted_context ? (
-        <p className="mt-2 rounded-[4px] border border-[#fed7aa] bg-[#fff7ed] px-3 py-1.5 text-[10.5px] text-warning">
-          部分静态事实超出上下文上限，未全部发送。
-        </p>
-      ) : null}
-      {aiReview.truncated ? (
-        <p className="mt-2 rounded-[4px] border border-[#fed7aa] bg-[#fff7ed] px-3 py-1.5 text-[10.5px] text-warning">
-          阅读记录或模型输出达到长度限制，当前解读可能不完整。
-        </p>
-      ) : null}
+      <ReviewLimits review={aiReview} section="logic" />
     </div>
   );
 }

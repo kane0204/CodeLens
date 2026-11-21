@@ -96,14 +96,14 @@ class ExplainTests(unittest.TestCase):
         self.assertIn("helper.py", chat.call_args.args[-1])
 
     def test_long_source_line_is_split_without_losing_bytes_or_line_numbers(self):
-        source = "x" * 1400
+        source = "x源🔍" * 500
         with patch.object(explanation, "MAX_PROJECT_BATCH_CHARS", 1000):
             batches = explanation._project_batches([{"path": "main.js", "source": source}])
         fragments = [line.removeprefix("1: ") for batch in batches for line in batch.splitlines()
                      if line.startswith("1: ")]
         self.assertGreater(len(batches), 1)
         self.assertEqual("".join(fragments), source)
-        self.assertTrue(all(len(batch) <= 1000 for batch in batches))
+        self.assertTrue(all(len(batch.encode("utf-8")) <= 1000 for batch in batches))
 
     def test_context_can_be_disabled_or_limited_without_claiming_unsent_lines(self):
         helpers = "\n".join(f"def f{i}():\n    return {i}\n" for i in range(8))
@@ -161,6 +161,15 @@ class ModelTransportTests(unittest.TestCase):
                     explanation._chat(self.endpoint, "unit", "fake-key", "system", "source")
                 self.assertNotIn("fake-key", str(raised.exception))
                 self.assertNotIn("private data", str(raised.exception))
+
+    def test_context_rejection_is_identified_without_returning_provider_body(self):
+        body = b'{"error":{"code":"context_length_exceeded","message":"private source"}}'
+        failure = HTTPError(self.endpoint, 400, "Bad Request", {}, io.BytesIO(body))
+        with patch.object(explanation.urllib.request, "build_opener") as build:
+            build.return_value.open.side_effect = failure
+            with self.assertRaisesRegex(explanation.ExplanationError, "过长的输入") as raised:
+                explanation._chat(self.endpoint, "unit", "", "system", "source")
+        self.assertNotIn("private source", str(raised.exception))
 
     def test_transient_disconnect_retries_without_logging_private_details(self):
         response = {"choices": [{"message": {"content": "recovered"}}]}

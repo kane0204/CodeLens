@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useApp } from '../state/AppState';
 import { Icon } from '../components/Icon';
 import { ReviewMarkdown } from '../components/ReviewMarkdown';
+import { ReviewLimits } from '../components/ReviewLimits';
 import { Badge, Button, Card, CardHeader, Tag } from '../components/Ui';
 import { confidenceLabel, evidenceLabel, ruleName } from '../lib/format';
 import type { AnalyzeResult, Finding } from '../types';
@@ -106,6 +107,7 @@ function SolidReviewCard() {
         ) : section ? (
           <div className="max-w-[900px]">
             <ReviewMarkdown markdown={section.markdown} citations={section.citations} />
+            <ReviewLimits review={aiReview} section="design" />
             <p className="mt-4 border-t border-line pt-2.5 text-[10.5px] text-faint">
               模型：{aiReview?.model || '—'} · 仅讨论有源码或静态事实支持的问题，结论需人工确认
             </p>

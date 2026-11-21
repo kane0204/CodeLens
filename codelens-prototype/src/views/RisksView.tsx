@@ -1,5 +1,6 @@
 import { useApp } from '../state/AppState';
 import { ReviewMarkdown } from '../components/ReviewMarkdown';
+import { ReviewLimits } from '../components/ReviewLimits';
 import { Button, Card, CardHeader } from '../components/Ui';
 
 export function RisksView() {
@@ -62,6 +63,7 @@ function RiskReviewBody() {
       ) : section ? (
         <div className="max-w-[900px]">
           <ReviewMarkdown markdown={section.markdown} citations={section.citations} />
+          <ReviewLimits review={aiReview} section="risks" />
           <p className="mt-4 border-t border-line pt-2.5 text-[10.5px] text-faint">
             模型：{aiReview?.model || '—'} · 未列出中低危项；结论需结合源码人工复核
           </p>

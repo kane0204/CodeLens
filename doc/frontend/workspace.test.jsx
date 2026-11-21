@@ -565,6 +565,25 @@ test('risk page delegates static findings to quality inspection while AI waits f
   assert.match(container.textContent, /逻辑解读完成后自动生成/);
 });
 
+test('reports distinguish shared summary compression from per-section limits', () => {
+  const aiReview = { ...report, limits: {
+    facts_omitted: ['design'], summary_compressed: true, reading_output_limited: false,
+    summary_output_limited: false, section_output_limited: ['risks'],
+  } };
+  Object.assign(mocked.context, { route: 'solid', aiReview });
+  const { render, container } = mount();
+  render(<App />);
+  assert.match(container.textContent, /部分条目未发送/);
+  assert.match(container.textContent, /已分层压缩/);
+  assert.doesNotMatch(container.textContent, /本部分报告达到模型输出上限/);
+
+  mocked.context.route = 'risks';
+  render(<App />);
+  assert.doesNotMatch(container.textContent, /部分条目未发送/);
+  assert.match(container.textContent, /已分层压缩/);
+  assert.match(container.textContent, /本部分报告达到模型输出上限/);
+});
+
 test('logic enables only the selected scope and submits its parsed sources', async () => {
   Object.assign(mocked.context, { route: 'logic', token: 'local', settings: providerSettings });
   const files = mocked.context.result.files;

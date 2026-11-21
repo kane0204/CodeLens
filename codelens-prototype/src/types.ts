@@ -335,6 +335,13 @@ export interface AiReviewResult {
   omitted_context: boolean;
   sections: Record<AiReviewSectionId, AiReviewSection>;
   truncated: boolean;
+  limits?: {
+    facts_omitted: AiReviewSectionId[];
+    summary_compressed: boolean;
+    reading_output_limited: boolean;
+    summary_output_limited: boolean;
+    section_output_limited: AiReviewSectionId[];
+  };
 }
 
 export interface ScopedReviewResult extends Omit<AiReviewResult, 'scope' | 'sections'> {

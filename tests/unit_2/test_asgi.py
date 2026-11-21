@@ -101,7 +101,7 @@ class FastApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_project_history_endpoints_and_review_archive(self):
         directory = self.enterContext(TemporaryDirectory())
         history = asgi.HistoryStore(Path(directory) / "history.sqlite3")
-        self.app = asgi.create_app(self.store, history)
+        self.app = asgi.create_app(self.store, history, credential_store=self.credentials)
         status, body = await self.request("GET", "/api/status")
         self.assertIn("project-history", json.loads(body)["capabilities"])
         status, body = await self.request("POST", "/api/analyze", {**self.payload, "history_project": None})
@@ -113,11 +113,12 @@ class FastApiTests(unittest.IsolatedAsyncioTestCase):
         project = {"project_id": recorded["project_id"], "analysis_id": recorded["analysis_id"]}
         review = {**self.payload, "history_project": project["project_id"], "history_run": project["analysis_id"],
                   "provider": {"base_url": "https://model.invalid", "model": "mock"}}
-        model = ('{"logic":"用途","design":"设计","risks":"风险"}', False)
-        with patch.object(server.explanation, "_chat", return_value=model):
+        replies = [('{"logic":"用途"}', False), ('{"design":"设计"}', False), ('{"risks":"风险"}', False)]
+        with patch.object(server.explanation, "_chat", side_effect=replies):
             status, body = await self.request("POST", "/api/review", review)
         self.assertEqual(status, 200)
         output = json.loads(body.splitlines()[-1])["result"]
+        self.assertEqual(set(output["sections"]), {"logic", "design", "risks"})
         _, body = await self.request("POST", "/api/review/cached", review)
         self.assertEqual(json.loads(body)["result"], output)
         _, body = await self.request("POST", "/api/history/projects", {})

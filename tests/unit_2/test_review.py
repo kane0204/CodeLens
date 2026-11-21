@@ -49,7 +49,7 @@ class ProjectReviewTests(unittest.TestCase):
             explanation.review({**self.payload, "scope": "invalid"})
 
     def test_pausing_after_read_preserves_notes_and_their_truncation(self):
-        self.chat.side_effect = [("first note", True), ("next note", False), (self.report, False)]
+        self.chat.side_effect = [("first note", True), ("next note", False)] + [(self.report, False)] * 3
 
         def disconnect(event):
             if event["stage"] == "read" and event["done"] == 1:
@@ -64,18 +64,26 @@ class ProjectReviewTests(unittest.TestCase):
                 explanation.review(payload, progress=disconnect)
             self.assertEqual(self.chat.call_count, 1)
             result = explanation.review(payload)
-        self.assertEqual(self.chat.call_count, 3)
+        self.assertEqual(self.chat.call_count, 5)
         self.assertTrue(result["truncated"])
+        self.assertTrue(result["limits"]["reading_output_limited"])
         self.assertIn("first note", self.chat.call_args.args[-1])
 
-    def test_synthesis_limit_retains_material_from_every_batch(self):
-        notes = ["first " + "x" * 200, "second " + "y" * 200]
-        with patch.object(explanation, "MAX_REVIEW_SYNTHESIS_CHARS", 100):
-            material, facts, limited = explanation._bounded_synthesis(notes, "z" * 80)
-        self.assertTrue(limited)
-        self.assertLessEqual(len(material) + len(facts), 100)
-        self.assertIn("first", material)
-        self.assertIn("second", material)
+    def test_large_reading_notes_are_summarized_before_section_generation(self):
+        payload = {**self.payload, "files": [
+            {"path": "a.py", "content": "# " + "x" * 600},
+            {"path": "b.py", "content": "# " + "x" * 600},
+        ]}
+        self.chat.side_effect = [("x" * 850, False), ("y" * 850, False),
+                                 ("a.py [a.py:L1]", False), ("b.py [b.py:L1]", False)] + [(self.report, False)] * 3
+        with patch.object(explanation, "MAX_PROJECT_BATCH_CHARS", 1000), \
+                patch.object(explanation, "MAX_REVIEW_SYNTHESIS_CHARS", 1500):
+            result = explanation.review(payload)
+        self.assertTrue(result["limits"]["summary_compressed"])
+        self.assertFalse(result["limits"]["summary_output_limited"])
+        for call in self.chat.call_args_list[-3:]:
+            self.assertIn("[a.py:L1]", call.args[-1])
+            self.assertIn("[b.py:L1]", call.args[-1])
 
     def test_review_checks_citations_and_reports_model_truncation(self):
         self.chat.return_value = (self.report, True)
@@ -85,6 +93,7 @@ class ProjectReviewTests(unittest.TestCase):
         self.assertEqual(result["scope"], "project")
         self.assertEqual((result["source_files"], result["batch_count"]), (1, 1))
         self.assertTrue(result["truncated"])
+        self.assertEqual(result["limits"]["section_output_limited"], ["logic", "design", "risks"])
         sections = result["sections"]
         self.assertEqual(set(sections), {"logic", "design", "risks"})
         logic, = sections["logic"]["citations"]
@@ -105,7 +114,7 @@ class ProjectReviewTests(unittest.TestCase):
             self.assertEqual(explanation.review(self.payload), first)
             analyze.assert_called_once()
 
-        self.chat.assert_called_once()
+        self.assertEqual(self.chat.call_count, 3)
 
         changed = {**self.payload, "files": [
             {"path": "main.py", "content": "def main():\n    return 2\n"},
@@ -115,8 +124,8 @@ class ProjectReviewTests(unittest.TestCase):
         result = explanation.review(changed_model)
 
         self.assertEqual(result["model"], "model-b")
-        self.assertEqual(self.chat.call_count, 3)
-        self.assertIn("return 2", self.chat.call_args_list[1].args[-1])
+        self.assertEqual(self.chat.call_count, 9)
+        self.assertIn("return 2", self.chat.call_args_list[3].args[-1])
 
     def test_failed_batch_resumes_after_last_completed_batch(self):
         self.payload["files"] = [
@@ -127,8 +136,7 @@ class ProjectReviewTests(unittest.TestCase):
             ("main notes", False),
             explanation.ExplanationError("model timeout"),
             ("worker notes", False),
-            (self.report, False),
-        ]
+        ] + [(self.report, False)] * 3
         progress = []
         with patch.object(explanation, "MAX_PROJECT_BATCH_CHARS", 1000):
             with self.assertRaisesRegex(explanation.ExplanationError, "model timeout"):
@@ -136,29 +144,63 @@ class ProjectReviewTests(unittest.TestCase):
             result = explanation.review(self.payload, progress=progress.append)
 
         self.assertEqual(result["batch_count"], 2)
-        self.assertEqual(self.chat.call_count, 4)
-        first, failed, retried, final = [call.args[-1] for call in self.chat.call_args_list]
+        self.assertEqual(self.chat.call_count, 6)
+        first, failed, retried, final = [call.args[-1] for call in self.chat.call_args_list[:4]]
         self.assertIn("main.py", first)
         self.assertIn("worker.py", failed)
         self.assertEqual(failed, retried)
         self.assertIn("main notes", final)
         self.assertIn("worker notes", final)
         self.assertEqual((progress[0]["stage"], progress[0]["done"], progress[0]["total"]),
-                         ("read", 1, 3))
-        self.assertEqual((progress[-1]["stage"], progress[-1]["done"]), ("review", 3))
+                         ("read", 1, 5))
+        self.assertEqual((progress[-1]["stage"], progress[-1]["done"]), ("review", 5))
 
-    def test_incomplete_model_report_is_rejected_and_can_be_retried(self):
+    def test_incomplete_model_report_is_retried_before_reporting_completion(self):
         self.chat.side_effect = [
             (json.dumps({"logic": "Only one section"}), False),
-            (self.report, False),
+            (json.dumps({"logic": "Wrong section"}), False),
+            (self.report, False), (self.report, False),
         ]
 
-        with self.assertRaises(explanation.ExplanationError):
-            explanation.review(self.payload)
-        result = explanation.review(self.payload)
+        progress = []
+        result = explanation.review(self.payload, progress=progress.append)
 
         self.assertEqual(set(result["sections"]), {"logic", "design", "risks"})
+        self.assertEqual(self.chat.call_count, 4)
+        self.assertEqual([event["done"] for event in progress], [0, 1, 1, 2, 3])
+        self.assertIn("只写一个完整的 JSON 对象", self.chat.call_args_list[2].args[-1])
+
+    def test_completed_section_survives_restart_and_other_section_failure(self):
+        self.chat.side_effect = [(self.report, False), explanation.ExplanationError("model timeout")]
+        with TemporaryDirectory() as directory:
+            store = ReviewStore(Path(directory) / "reviews.sqlite3")
+            with self.assertRaisesRegex(explanation.ExplanationError, "设计检查.*model timeout"):
+                explanation.review(self.payload, store=store)
+            explanation._REVIEW_JOBS.clear()
+            self.chat.reset_mock(side_effect=True)
+            self.chat.return_value = (self.report, False)
+            outcome = explanation.review(self.payload, store=store)
+
+        self.assertEqual(set(outcome["sections"]), {"logic", "design", "risks"})
         self.assertEqual(self.chat.call_count, 2)
+        self.assertIn('{"design":"Markdown 正文"}', self.chat.call_args_list[0].args[-1])
+
+    def test_scoped_review_retries_invalid_json_and_uses_valid_reply(self):
+        self.chat.side_effect = [('{"logic":"unfinished', True), ('{"logic":"Recovered"}', False)]
+        result = explanation.review({**self.payload, "scope": "file"})
+
+        self.assertEqual(result["sections"]["logic"]["markdown"], "Recovered")
+        self.assertFalse(result["truncated"])
+        self.assertEqual(self.chat.call_count, 2)
+
+    def test_failed_format_retry_reports_length_limit_without_completion(self):
+        self.chat.side_effect = [("# Plain Markdown", False), ('{"logic":"unfinished', True)]
+        progress = []
+        with self.assertRaisesRegex(explanation.ExplanationError, "达到长度上限"):
+            explanation.review({**self.payload, "scope": "file"}, progress=progress.append)
+
+        self.assertEqual(self.chat.call_count, 2)
+        self.assertEqual([event["done"] for event in progress], [0, 0])
 
     def test_waiter_observes_original_failure_after_retry_claims_job(self):
         original, _ = explanation._claim_review_job("same-input")
@@ -209,7 +251,7 @@ class ProjectReviewTests(unittest.TestCase):
                 release_model.set()
             self.assertEqual(first.result(timeout=5), second.result(timeout=5))
 
-        self.chat.assert_called_once()
+        self.assertEqual(self.chat.call_count, 3)
 
     def test_waiting_review_receives_the_original_model_failure(self):
         model_started = Event()
@@ -249,13 +291,12 @@ class ProjectReviewTests(unittest.TestCase):
         self.chat.assert_not_called()
 
     def test_review_accepts_fenced_json_and_rejects_other_model_shapes(self):
-        self.chat.side_effect = [
-            ("nothing structured", False), ("prefix {broken}", False), ("[]", False),
-            ("```json\n" + self.report + "\n```", False),
-        ]
-        for _ in range(3):
+        for invalid in ("nothing structured", "prefix {broken}", "[]"):
+            self.chat.side_effect = [(invalid, False), (invalid, False)]
             with self.assertRaisesRegex(explanation.ExplanationError, "结构化审查结果"):
                 explanation.review(self.payload)
+        self.chat.side_effect = None
+        self.chat.return_value = ("```json\n" + self.report + "\n```", False)
         result = explanation.review(self.payload)
         self.assertIn("Entry point", result["sections"]["logic"]["markdown"])
 
@@ -279,9 +320,9 @@ class ProjectReviewTests(unittest.TestCase):
         with patch.object(explanation, "_REVIEW_JOB_LIMIT", 2):
             for payload in (first, second, third, second):
                 explanation.review(payload)
-            self.assertEqual(self.chat.call_count, 3)
+            self.assertEqual(self.chat.call_count, 9)
             explanation.review(first)
-        self.assertEqual(self.chat.call_count, 4)
+        self.assertEqual(self.chat.call_count, 12)
 
 
 class ReviewStoreTests(unittest.TestCase):

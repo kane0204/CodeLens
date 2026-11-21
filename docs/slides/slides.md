@@ -230,7 +230,8 @@ MEM --> IR
 
 **3.6.2 质量工具**：PEP8 用 autopep8；Pylint 做语义分析；复杂度用 complexipy；Python unittest + 前端 vitest 双向覆盖。
 
-![pylint告警](/pylint.png)
+<img src="/pylint.png" class="mx-auto max-h-52" />
+
 
 
 ---
@@ -239,15 +240,18 @@ MEM --> IR
 
 | 模块 | 文件数 | 代码行 | 总行数（含注释空行） |
 |---|---|---|---|
-| `code/`（Python：引擎、AI、后端） | 32 | 6315 | 8220 |
-| `codelens-prototype/src`（TS/TSX/CSS） | 28 | 5968 | 6542 |
+| `code/`（Python） | 32 | 6315 | 8220 |
+| `codelens-prototype/src` | 28 | 5968 | 6542 |
 
-后端按模块：核心引擎 14 文件 3075 行 · AI 层 13 文件 2053 行 · 后端服务 7 文件 1298 行。
+---
 
-<div class="flex gap-4">
-  <img src="/counter-backend.png" class="w-1/2" />
-  <img src="/counter-frontend.png" class="w-1/2" />
+## 3.7 代码统计（截图）
+
+<div class="flex gap-4 justify-center">
+  <img src="/counter-backend.png" class="max-h-80" />
+  <img src="/counter-frontend.png" class="max-h-80" />
 </div>
+
 
 ---
 layout: center

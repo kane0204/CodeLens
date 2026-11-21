@@ -29,8 +29,9 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Build
         run: npm run build -- --base /${{github.event.repository.name}}/
-      - name: Install Chromium for PDF export
-        run: npx playwright install chromium
+      - name: Install Playwright for PDF export
+        run: npm i -D playwright-chromium
+
       - name: Export PDF
         run: npm run export -- --output dist/slides.pdf
       - name: Setup Pages

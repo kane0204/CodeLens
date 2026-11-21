@@ -1,4 +1,4 @@
-import { errorText, readCachedReview, reviewProject } from '../api/client';
+import { errorText, providerConfigured, readCachedReview, reviewProject } from '../api/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, type Highlight } from '../state/AppState';
 import { FileTree } from '../components/FileTree';
@@ -23,7 +23,7 @@ function LogicToolbar({ section, actions }: { section: LogicSection | undefined;
         onClick={() => void actions.runAll()}
         disabled={reviewBusy || Boolean(actions.active) || !actions.pending}
       >
-        {actions.paused ? '继续解读' : '一键解读所有文件和文件夹'}
+        {actions.paused ? '继续解读' : '一键解读所有文件'}
       </Button>
       <ReviewPause actions={actions} reviewBusy={reviewBusy} cancelReview={cancelReview} />
       {section ? (
@@ -90,7 +90,7 @@ function LogicReviewPrompt() {
       <div className="w-full max-w-[620px] rounded-[6px] border border-dashed border-[#ddd4c8] bg-[#faf8f4] px-6 py-7">
         <h3 className="serif text-[15px] font-semibold text-ink">生成文件与文件夹解读</h3>
         <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
-          一键解读会并行处理已解析文件及其文件夹，最多同时运行 3 项。完成后点击左侧文件或文件夹即可查看。
+          一键解读会从项目中的第一个文件开始，最多同时运行 3 项。完成后点击左侧文件即可查看。
         </p>
         <ul className="mt-3 space-y-1.5 text-[11px] leading-relaxed text-muted">
           {['项目做什么、入口与主流程', '模块之间如何协作、数据如何流转', '异常边界与需要人工复核的地方'].map((item) => (
@@ -276,7 +276,8 @@ function addFolderTargets(targets: Map<string, ReviewTarget>, source: ReviewTarg
 }
 
 function useScopedReviews(result: AnalyzeResult) {
-  const { token, settings, scopedReviews: reviews, saveScopedReview, useHistory } = useApp();
+  const { token, settings, credentials, scopedReviews: reviews, saveScopedReview, useHistory,
+    openSettings, runReview } = useApp();
   const targets = useMemo(() => reviewTargets(result), [result]);
   const [error, setError] = useState('');
   const [active, setActive] = useState('');
@@ -301,49 +302,50 @@ function useScopedReviews(result: AnalyzeResult) {
   async function generate(target: ReviewTarget, signal: AbortSignal) {
     setActive(target.path);
     setProgress(undefined);
-    const output = await reviewProject(scopedRequest(result, target, settings, useHistory), token, (next) => { if (!signal.aborted) setProgress(next); }, signal);
+    const output = await reviewProject(scopedRequest(result, target, settings, useHistory, credentials.configured),
+      token, (next) => { if (!signal.aborted) setProgress(next); }, signal);
     if (!signal.aborted) saveScopedReview(result, target.key, output);
   }
 
-  async function run(queue: ReviewTarget[]) {
+  async function run(queue: ReviewTarget[], generateProjectReview = false) {
     if (request.current || !queue.length) return;
-    const controller = new AbortController();
-    request.current = controller;
-    setPaused(false);
-    setError('');
-    try {
-      const failed = await runQueue(queue, controller.signal, generate);
-      if (!controller.signal.aborted && failed.length) setError(failed.join("\n"));
-    } catch (failure) {
-      if (!controller.signal.aborted) setError(errorText(failure, '解读失败，请检查模型设置后重试。'));
-    } finally {
-      if (request.current === controller) {
-        request.current = undefined;
-        setActive('');
-      }
+    if (!providerConfigured(settings, credentials.configured)) {
+      openSettings();
+      return;
     }
+    await runScopedQueue({ queue, request, generate, generateProjectReview, runReview,
+      openSettings, setActive, setError, setPaused });
   }
 
+  const fileTargets = useMemo(
+    () => [...targets.values()].filter((target) => target.kind === 'file'),
+    [targets],
+  );
+  const pendingFiles = fileTargets.filter((target) => !reviews.has(target.key));
   return { reviews, error, active, progress, paused, pause, started: Boolean(active || error || paused || reviews.size),
     runSelected: (key: string) => run([...targets.values()].filter((target) => target.key === key)),
-    pending: targets.size - reviews.size, total: targets.size,
-    runAll: () => run(pendingReviews(targets, reviews)), targets };
+    completed: fileTargets.length - pendingFiles.length, pending: pendingFiles.length, total: fileTargets.length,
+    runAll: () => run(pendingFiles, true), targets };
 }
 
 function useRestoreScopedReview(result: AnalyzeResult, target: ReviewTarget | undefined, review?: ScopedReviewResult) {
-  const { capabilities, settings, token, saveScopedReview, useHistory } = useApp();
+  const { capabilities, settings, credentials, token, saveScopedReview, useHistory } = useApp();
   useEffect(() => {
     if (!capabilities?.includes('review-checkpoints') || !target || review) return;
     const controller = new AbortController();
     const restore = async () => {
-      const saved = await readCachedReview(scopedRequest(result, target, settings, useHistory), token, controller.signal);
+      const saved = await readCachedReview(
+        scopedRequest(result, target, settings, useHistory, credentials.configured),
+        token,
+        controller.signal,
+      );
       if (saved && !controller.signal.aborted) saveScopedReview(result, target.key, saved);
     };
     void restore().catch(() => {
       // A cache miss or unavailable local store leaves the manual review action available.
     });
     return () => controller.abort();
-  }, [capabilities, settings, token, saveScopedReview, result, target, review, useHistory]);
+  }, [capabilities, settings, credentials.configured, token, saveScopedReview, result, target, review, useHistory]);
 }
 
 function stopReview(request: { current: AbortController | undefined }) {
@@ -351,21 +353,70 @@ function stopReview(request: { current: AbortController | undefined }) {
   request.current = undefined;
 }
 
-function scopedRequest(result: AnalyzeResult, target: ReviewTarget, settings: ReturnType<typeof useApp>['settings'], useHistory: boolean) {
+function scopedRequest(
+  result: AnalyzeResult,
+  target: ReviewTarget,
+  settings: ReturnType<typeof useApp>['settings'],
+  useHistory: boolean,
+  useStoredCredential: boolean,
+) {
   const scope = target.kind === 'folder' ? '文件夹' : '文件';
   return { project: result.project + ' · ' + scope + ' · ' + target.path,
     files: target.files, settings, scope: target.kind, history: result.history,
-    useHistory: result.history ? useHistory : undefined };
+    useHistory: result.history ? useHistory : undefined, useStoredCredential };
 }
 
-function pendingReviews(targets: Map<string, ReviewTarget>, reviews: ReadonlyMap<string, ScopedReviewResult>) {
-  return [...targets.values()].filter((target) => !reviews.has(target.key)).sort(compareReviewTargets);
+interface ScopedQueueOptions {
+  queue: ReviewTarget[];
+  request: { current: AbortController | undefined };
+  generate: (target: ReviewTarget, signal: AbortSignal) => Promise<void>;
+  generateProjectReview: boolean;
+  runReview: () => Promise<void>;
+  openSettings: () => void;
+  setActive: (value: string) => void;
+  setError: (value: string) => void;
+  setPaused: (value: boolean) => void;
 }
 
-function compareReviewTargets(a: ReviewTarget, b: ReviewTarget) {
-  if (a.kind !== b.kind) return a.kind === 'file' ? -1 : 1;
-  if (a.kind === 'file') return 0;
-  return b.path.split('/').length - a.path.split('/').length;
+async function runScopedQueue(options: ScopedQueueOptions) {
+  const { queue, request, generate, generateProjectReview, runReview,
+    openSettings, setActive, setError, setPaused } = options;
+  const controller = new AbortController();
+  request.current = controller;
+  setPaused(false);
+  setError('');
+  const outcome = await runQueue(queue, controller.signal, generate).then(
+    (failed) => ({ failed, error: undefined }),
+    (error: unknown) => ({ failed: [], error }),
+  );
+  if (controller.signal.aborted) return finishScopedQueue(request, controller, setActive);
+  reportScopedOutcome(outcome, openSettings, setError);
+  if (generateProjectReview) await runReview();
+  finishScopedQueue(request, controller, setActive);
+}
+
+function reportScopedOutcome(
+  outcome: { failed: string[]; error: unknown },
+  openSettings: () => void,
+  setError: (value: string) => void,
+) {
+  if (outcome.error === undefined) {
+    if (outcome.failed.length) setError(outcome.failed.join("\n"));
+    return;
+  }
+  const message = errorText(outcome.error, '解读失败，请检查模型设置后重试。');
+  setError(message);
+  if (/HTTP\s*(401|403)|authentication|unauthorized|invalid api key/i.test(message)) openSettings();
+}
+
+function finishScopedQueue(
+  request: { current: AbortController | undefined },
+  controller: AbortController,
+  setActive: (value: string) => void,
+) {
+  if (request.current !== controller) return;
+  request.current = undefined;
+  setActive('');
 }
 
 async function runQueue(queue: ReviewTarget[], signal: AbortSignal,
@@ -405,7 +456,7 @@ interface SelectedLogicProps {
 
 function SelectedLogicReview({ actions, selected, folder }: SelectedLogicProps) {
   const { reviewBusy } = useApp();
-  const { reviews, error, active, progress, total } = actions;
+  const { reviews, error, active, progress, completed, total } = actions;
   const review = reviews.get(selected);
   const disabled = Boolean(active) || reviewBusy || !actions.targets.has(selected);
   return (
@@ -413,7 +464,7 @@ function SelectedLogicReview({ actions, selected, folder }: SelectedLogicProps) 
       <div className="mb-3 flex flex-wrap gap-2">
         <Button size="sm" disabled={Boolean(folder) || disabled} onClick={() => actions.runSelected(selected)}>解读当前文件</Button>
         <Button size="sm" disabled={!folder || disabled} onClick={() => actions.runSelected(selected)}>解读当前文件夹</Button>
-        {total > 0 && <span className="text-[11px] text-muted">已解读 {reviews.size}/{total} 项</span>}
+        {total > 0 && <span className="text-[11px] text-muted">已解读 {completed}/{total} 个文件</span>}
       </div>
       {active && <ScopedReviewProgress target={active} progress={progress} />}
       {error && <p role="alert" className="mb-3 whitespace-pre-line text-danger">{error}</p>}

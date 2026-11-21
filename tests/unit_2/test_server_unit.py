@@ -67,6 +67,57 @@ class RequestTests(unittest.TestCase):
         self.assertTrue(data["template_only"])
         self.assertIn("logic-summary", {item["id"] for item in data["skills"]})
 
+    def test_secure_credential_status_save_delete_and_review_injection(self):
+        status_data = {"available": True, "configured": False, "backend": "FakeBackend"}
+        with patch.object(server.secure.CREDENTIALS, "status", return_value=status_data):
+            data = json.loads(self.request("GET", "/api/status")[2])
+        self.assertIn("secure-credentials", data["capabilities"])
+        self.assertEqual(data["credentials"], status_data)
+
+        saved = {"available": True, "configured": True, "backend": "FakeBackend"}
+        with patch.object(server, "save_api_key", return_value=saved):
+            status, _, content = self.request("POST", "/api/credentials/save", payload={"api_key": "fake-key"})
+        self.assertEqual((status, json.loads(content)), (200, saved))
+        with patch.object(server, "delete_api_key", return_value={**status_data, "deleted": True}):
+            status, _, content = self.request("POST", "/api/credentials/delete", payload={})
+        self.assertEqual((status, json.loads(content)["deleted"]), (200, True))
+
+        class Store:
+            def available(self):
+                return True
+
+            def get_api_key(self):
+                return "stored-key"
+
+        handler = object.__new__(server.Handler)
+        handler.server = SimpleNamespace(review_store=None)
+        payload = {"provider": {"base_url": "https://model.invalid", "model": "unit", "api_key": ""}}
+        with patch.object(server.secure, "CREDENTIALS", Store()), \
+                patch.object(server.explanation, "review", return_value={}) as review:
+            handler._review(payload, None)
+        self.assertEqual(review.call_args.args[0]["provider"]["api_key"], "stored-key")
+
+    def test_credential_route_failures_are_correlated_503s(self):
+        with patch.object(server, "save_api_key", side_effect=server.secure.CredentialError("vault locked")):
+            status, _, content = self.request("POST", "/api/credentials/save", payload={"api_key": "secret"})
+        result = json.loads(content)
+        self.assertEqual(status, 503)
+        self.assertIn("vault locked", result["error"])
+        self.assertRegex(result["request_id"], r"^[0-9a-f]{8}$")
+
+    def test_credential_helpers_validate_payloads(self):
+        store = Mock()
+        store.status.return_value = {"available": True, "configured": True, "backend": "Fake"}
+        store.clear_api_key.return_value = True
+        self.assertEqual(server.save_api_key({"api_key": " fake-key "}, store), store.status.return_value)
+        store.set_api_key.assert_called_once_with(" fake-key ")
+        self.assertEqual(server.delete_api_key({}, store), {**store.status.return_value, "deleted": True})
+        store.clear_api_key.assert_called_once_with()
+        with self.assertRaisesRegex(ValueError, "字符串"):
+            server.save_api_key({}, store)
+        with self.assertRaisesRegex(ValueError, "对象"):
+            server.delete_api_key([], store)
+
     def test_post_rejects_untrusted_and_invalid_requests_before_analysis(self):
         cases = [
             ("/api/analyze", {"Host": "other.invalid"}, b"{}", 403),

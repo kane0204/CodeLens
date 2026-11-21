@@ -2,12 +2,38 @@ import type { AiReviewResult, AnalyzeResult, Finding, ScopedReviewResult } from 
 import { SEVERITY_LABEL, ruleName } from './format';
 
 export type ExportFormat = 'md' | 'json' | 'csv';
+type ReviewSection = keyof AiReviewResult['sections'];
 
 export interface ExportOptions {
-  includeAi: boolean;
+  includeLogic: boolean;
+  includeDesign: boolean;
+  includeRisks: boolean;
   includeSource: boolean;
   review: AiReviewResult | null;
   scopedReviews?: ReadonlyMap<string, ScopedReviewResult>;
+}
+
+function selectedReviewSections(options: ExportOptions): ReviewSection[] {
+  const sections: ReviewSection[] = [];
+  if (options.includeLogic) sections.push('logic');
+  if (options.includeDesign) sections.push('design');
+  if (options.includeRisks) sections.push('risks');
+  return sections;
+}
+
+function reviewMarkdown(review: AiReviewResult | null, sections: ReviewSection[]): string {
+  if (!sections.length) return '用户选择不包含 AI 说明。';
+  if (!review) return '本次尚未生成所选 AI 内容。';
+  const headings: Record<ReviewSection, string> = {
+    logic: 'AI 逻辑解读',
+    design: 'AI 设计检查',
+    risks: 'AI 风险评估',
+  };
+  return `模型：${escapeMarkdown(review.model)}；覆盖 ${review.source_files} 个已解析文件；AI 生成内容，需人工复核。
+
+${sections.map((id) => `## ${headings[id]}
+
+${review.sections[id].markdown}`).join('\n\n')}`;
 }
 
 function escapeMarkdown(value: unknown): string {
@@ -17,7 +43,7 @@ function escapeMarkdown(value: unknown): string {
 }
 
 function scopedMarkdown(options: ExportOptions): string {
-  if (!options.includeAi || !options.scopedReviews?.size) return '';
+  if (!options.includeLogic || !options.scopedReviews?.size) return '';
   const sections = [...options.scopedReviews].map(([key, review]) => {
     const path = key.slice(key.indexOf(':') + 1);
     const label = review.sections.logic.title;
@@ -36,7 +62,7 @@ function markdown(result: AnalyzeResult, options: ExportOptions): string {
     ['函数数', String(summary.functions)],
     ['类数', String(summary.classes)],
     ['代码行数', String(summary.code_lines)],
-    ['风险条目', String(summary.findings)],
+    ['静态问题', String(summary.findings)],
     ['平均圈复杂度', String(summary.average_cc ?? '—')],
     ['最大圈复杂度', String(summary.max_cc ?? '—')],
   ];
@@ -57,21 +83,7 @@ ${escapeMarkdown(item.message)}
     .join('\n');
   const health = result.health;
   const review = options.review;
-  const explanations = options.includeAi
-    ? review
-      ? `模型：${escapeMarkdown(review.model)}；覆盖 ${review.source_files} 个已解析文件；AI 生成内容，需人工复核。
-
-${(['logic', 'design', 'risks'] as const)
-  .map((id) => {
-    const section = review.sections[id];
-    const heading = { logic: 'AI 逻辑解读', design: 'AI 设计检查', risks: 'AI 风险评估' }[id];
-    return `## ${heading}
-
-${section.markdown}`;
-  })
-  .join('\n\n')}`
-      : '本次尚未生成 AI 审查。'
-    : '用户选择不包含 AI 审查。';
+  const explanations = reviewMarkdown(review, selectedReviewSections(options));
 
   return `# CodeLens 分析报告
 
@@ -83,9 +95,9 @@ ${section.markdown}`;
 
 ${overview.map(([label, value]) => `- ${label}：${value}`).join('\n')}
 
-## 风险清单
+## 静态问题清单
 
-${findings || '没有风险条目。'}
+${findings || '没有静态问题。'}
 
 ## 分析边界 / 未执行项
 
@@ -174,12 +186,25 @@ export function exportReport(result: AnalyzeResult, format: ExportFormat, option
     triggerDownload(markdown(result, options), 'text/markdown;charset=utf-8', 'md');
     return;
   }
-  const data: AnalyzeResult & { ai_review?: AiReviewResult; ai_scoped_reviews?: Record<string, ScopedReviewResult> } = structuredClone(result);
+  const sections = selectedReviewSections(options);
+  type ExportedReview = Omit<AiReviewResult, 'sections'> & {
+    sections: Partial<AiReviewResult['sections']>;
+  };
+  const data: AnalyzeResult & {
+    ai_review?: ExportedReview;
+    ai_scoped_reviews?: Record<string, ScopedReviewResult>;
+  } = structuredClone(result);
   if (!options.includeSource) {
     data.files = data.files.map((file) => ({ ...file, source: '' }));
   }
-  if (options.includeAi && options.review) data.ai_review = options.review;
-  if (options.includeAi && options.scopedReviews?.size) {
+  if (sections.length && options.review) {
+    const selected = options.review.sections;
+    data.ai_review = {
+      ...options.review,
+      sections: Object.fromEntries(sections.map((id) => [id, selected[id]])),
+    };
+  }
+  if (options.includeLogic && options.scopedReviews?.size) {
     data.ai_scoped_reviews = Object.fromEntries(options.scopedReviews);
   }
   triggerDownload(JSON.stringify(data, null, 2), 'application/json;charset=utf-8', 'json');

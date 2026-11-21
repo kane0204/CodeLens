@@ -28,6 +28,7 @@ from ai import runner as ai_runner
 from ai import skills as ai_skills
 from ai import explanation
 from ai.review_store import DEFAULT_PATH, ReviewStore
+from backend import credentials as secure
 from backend import observability as obs
 
 # 18766 只提供 JSON API；界面是独立的 codelens-prototype（Vite，5173）。
@@ -112,6 +113,37 @@ def ai_status():
         "degraded": degraded,
         "limitations": list(ai_runner.LIMITATIONS),
     }
+
+
+def status_payload():
+    credential_status = secure.CREDENTIALS.status()
+    capabilities = list(CAPABILITIES)
+    if credential_status["available"]:
+        capabilities.append("secure-credentials")
+    return {
+        "ready": True,
+        "engine_version": VERSION,
+        "api_revision": API_REVISION,
+        "capabilities": capabilities,
+        "token": TOKEN,
+        "credentials": credential_status,
+    }
+
+
+def save_api_key(payload, store=None):
+    if not isinstance(payload, dict) or not isinstance(payload.get("api_key"), str):
+        raise ValueError("API Key 必须是字符串")
+    target = store or secure.CREDENTIALS
+    target.set_api_key(payload["api_key"])
+    return target.status()
+
+
+def delete_api_key(payload, store=None):
+    if not isinstance(payload, dict):
+        raise ValueError("请求必须为对象")
+    target = store or secure.CREDENTIALS
+    deleted = target.clear_api_key()
+    return {**target.status(), "deleted": deleted}
 
 
 def _validate_ai_skills(skills):
@@ -337,13 +369,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_data(403,{"error":"只允许本机访问"})
         path = self.request_path()
         if path == obs.API_STATUS:
-            return self.send_data(200,{"ready":True,"engine_version":VERSION,"api_revision":API_REVISION,
-                                      "capabilities":CAPABILITIES,"token":TOKEN})
+            return self.send_data(200, status_payload())
         if path == obs.API_AI_STATUS:
             return self.send_data(200, ai_status())
         return self.send_data(404,{"error":"接口不存在；界面请访问 http://localhost:5173"})
 
     def _review(self, payload, progress):
+        payload = secure.with_stored_api_key(payload, secure.CREDENTIALS)
         store = getattr(self.server, "review_store", None)
         if store is None:
             return explanation.review(payload, progress=progress)
@@ -356,7 +388,8 @@ class Handler(BaseHTTPRequestHandler):
                           request_id=self.request_id, reason="guard")
             return self.send_data(403,{"error":"请从本机 CodeLens 页面发起分析"})
         path = self.request_path()
-        if path not in (obs.API_ANALYZE, obs.API_AI, obs.API_EXPLAIN, obs.API_REVIEW, obs.API_REVIEW_CACHED):
+        if path not in (obs.API_ANALYZE, obs.API_AI, obs.API_EXPLAIN, obs.API_REVIEW, obs.API_REVIEW_CACHED,
+                        obs.API_CREDENTIAL_SAVE, obs.API_CREDENTIAL_DELETE):
             return self.send_data(404,{"error":"接口不存在"})
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
             return self.send_data(415,{"error":"仅支持 JSON 请求"})
@@ -373,10 +406,8 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < length <= MAX_BODY:
                 return self.send_data(413,{"error":"请求超过 12 MB 或为空"})
             return self._route_post(path, self._read_post(length))
-        except explanation.ExplanationError as exc:
-            obs.log_event(logger, logging.WARNING, "explain_refused",
-                          request_id=self.request_id, type=type(exc).__name__)
-            return self.send_data(502, {"error": obs.redact(str(exc))})
+        except (explanation.ExplanationError, secure.CredentialError) as exc:
+            return self._post_model_error(logger, exc)
         except ai_contract.SkillError as exc:
             obs.log_event(logger, logging.WARNING, "skill_refused",
                           request_id=self.request_id, kind=obs.redact(exc.kind, 40))
@@ -396,6 +427,14 @@ class Handler(BaseHTTPRequestHandler):
                               path=obs.safe_path(path))
             return self._post_internal_error(path)
 
+    def _post_model_error(self, logger, exc):
+        credential_failure = isinstance(exc, secure.CredentialError)
+        event = "credentials_unavailable" if credential_failure else "explain_refused"
+        status = 503 if credential_failure else 502
+        obs.log_event(logger, logging.WARNING, event,
+                      request_id=self.request_id, type=type(exc).__name__)
+        return self.send_data(status, {"error": obs.redact(str(exc))})
+
     def _read_post(self, length):
         self.connection.settimeout(30)
         data = self.rfile.read(length)
@@ -405,11 +444,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_post(self, path, payload):
         if path == obs.API_EXPLAIN:
+            payload = secure.with_stored_api_key(payload, secure.CREDENTIALS)
             return self.send_data(200, explanation.explain(payload))
         if path == obs.API_REVIEW:
             return self.stream_review(payload)
         if path == obs.API_REVIEW_CACHED:
+            payload = secure.with_stored_api_key(payload, secure.CREDENTIALS)
             return self.send_data(200, {"result": explanation.cached_review(payload, getattr(self.server, "review_store", None))})
+        if path == obs.API_CREDENTIAL_SAVE:
+            return self.send_data(200, save_api_key(payload))
+        if path == obs.API_CREDENTIAL_DELETE:
+            return self.send_data(200, delete_api_key(payload))
         if path == obs.API_AI:
             return self.send_data(200, ai_analyze(payload))
         return self.send_data(200, enrich(analyze(payload)))

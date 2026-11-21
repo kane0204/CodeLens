@@ -91,6 +91,17 @@
   summary::-webkit-details-marker {
     display: none;
   }
+
+  .api-key-input::-ms-reveal,
+  .api-key-input::-ms-clear {
+    display: none;
+  }
+
+  .api-key-input::-webkit-credentials-auto-fill-button {
+    display: none !important;
+    visibility: hidden;
+    pointer-events: none;
+  }
 }
 
 @layer utilities {

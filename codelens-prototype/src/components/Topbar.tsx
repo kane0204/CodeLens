@@ -98,18 +98,18 @@ function ExportMenu() {
 }
 
 function ExportReviewPreview() {
-  const { aiReview, exportAi, result } = useApp();
-  if (!exportAi) {
-    return <p className="border-b border-line px-3 py-2.5 text-[11px] text-muted">已关闭 AI 内容，本次只导出静态分析结果。</p>;
+  const { aiReview, exportLogic, exportDesign, exportRisks, result } = useApp();
+  const selected = [
+    { id: 'logic' as const, title: '逻辑说明', enabled: exportLogic },
+    { id: 'design' as const, title: '设计检查', enabled: exportDesign },
+    { id: 'risks' as const, title: '风险评估', enabled: exportRisks },
+  ].filter((item) => item.enabled);
+  if (!selected.length) {
+    return <p className="border-b border-line px-3 py-2.5 text-[11px] text-muted">已关闭全部 AI 内容，本次只导出静态分析结果。</p>;
   }
   if (!aiReview) {
-    return <p className="border-b border-line px-3 py-2.5 text-[11px] text-muted">尚未生成逻辑说明、设计检查和风险评估。</p>;
+    return <p className="border-b border-line px-3 py-2.5 text-[11px] text-muted">尚未生成所选的 AI 内容。</p>;
   }
-  const sections = [
-    ['逻辑说明', aiReview.sections.logic],
-    ['设计检查', aiReview.sections.design],
-    ['风险评估', aiReview.sections.risks],
-  ] as const;
   return (
     <section className="border-b border-line">
       <div className="flex items-center justify-between gap-3 px-3 py-2">
@@ -117,29 +117,55 @@ function ExportReviewPreview() {
         <span className="num text-[10px] text-faint">{result?.summary.parsed ?? 0} 个文件</span>
       </div>
       <div className="scroll-thin max-h-[44vh] overflow-auto px-3 pb-3">
-        {sections.map(([title, section]) => (
+        {selected.map(({ id, title }) => {
+          const section = aiReview.sections[id];
+          return (
           <article key={section.id} className="mt-2 rounded-[4px] border border-line bg-[#fdfbf8] p-2.5">
             <h3 className="mb-1.5 text-[11.5px] font-semibold text-primary">{title}</h3>
             <ReviewMarkdown markdown={section.markdown} citations={section.citations} />
           </article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
 }
 
 function ExportOptions() {
-  const { exportAi, setExportAi, exportSource, setExportSource } = useApp();
+  const {
+    exportLogic, setExportLogic,
+    exportDesign, setExportDesign,
+    exportRisks, setExportRisks,
+    exportSource, setExportSource,
+  } = useApp();
   return (
     <div className="space-y-1.5 border-b border-line px-3 py-2.5">
       <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-ink">
         <input
           type="checkbox"
           className="h-3.5 w-3.5 accent-[#8b5e34]"
-          checked={exportAi}
-          onChange={(event) => setExportAi(event.target.checked)}
+          checked={exportLogic}
+          onChange={(event) => setExportLogic(event.target.checked)}
         />
-        包含逻辑说明、设计检查与风险评估
+        逻辑说明
+      </label>
+      <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-ink">
+        <input
+          type="checkbox"
+          className="h-3.5 w-3.5 accent-[#8b5e34]"
+          checked={exportDesign}
+          onChange={(event) => setExportDesign(event.target.checked)}
+        />
+        设计检查
+      </label>
+      <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-ink">
+        <input
+          type="checkbox"
+          className="h-3.5 w-3.5 accent-[#8b5e34]"
+          checked={exportRisks}
+          onChange={(event) => setExportRisks(event.target.checked)}
+        />
+        风险评估
       </label>
       <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-ink">
         <input
@@ -164,7 +190,7 @@ function ExportFormats({ onExport }: ExportFormatsProps) {
       {[
         ['md', 'Markdown', '概览、风险与分析边界'],
         ['json', 'JSON', '完整指标与可选源码'],
-        ['csv', 'CSV', '全部风险条目'],
+        ['csv', 'CSV', '全部静态问题'],
       ].map(([key, label, hint]) => (
         <button
           key={key}

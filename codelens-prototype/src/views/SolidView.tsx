@@ -42,27 +42,18 @@ function SolidCoverage({ solid }: { solid: AnalyzeResult['solid'] }) {
 }
 
 function SolidReviewActions() {
-  const { aiReview, reviewBusy, reviewProgress, runReview, cancelReview, openSettings } = useApp();
-  const section = aiReview?.sections.design;
+  const { aiReview, reviewBusy, reviewProgress, cancelReview, openSettings } = useApp();
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
       {reviewBusy && reviewProgress ? (
         <span className="num mr-1 text-[10px] text-primary">
           {reviewProgress.label} · {reviewProgress.done}/{reviewProgress.total}
         </span>
-      ) : null}
-      <Button size="sm" variant="primary" icon="play" onClick={() => void runReview()} disabled={reviewBusy}>
-        {section ? '重新生成' : '生成设计检查'}
-      </Button>
-      {reviewBusy ? (
-        <Button size="sm" variant="danger" icon="stop" onClick={cancelReview}>
-          取消
-        </Button>
-      ) : (
-        <Button size="sm" variant="ghost" icon="settings" onClick={openSettings}>
-          模型设置
-        </Button>
-      )}
+      ) : <span className="text-[10px] text-muted">
+        {aiReview?.sections.design ? '已随逻辑解读生成' : '逻辑解读完成后自动生成'}
+      </span>}
+      {reviewBusy && <Button size="sm" variant="danger" icon="stop" onClick={cancelReview}>取消</Button>}
+      <Button size="sm" variant="ghost" icon="settings" onClick={openSettings}>模型设置</Button>
     </div>
   );
 }
@@ -71,9 +62,9 @@ function SolidReviewPrompt() {
   return (
     <div className="flex h-full items-center justify-center">
       <div className="w-full max-w-[620px] rounded-[6px] border border-dashed border-[#ddd4c8] bg-[#faf8f4] px-6 py-7">
-        <h3 className="serif text-[15px] font-semibold text-ink">让 AI 评估这个项目的设计</h3>
+        <h3 className="serif text-[15px] font-semibold text-ink">设计检查会在逻辑解读完成后生成</h3>
         <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
-          AI 结合完整源码与静态事实，给出总体判断、主要结构问题与建议处理顺序。
+          返回「逻辑说明」，点击「一键解读所有文件」。完成文件解读后，AI 会继续生成设计检查和风险评估。
         </p>
         <ul className="mt-3 space-y-1.5 text-[11px] leading-relaxed text-muted">
           {['总体判断：结构是否清晰、职责是否集中', '主要问题：只列有源码或静态事实支持的项', '建议顺序：先改什么、后改什么'].map((item) => (

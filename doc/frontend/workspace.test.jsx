@@ -10,6 +10,7 @@ import { button, click, mount, typeValue } from './dom.mjs';
 import { designFinding, finding, fn, path, projectResult, report } from './fixtures.mjs';
 
 const mocked = vi.hoisted(() => ({ context: {}, selectedReview: vi.fn(), cachedReview: vi.fn() }));
+const providerSettings = { baseUrl: 'https://model.invalid/v1', model: 'unit', apiKey: 'fake-key' };
 vi.mock('../../codelens-prototype/src/api/client.ts', async (original) => ({
   ...await original(),
   reviewProject: mocked.selectedReview,
@@ -33,8 +34,11 @@ beforeEach(() => {
     openHistoryResult: vi.fn(),
     applySettings: vi.fn(() => true), startAnalysis: vi.fn(), startFromTransfer: vi.fn(),
     connect: vi.fn(), cancelAnalysis: vi.fn(), returnToResult: vi.fn(), closeSettings: vi.fn(),
-    saveSettings: vi.fn(), setExportAi: vi.fn(), setExportSource: vi.fn(), exportAi: true,
-    exportSource: false, toast: vi.fn(),
+    saveSettings: vi.fn(),
+    credentials: { available: true, configured: false, backend: 'WindowsCredentialManager' },
+    clearStoredApiKey: vi.fn(),
+    setExportLogic: vi.fn(), setExportDesign: vi.fn(), setExportRisks: vi.fn(), setExportSource: vi.fn(),
+    exportLogic: true, exportDesign: true, exportRisks: true, exportSource: false, toast: vi.fn(),
   };
 });
 
@@ -43,12 +47,12 @@ test('overview renders summary and opens or dismisses the export menu', () => {
   const { render, container } = mount();
   render(<App />);
   assert.match(container.textContent, /复杂度参考/);
-  assert.match(container.textContent, /风险分布/);
+  assert.match(container.textContent, /静态问题分布/);
   click(button('项目结构', container));
   assert.equal(mocked.context.go.mock.calls[0][0], 'structure');
-  const risks = [...container.querySelectorAll('button')].find((node) => node.textContent.includes('风险条目'));
+  const risks = [...container.querySelectorAll('button')].find((node) => node.textContent.includes('静态问题'));
   click(risks);
-  assert.deepEqual(mocked.context.go.mock.lastCall, ['risks']);
+  assert.deepEqual(mocked.context.go.mock.lastCall, ['metrics']);
   click(button('导出报告', container));
   assert.match(container.textContent, /报告内容预览/);
   assert.match(container.textContent, /逻辑说明[\s\S]*Flow/);
@@ -58,10 +62,14 @@ test('overview renders summary and opens or dismisses the export menu', () => {
   assert.deepEqual(mocked.context.runExport.mock.calls, [['md']]);
   assert.equal(container.querySelector('[role="menu"]'), null);
   click(button('导出报告', container));
-  const [ai, source] = container.querySelectorAll('[role="menu"] input');
-  click(ai);
+  const [logic, design, riskOption, source] = container.querySelectorAll('[role="menu"] input');
+  click(logic);
+  click(design);
+  click(riskOption);
   click(source);
-  assert.deepEqual(mocked.context.setExportAi.mock.calls, [[false]]);
+  assert.deepEqual(mocked.context.setExportLogic.mock.calls, [[false]]);
+  assert.deepEqual(mocked.context.setExportDesign.mock.calls, [[false]]);
+  assert.deepEqual(mocked.context.setExportRisks.mock.calls, [[false]]);
   assert.deepEqual(mocked.context.setExportSource.mock.calls, [[true]]);
   act(() => document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
   assert.equal(container.querySelector('[role="menu"]'), null);
@@ -75,8 +83,10 @@ test('export preview explains missing or disabled AI content', () => {
   const { render, container } = mount();
   render(<App />);
   click(button('导出报告', container));
-  assert.match(container.textContent, /尚未生成逻辑说明、设计检查和风险评估/);
-  mocked.context.exportAi = false;
+  assert.match(container.textContent, /尚未生成所选的 AI 内容/);
+  mocked.context.exportLogic = false;
+  mocked.context.exportDesign = false;
+  mocked.context.exportRisks = false;
   render(<App />);
   assert.match(container.textContent, /本次只导出静态分析结果/);
 });
@@ -247,7 +257,7 @@ test('metrics groups findings and allows jumping to the worst function', () => {
   assert.match(container.textContent, /AST metrics/);
 });
 
-test('design and risk routes filter findings and render their own report sections', () => {
+test('design and risk routes render their own content without duplicating static findings', () => {
   Object.assign(mocked.context, { route: 'solid', aiReview: report });
   const { render, container } = mount();
   render(<App />);
@@ -261,10 +271,9 @@ test('design and risk routes filter findings and render their own report section
   mocked.context.route = 'risks';
   render(<App />);
   assert.match(container.textContent, /Risk notes/);
-  assert.match(container.textContent, new RegExp(finding.message));
+  assert.doesNotMatch(container.textContent, new RegExp(finding.message));
   assert.doesNotMatch(container.textContent, new RegExp(designFinding.message));
-  click(button(`${path}:1`, container));
-  assert.deepEqual(mocked.context.locateFinding.mock.lastCall, [finding.id]);
+  assert.doesNotMatch(container.textContent, /质量体检 · 2 条静态问题/);
 });
 
 test('upload page and source/reimport dialogs render the corresponding state', () => {
@@ -309,7 +318,10 @@ test('model settings protect the key by default, submit edited values and clear 
   const model = dialog.querySelector('#llm-model');
   const key = dialog.querySelector('#llm-api-key');
   assert.equal(key.type, 'password');
+  assert.ok(key.classList.contains('api-key-input'));
   assert.match(dialog.querySelector('[role="alert"]').textContent, /Invalid URL/);
+  assert.equal(dialog.querySelector('a').href, 'https://api-docs.deepseek.com/zh-cn/');
+  assert.match(dialog.textContent, /查看 DeepSeek 官方教程/);
   typeValue(base, 'https://model.invalid/v1');
   typeValue(model, 'unit');
   typeValue(key, 'fake-key');
@@ -324,6 +336,24 @@ test('model settings protect the key by default, submit edited values and clear 
   const download = vi.spyOn(logger, 'download').mockImplementation(() => {});
   click(button('下载诊断日志', dialog));
   assert.equal(download.mock.calls.length, 1);
+});
+
+test('model settings show the OS credential state and offer removal', () => {
+  mocked.context.settingsOpen = true;
+  mocked.context.credentials = {
+    available: true, configured: true, backend: 'WindowsCredentialManager',
+  };
+  const { render } = mount();
+  render(<App />);
+  const dialog = document.querySelector('[role="dialog"]');
+  assert.match(dialog.querySelector('#llm-api-key').placeholder, /已安全保存/);
+  assert.match(dialog.textContent, /WindowsCredentialManager/);
+  click(button('清除已保存密钥', dialog));
+  assert.equal(mocked.context.clearStoredApiKey.mock.calls.length, 1);
+
+  mocked.context.credentials = { available: false, configured: false, backend: 'unavailable' };
+  render(<App />);
+  assert.match(document.querySelector('[role="dialog"]').textContent, /系统凭据库不可用/);
 });
 
 test('upload starts static-only analysis and renders progress', () => {
@@ -390,7 +420,7 @@ test('upload keeps AI configuration and automatic review off the landing page', 
   assert.deepEqual(mocked.context.startFromTransfer.mock.lastCall, [dataTransfer, false]);
 });
 
-test('overview distinguishes unavailable complexity and an empty risk report', () => {
+test('overview distinguishes unavailable complexity and an empty static issue report', () => {
   const result = projectResult();
   result.findings = [];
   result.summary = { ...result.summary, max_cc: null, average_cc: null, findings: 0 };
@@ -398,7 +428,7 @@ test('overview distinguishes unavailable complexity and an empty risk report', (
   const { render, container } = mount();
   render(<App />);
   assert.match(container.textContent, /没有可用的函数复杂度数据/);
-  assert.match(container.textContent, /本次分析没有发现风险/);
+  assert.match(container.textContent, /本次静态分析没有发现问题/);
 });
 
 test('offline upload can reconnect or return to the last result', () => {
@@ -406,7 +436,7 @@ test('offline upload can reconnect or return to the last result', () => {
   const { render, container } = mount();
   render(<App />);
   click(button('重新连接', container));
-  click(button('查看上一次结果', container));
+  click(button('返回当前结果', container));
   assert.equal(mocked.context.connect.mock.calls.length, 1);
   assert.equal(mocked.context.returnToResult.mock.calls.length, 1);
   mocked.context.status = 'connecting';
@@ -499,32 +529,44 @@ test('file tree navigates visible entries and expands folders with the arrow key
   assert.equal(document.activeElement, folder);
 });
 
-test('review routes show busy and failure states and retain access to retry', () => {
+test('design and risk routes show automatic-generation states without standalone buttons', () => {
   const { render, container } = mount();
   mocked.context.result.solid.coverage_gaps = [
     { class: 'Worker', file: path, line: 1, reason: 'external base' },
   ];
-  for (const [route, startLabel, busyText] of [
-    ['solid', '生成设计检查', 'AI 正在评估结构设计'],
-    ['risks', '生成风险评估', 'AI 正在评估严重危害风险'],
+  for (const [route, busyText] of [
+    ['solid', 'AI 正在评估结构设计'],
+    ['risks', 'AI 正在评估严重危害风险'],
   ]) {
-    Object.assign(mocked.context, { route, reviewError: 'Timeout', reviewBusy: false });
+    Object.assign(mocked.context, { route, reviewError: 'Timeout', reviewBusy: false, aiReview: null });
     render(<App />);
     assert.match(container.querySelector('[role="alert"]').textContent, /Timeout/);
-    click(button(startLabel, container));
+    assert.match(container.textContent, /逻辑解读完成后自动生成/);
+    assert.equal([...container.querySelectorAll('button')].some((item) =>
+      /生成设计检查|生成风险评估/.test(item.textContent)), false);
+    click(button('模型设置', container));
     mocked.context.reviewBusy = true;
     mocked.context.reviewProgress = { stage: 'read', done: 1, total: 2, label: 'Reading batch' };
     render(<App />);
-    assert.ok(button(startLabel, container).disabled);
     assert.ok(container.textContent.includes(busyText));
     click(button('取消', container));
   }
-  assert.equal(mocked.context.runReview.mock.calls.length, 2);
+  assert.equal(mocked.context.openSettings.mock.calls.length, 2);
   assert.equal(mocked.context.cancelReview.mock.calls.length, 2);
 });
 
+test('risk page delegates static findings to quality inspection while AI waits for logic review', () => {
+  Object.assign(mocked.context, { route: 'risks', aiReview: null, reviewBusy: false, reviewError: '' });
+  const { render, container } = mount();
+  render(<App />);
+  assert.doesNotMatch(container.textContent, /条静态问题/);
+  assert.doesNotMatch(container.textContent, /Complex branch/);
+  assert.doesNotMatch(container.textContent, /Contract mismatch/);
+  assert.match(container.textContent, /逻辑解读完成后自动生成/);
+});
+
 test('logic enables only the selected scope and submits its parsed sources', async () => {
-  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+  Object.assign(mocked.context, { route: 'logic', token: 'local', settings: providerSettings });
   const files = mocked.context.result.files;
   files.push(
     { ...files[0], path: 'src/utils/helper.py' },
@@ -553,7 +595,7 @@ test('logic enables only the selected scope and submits its parsed sources', asy
 });
 
 test('logic shows scoped review failures and enables retry', async () => {
-  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+  Object.assign(mocked.context, { route: 'logic', token: 'local', settings: providerSettings });
   mocked.selectedReview.mockRejectedValueOnce(new Error('Model unavailable'));
   const { render, container } = mount();
   render(<App />);
@@ -563,8 +605,48 @@ test('logic shows scoped review failures and enables retry', async () => {
   assert.equal(action.disabled, false);
 });
 
+test('one-click logic opens model settings when the provider is missing', () => {
+  const { render, container } = mount();
+  for (const settings of [
+    { baseUrl: '', model: '', apiKey: '' },
+    { baseUrl: 'https://model.invalid/v1', model: 'unit', apiKey: '' },
+  ]) {
+    Object.assign(mocked.context, { route: 'logic', token: 'local', settings });
+    mocked.context.openSettings.mockClear();
+    render(<App />);
+    click(button('一键解读所有文件', container));
+    assert.equal(mocked.context.openSettings.mock.calls.length, 1);
+  }
+  assert.equal(mocked.selectedReview.mock.calls.length, 0);
+});
+
+test('one-click logic reopens settings after an authentication failure', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local', settings: providerSettings });
+  mocked.selectedReview.mockRejectedValueOnce(new Error('模型接口返回 HTTP 401'));
+  const { render, container } = mount();
+  render(<App />);
+  await act(async () => button('一键解读所有文件', container).click());
+  await act(async () => { await Promise.resolve(); });
+  assert.equal(mocked.context.openSettings.mock.calls.length, 1);
+});
+
+test('one-click logic uses a key held by the OS credential store', async () => {
+  Object.assign(mocked.context, {
+    route: 'logic', token: 'local',
+    settings: { ...providerSettings, apiKey: '' },
+    credentials: { available: true, configured: true, backend: 'WindowsCredentialManager' },
+  });
+  mocked.selectedReview.mockResolvedValueOnce(report);
+  const { render, container } = mount();
+  render(<App />);
+  await act(async () => button('一键解读所有文件', container).click());
+  const request = mocked.selectedReview.mock.calls[0][0];
+  assert.equal(request.useStoredCredential, true);
+  assert.equal(request.settings.apiKey, '');
+});
+
 test('folder review shows batch progress from the review stream', async () => {
-  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+  Object.assign(mocked.context, { route: 'logic', token: 'local', settings: providerSettings });
   let complete;
   mocked.selectedReview.mockImplementationOnce((_request, _token, progress) => {
     progress({ stage: 'read', label: '正在阅读源码', done: 1, total: 3 });
@@ -578,34 +660,40 @@ test('folder review shows batch progress from the review stream', async () => {
   await act(async () => complete(report));
 });
 
-test('bulk scoped review runs up to three model requests concurrently', async () => {
-  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+test('one-click review processes files from the first result with up to three requests', async () => {
+  Object.assign(mocked.context, { route: 'logic', token: 'local', settings: providerSettings });
   mocked.context.result.files.push(
     { ...mocked.context.result.files[0], path: 'src/one.py' },
     { ...mocked.context.result.files[0], path: 'src/two.py' },
   );
   const pending = [];
+  mocked.selectedReview.mockClear();
   mocked.selectedReview.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
   const { render, container } = mount();
   render(<App />);
-  act(() => button('一键解读所有文件和文件夹', container).click());
+  act(() => button('一键解读所有文件', container).click());
   await act(async () => { await Promise.resolve(); });
   assert.equal(mocked.selectedReview.mock.calls.length, 3);
+  assert.deepEqual(mocked.selectedReview.mock.calls.map(([request]) => [
+    request.scope, request.files[0].path,
+  ]), [
+    ['file', path],
+    ['file', 'src/one.py'],
+    ['file', 'src/two.py'],
+  ]);
 
   await act(async () => {
     pending.splice(0, 3).forEach((resolve) => resolve(report));
     await Promise.resolve();
     await Promise.resolve();
   });
-  assert.equal(mocked.selectedReview.mock.calls.length, 4);
-  await act(async () => {
-    pending.shift()?.(report);
-    await Promise.resolve();
-  });
+  assert.equal(mocked.context.runReview.mock.calls.length, 1);
+  assert.equal(mocked.selectedReview.mock.calls.length, 3);
 });
 
 test('batch review pauses between targets, resumes, and shows cached reports when selecting folders', async () => {
-  Object.assign(mocked.context, { route: 'logic', token: 'local' });
+  Object.assign(mocked.context, { route: 'logic', token: 'local', settings: providerSettings });
+  mocked.context.result.files.push({ ...mocked.context.result.files[0], path: 'src/nested/helper.py' });
   mocked.selectedReview.mockClear();
   let finish;
   const scopedReport = (request) => ({
@@ -618,21 +706,21 @@ test('batch review pauses between targets, resumes, and shows cached reports whe
     .mockImplementation(async (request) => scopedReport(request));
   const { render, container } = mount();
   render(<App />);
-  await act(async () => button('一键解读所有文件和文件夹', container).click());
-  assert.match(container.textContent, /已解读 1\/2 项/);
+  await act(async () => button('一键解读所有文件', container).click());
+  assert.match(container.textContent, /已解读 1\/2 个文件/);
   click(button('暂停', container));
   assert.equal(mocked.selectedReview.mock.lastCall[3].aborted, true);
   await act(async () => finish(report));
   await act(async () => button('继续解读', container).click());
-  assert.match(container.textContent, /已解读 2\/2 项/);
+  assert.match(container.textContent, /已解读 2\/2 个文件/);
   assert.match(container.textContent, /文件 · src\/main.py/);
   click([...container.querySelectorAll('summary')].find((item) => item.querySelector('[data-folder-name]')?.textContent === 'src'));
-  assert.match(container.textContent, /文件夹 · src/);
+  assert.match(container.textContent, /当前文件夹尚未解读/);
   mocked.context.route = 'metrics';
   render(<App />);
   mocked.context.route = 'logic';
   render(<App />);
-  assert.match(container.textContent, /已解读 2\/2 项/);
+  assert.match(container.textContent, /已解读 2\/2 个文件/);
   assert.match(container.textContent, /文件 · src\/main.py/);
   assert.equal(mocked.selectedReview.mock.calls.length, 3);
 });
@@ -647,23 +735,25 @@ test('logic can pause a project review started during import', () => {
 });
 
 test('batch reviews later files after a transport error and marks finished targets', async () => {
-  Object.assign(mocked.context, { route: 'logic', token: 'local', aiReview: report, reviewError: '旧项目审查错误' });
+  Object.assign(mocked.context, { route: 'logic', token: 'local', aiReview: report,
+    reviewError: '旧项目审查错误', settings: providerSettings });
   mocked.context.result.files.push({ ...mocked.context.result.files[0], path: 'src/nested/helper.py' });
   mocked.selectedReview.mockReset()
     .mockRejectedValueOnce(new Error('模型连接中断'))
     .mockResolvedValue(report);
   const { render, container } = mount();
   render(<App />);
-  await act(async () => button('一键解读所有文件和文件夹', container).click());
+  await act(async () => button('一键解读所有文件', container).click());
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   assert.deepEqual(mocked.selectedReview.mock.calls.map(([request]) => [
     request.scope, request.files.map((file) => file.path),
   ]), [
     ['file', [path]],
     ['file', ['src/nested/helper.py']],
-    ['folder', ['src/nested/helper.py']],
-    ['folder', [path, 'src/nested/helper.py']],
   ]);
-  assert.match(container.textContent, /已解读 3\/4 项/);
+  assert.match(container.textContent, /已解读 1\/2 个文件/);
   assert.match(container.textContent, /当前文件尚未解读/);
   assert.match(container.querySelector('[role="alert"]').textContent, /src\/main.py.*连接中断/);
   assert.doesNotMatch(container.textContent, /旧项目审查错误/);
@@ -681,7 +771,7 @@ test('logic restores a saved file review after reimport without starting a model
   await act(async () => render(<App />));
   render(<App />);
   assert.match(container.textContent, /已保存的文件解读/);
-  assert.match(container.textContent, /已解读 1\/2 项/);
+  assert.match(container.textContent, /已解读 1\/1 个文件/);
   assert.equal(mocked.selectedReview.mock.calls.length, 0);
   assert.equal(mocked.cachedReview.mock.lastCall[0].scope, 'file');
 });

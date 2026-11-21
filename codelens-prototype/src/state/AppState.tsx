@@ -1,11 +1,22 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { analyzeProject, errorText, fetchStatus, isAbortError, reviewProject, type AnalyzeProgress } from '../api/client';
+import {
+  analyzeProject,
+  deleteStoredApiKey,
+  errorText,
+  fetchStatus,
+  isAbortError,
+  providerConfigured,
+  reviewProject,
+  saveStoredApiKey,
+  type AnalyzeProgress,
+} from '../api/client';
 import { filesFromDataTransfer, prepareSelection, type RawFile } from '../lib/files';
 import { exportReport, type ExportFormat } from '../lib/export';
 import { logger } from '../lib/logger';
 import type {
   AiReviewProgress,
   AiReviewResult,
+  CredentialStoreInfo,
   ScopedReviewResult,
   AnalyzeResult,
   ExplainCitation,
@@ -17,6 +28,11 @@ import type {
 } from '../types';
 
 const SETTINGS_KEY = 'codelens.llm.preferences.v1';
+const EMPTY_CREDENTIALS: CredentialStoreInfo = {
+  available: false,
+  configured: false,
+  backend: '',
+};
 
 export type ConnectionState = 'connecting' | 'ready' | 'offline';
 export type ToastKind = 'info' | 'success' | 'warning' | 'error';
@@ -75,9 +91,12 @@ interface AppContextValue {
   graphDirection: 'TD' | 'LR';
   graphQuery: string;
   drawerNode: string | null;
-  exportAi: boolean;
+  exportLogic: boolean;
+  exportDesign: boolean;
+  exportRisks: boolean;
   exportSource: boolean;
   settings: LlmSettings;
+  credentials: CredentialStoreInfo;
   settingsOpen: boolean;
   settingsError: string;
   aiReview: AiReviewResult | null;
@@ -109,12 +128,15 @@ interface AppContextValue {
   toggleFinding: (id: string) => void;
   setGraph: (patch: Partial<GraphPatch>) => void;
   setDrawerNode: (id: string | null) => void;
-  setExportAi: (value: boolean) => void;
+  setExportLogic: (value: boolean) => void;
+  setExportDesign: (value: boolean) => void;
+  setExportRisks: (value: boolean) => void;
   setExportSource: (value: boolean) => void;
   runExport: (format: ExportFormat) => void;
   openSettings: () => void;
   closeSettings: () => void;
-  saveSettings: (next: LlmSettings) => void;
+  saveSettings: (next: LlmSettings) => Promise<void>;
+  clearStoredApiKey: () => Promise<void>;
   applySettings: (next: LlmSettings) => boolean;
   openSource: (target: SourceTarget) => void;
   closeSource: () => void;
@@ -185,6 +207,38 @@ function validBaseUrl(value: string): boolean {
   }
 }
 
+function authFailure(message: string): boolean {
+  return /HTTP\s*(401|403)|authentication|unauthorized|invalid api key/i.test(message);
+}
+
+function promptForAuthFailure(
+  message: string,
+  setError: (value: string) => void,
+  setOpen: (value: boolean) => void,
+) {
+  if (!authFailure(message)) return;
+  setError('模型认证失败，请重新检查 API Key、接口地址和模型权限。');
+  setOpen(true);
+}
+
+function validatedSettings(next: LlmSettings, hasStoredKey = false): { settings: LlmSettings; error?: string } {
+  const settings = {
+    baseUrl: next.baseUrl.trim(),
+    model: next.model.trim(),
+    apiKey: next.apiKey.trim(),
+  };
+  if (!settings.baseUrl || !settings.model || (!settings.apiKey && !hasStoredKey)) {
+    return { settings, error: '请完整填写模型接口地址、模型名称和 API Key。' };
+  }
+  if (!validBaseUrl(settings.baseUrl)) {
+    return {
+      settings,
+      error: '请输入 HTTP 或 HTTPS 基础地址，不要在地址中包含账号、密码、查询参数或片段。',
+    };
+  }
+  return { settings };
+}
+
 function readHash(): Route {
   const hash = window.location.hash.replace(/^#/, '');
   const allowed: Route[] = ['overview', 'structure', 'logic', 'metrics', 'solid', 'risks', 'history'];
@@ -239,9 +293,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     granularity: graphGranularity, direction: graphDirection, query: graphQuery,
   } = graph;
   const [drawerNode, setDrawerNode] = useState<string | null>(null);
-  const [exportAi, setExportAi] = useState(true);
+  const [exportLogic, setExportLogic] = useState(true);
+  const [exportDesign, setExportDesign] = useState(true);
+  const [exportRisks, setExportRisks] = useState(true);
   const [exportSource, setExportSource] = useState(false);
   const [settings, setSettings] = useState<LlmSettings>(loadSettings);
+  const [credentials, setCredentials] = useState<CredentialStoreInfo>(EMPTY_CREDENTIALS);
   const currentSettings = useRef(settings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsError, setSettingsError] = useState('');
@@ -284,12 +341,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setToken(info.token);
       setVersion(info.engine_version);
       setCapabilities(info.capabilities);
+      setCredentials(info.credentials ?? EMPTY_CREDENTIALS);
     } catch (error) {
       logger.warn('app', 'backend.offline', {
         type: error instanceof Error ? error.name : typeof error,
       });
       setStatus('offline');
       setToken('');
+      setCredentials(EMPTY_CREDENTIALS);
       setErrors(['分析服务未连接，请在项目根目录运行 CodeLens 启动脚本后重试。']);
     }
   }, []);
@@ -377,6 +436,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const review = await reviewProject(
           { project: data.project, files, settings: modelSettings,
+            useStoredCredential: credentials.configured,
             ...(data.history && { history: data.history, useHistory }) },
           token,
           reportReviewProgress,
@@ -394,6 +454,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setReviewError('已中断。服务端已保留已完成的批次，点击「重新生成」将从断点续跑，不会重复消耗已读内容。');
         } else {
           const message = errorText(error, 'AI 审查失败，请检查模型配置后重试。');
+          promptForAuthFailure(message, setSettingsError, setSettingsOpen);
           setReviewError(`${message}（已完成的批次已保存在服务端，重试将从断点继续）`);
         }
         return null;
@@ -405,17 +466,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [token, reportReviewProgress, useHistory],
+    [token, reportReviewProgress, useHistory, credentials.configured],
   );
 
   const announceAnalysis = useCallback(async (data: AnalyzeResult, autoReview: boolean) => {
     const settings = currentSettings.current;
     if (window.location.hash !== '#overview') window.location.hash = 'overview';
     setRoute('overview');
-    toast(`分析完成：${data.summary.parsed} 个文件，${data.summary.findings} 条风险`, 'success');
+    toast(`分析完成：${data.summary.parsed} 个文件，${data.summary.findings} 条静态问题`, 'success');
     const recurring = data.history?.recurring.length ?? 0;
     if (recurring) toast(`发现 ${recurring} 个反复出现的问题，可在「质量体检」中查看`, 'warning');
-    if (autoReview && settings.baseUrl.trim() && settings.model.trim()) {
+    if (autoReview && providerConfigured(settings, credentials.configured)) {
       const review = await executeReview(data, settings);
       if (review) {
         toast('AI 审查完成', 'success');
@@ -423,7 +484,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast('AI 审查未完成，可在逻辑说明中继续', 'warning');
       }
     }
-  }, [executeReview, toast]);
+  }, [executeReview, toast, credentials.configured]);
 
   const openHistoryResult = useCallback((projectId: string, analysisId: number, detail: HistoryDetail) => {
     const data: AnalyzeResult = {
@@ -610,14 +671,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (format: ExportFormat) => {
       if (!result) return;
       exportReport(result, format, {
-        includeAi: exportAi,
+        includeLogic: exportLogic,
+        includeDesign: exportDesign,
+        includeRisks: exportRisks,
         includeSource: exportSource,
         review: aiReview,
         scopedReviews,
       });
       toast(`已生成 ${format.toUpperCase()} 报告`, 'success');
     },
-    [result, exportAi, exportSource, aiReview, scopedReviews, toast],
+    [result, exportLogic, exportDesign, exportRisks, exportSource, aiReview, scopedReviews, toast],
   );
 
   const openSettings = useCallback(() => {
@@ -649,20 +712,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const saveSettings = useCallback(
-    (next: LlmSettings) => {
-      const baseUrl = next.baseUrl.trim();
-      const model = next.model.trim();
-      const apiKey = next.apiKey.trim();
-      if (baseUrl && !validBaseUrl(baseUrl)) {
-        setSettingsError('请输入 HTTP 或 HTTPS 基础地址，不要在地址中包含账号、密码、查询参数或片段。');
+    async (next: LlmSettings) => {
+      const checked = validatedSettings(next, credentials.configured);
+      if (checked.error) {
+        setSettingsError(checked.error);
         return;
       }
-      currentSettings.current = { baseUrl, model, apiKey };
+      let credentialStatus = credentials;
+      if (checked.settings.apiKey) {
+        try {
+          credentialStatus = await saveStoredApiKey(checked.settings.apiKey, token);
+          setCredentials(credentialStatus);
+        } catch (error) {
+          setSettingsError(errorText(error, '无法保存 API Key 到系统凭据库。'));
+          return;
+        }
+      }
+      const { baseUrl, model } = checked.settings;
+      currentSettings.current = { baseUrl, model, apiKey: '' };
       setSettings(currentSettings.current);
       let persisted = true;
       try {
-        if (baseUrl || model) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ baseUrl, model }));
-        else localStorage.removeItem(SETTINGS_KEY);
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify({ baseUrl, model }));
       } catch {
         logger.debug('settings', 'localStorage.save_unavailable');
         persisted = false;
@@ -670,12 +741,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSettingsOpen(false);
       setSettingsError('');
       toast(
-        persisted ? '设置已保存，可在逻辑说明 / 设计检查 / 风险评估中重新生成 AI 审查' : '浏览器无法保存设置，本次配置仅在当前页面有效',
+        persisted
+          ? `设置已保存，API Key 已存入 ${credentialStatus.backend || '系统凭据库'}`
+          : 'API Key 已安全保存，但浏览器无法保存接口地址与模型名称',
         persisted ? 'success' : 'warning',
       );
     },
-    [toast],
+    [credentials, token, toast],
   );
+
+  const clearStoredApiKey = useCallback(async () => {
+    try {
+      const next = await deleteStoredApiKey(token);
+      setCredentials(next);
+      currentSettings.current = { ...currentSettings.current, apiKey: '' };
+      setSettings(currentSettings.current);
+      setSettingsError('');
+      toast('已清除系统凭据库中的 API Key', 'success');
+    } catch (error) {
+      setSettingsError(errorText(error, '无法清除系统凭据库中的 API Key。'));
+    }
+  }, [token, toast]);
 
   const openSource = useCallback((target: SourceTarget) => setSourceTarget(target), []);
   const closeSource = useCallback(() => setSourceTarget(null), []);
@@ -713,12 +799,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const runReview = useCallback(async () => {
     if (!result || reviewBusy) return;
-    if (!settings.baseUrl.trim() || !settings.model.trim()) {
-      toast('请先在模型设置中填写接口地址与模型名称', 'warning');
+    if (!providerConfigured(settings, credentials.configured)) {
+      openSettings();
       return;
     }
     await executeReview(result);
-  }, [result, reviewBusy, settings, executeReview, toast]);
+  }, [result, reviewBusy, settings, credentials.configured, executeReview, openSettings]);
 
   const cancelReview = useCallback(() => {
     reviewController.current?.abort();
@@ -759,9 +845,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       graphDirection,
       graphQuery,
       drawerNode,
-      exportAi,
+      exportLogic,
+      exportDesign,
+      exportRisks,
       exportSource,
       settings,
+      credentials,
       settingsOpen,
       settingsError,
       aiReview,
@@ -793,12 +882,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toggleFinding,
       setGraph,
       setDrawerNode,
-      setExportAi,
+      setExportLogic,
+      setExportDesign,
+      setExportRisks,
       setExportSource,
       runExport,
       openSettings,
       closeSettings,
       saveSettings,
+      clearStoredApiKey,
       applySettings,
       openSource,
       closeSource,
@@ -840,9 +932,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       graphDirection,
       graphQuery,
       drawerNode,
-      exportAi,
+      exportLogic,
+      exportDesign,
+      exportRisks,
       exportSource,
       settings,
+      credentials,
       settingsOpen,
       settingsError,
       aiReview,
@@ -874,12 +969,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toggleFinding,
       setGraph,
       setDrawerNode,
-      setExportAi,
+      setExportLogic,
+      setExportDesign,
+      setExportRisks,
       setExportSource,
       runExport,
       openSettings,
       closeSettings,
       saveSettings,
+      clearStoredApiKey,
       applySettings,
       openSource,
       closeSource,

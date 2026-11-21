@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict';
 import { act } from 'react';
 import { AppProvider, useApp } from '../../codelens-prototype/src/state/AppState.tsx';
-import { analyzeProject, fetchStatus, reviewProject } from '../../codelens-prototype/src/api/client.ts';
+import {
+  analyzeProject, ApiError, deleteStoredApiKey, fetchStatus, reviewProject, saveStoredApiKey,
+} from '../../codelens-prototype/src/api/client.ts';
 import { exportReport } from '../../codelens-prototype/src/lib/export.ts';
 import { mount } from './dom.mjs';
 import { finding, fn, path, projectResult, report } from './fixtures.mjs';
@@ -12,12 +14,17 @@ vi.mock('../../codelens-prototype/src/api/client.ts', async (importOriginal) => 
   fetchStatus: vi.fn(),
   analyzeProject: vi.fn(),
   reviewProject: vi.fn(),
+  saveStoredApiKey: vi.fn(),
+  deleteStoredApiKey: vi.fn(),
 }));
 vi.mock('../../codelens-prototype/src/lib/export.ts', () => ({ exportReport: vi.fn() }));
 
 const selection = [{ path: `demo/${path}`, file: new File(['pass'], 'main.py') }];
 const settings = { baseUrl: 'https://model.invalid/v1', model: 'model-a', apiKey: 'fake-key' };
-const ready = { token: 'unit-token', engine_version: 'unit-engine', capabilities: ['analyze'] };
+const ready = {
+  token: 'unit-token', engine_version: 'unit-engine', capabilities: ['analyze'],
+  credentials: { available: true, configured: false, backend: 'WindowsCredentialManager' },
+};
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -26,6 +33,8 @@ beforeEach(() => {
   localStorage.clear();
   history.replaceState(null, '', '/');
   fetchStatus.mockResolvedValue(ready);
+  saveStoredApiKey.mockResolvedValue({ available: true, configured: true, backend: 'WindowsCredentialManager' });
+  deleteStoredApiKey.mockResolvedValue({ available: true, configured: false, backend: 'WindowsCredentialManager' });
   analyzeProject.mockImplementation(async (request, _, progress) => {
     progress({ phase: 'read', done: 1, total: 2 });
     progress({ phase: 'upload', done: 2, total: 2 });
@@ -105,29 +114,49 @@ test('analysis initializes workspace and finding navigation and export use the l
   assert.deepEqual(state().expandedRules, []);
   assert.deepEqual(state().expandedFindings, []);
   assert.deepEqual(exportReport.mock.calls, [
-    [state().result, 'json', { includeAi: true, includeSource: false, review: null, scopedReviews: new Map() }],
+    [state().result, 'json', {
+      includeLogic: true, includeDesign: true, includeRisks: true,
+      includeSource: false, review: null, scopedReviews: new Map(),
+    }],
   ]);
 });
 
 test('settings validate and trim inputs, omit API keys from storage and enable auto-review', async () => {
   const state = await renderProvider();
   act(() => state().openSettings());
-  act(() => state().saveSettings({ ...settings, baseUrl: 'https://user:pass@host.invalid' }));
+  await act(() => state().saveSettings({ ...settings, baseUrl: 'https://user:pass@host.invalid' }));
   assert.match(state().settingsError, /HTTP/);
   assert.equal(state().settingsOpen, true);
-  act(() => state().saveSettings({ ...settings, model: ' model-a ' }));
+  await act(() => state().saveSettings({ ...settings, model: ' model-a ' }));
   assert.equal(state().settingsOpen, false);
-  assert.deepEqual(state().settings, settings);
+  assert.deepEqual(state().settings, { ...settings, apiKey: '' });
+  assert.deepEqual(saveStoredApiKey.mock.calls, [[settings.apiKey, ready.token]]);
+  assert.equal(state().credentials.configured, true);
   const stored = JSON.parse(localStorage.getItem(localStorage.key(0)));
   assert.deepEqual(stored, { baseUrl: settings.baseUrl, model: settings.model });
 
   await act(() => state().startAnalysis(selection));
   assert.equal(state().aiReview, report);
   assert.deepEqual(reviewProject.mock.calls[0][0], {
-    project: 'demo', settings, files: [{ path, content: projectResult().files[0].source }],
+    project: 'demo', settings: { ...settings, apiKey: '' }, useStoredCredential: true,
+    files: [{ path, content: projectResult().files[0].source }],
   });
   assert.equal(state().reviewBusy, false);
   assert.equal(state().importing, false);
+});
+
+test('settings require a key and authentication failures reopen the dialog', async () => {
+  const state = await renderProvider();
+  act(() => state().openSettings());
+  await act(() => state().saveSettings({ ...settings, apiKey: '' }));
+  assert.equal(state().settingsOpen, true);
+  assert.match(state().settingsError, /完整填写/);
+  await act(() => state().saveSettings(settings));
+  await act(() => state().startAnalysis(selection, false));
+  reviewProject.mockRejectedValueOnce(new ApiError('模型接口返回 HTTP 401', 502));
+  await act(() => state().runReview());
+  assert.equal(state().settingsOpen, true);
+  assert.match(state().settingsError, /认证失败/);
 });
 
 test('configured models stay idle during static-only imports and remain available for manual review', async () => {
@@ -196,7 +225,9 @@ test('AI cancellation retains the checkpoint message and later reports a missing
   const state = await renderProvider();
   await act(() => state().startAnalysis(selection));
   await act(() => state().runReview());
-  assert.match(state().toasts.at(-1).message, /先在模型设置/);
+  assert.equal(state().settingsOpen, true);
+  assert.equal(reviewProject.mock.calls.length, 0);
+  act(() => state().closeSettings());
   act(() => state().applySettings(settings));
   reviewProject.mockImplementation((_, __, ___, signal) => new Promise((resolve, reject) => {
     signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
@@ -245,20 +276,45 @@ test('file drop errors and HTTP failures remain visible without discarding an ex
   assert.match(state().errors[0], /连接中断/);
 });
 
-test('settings survive reload without the API key and tolerate blocked storage', async () => {
+test('settings survive reload from the system credential store and tolerate blocked preference storage', async () => {
   const state = await renderProvider();
-  act(() => state().applySettings(settings));
+  await act(() => state().saveSettings(settings));
+  fetchStatus.mockResolvedValue({
+    ...ready,
+    credentials: { available: true, configured: true, backend: 'WindowsCredentialManager' },
+  });
   const second = await renderProvider();
   assert.deepEqual(second().settings, { ...settings, apiKey: '' });
+  assert.equal(second().credentials.configured, true);
   const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
     throw new Error('storage blocked');
   });
-  act(() => second().saveSettings({ ...settings, model: 'temporary' }));
+  await act(() => second().saveSettings({ ...settings, model: 'temporary' }));
   assert.equal(second().settings.model, 'temporary');
-  assert.match(second().toasts.at(-1).message, /浏览器无法保存设置/);
+  assert.match(second().toasts.at(-1).message, /浏览器无法保存接口地址与模型名称/);
   assert.equal(write.mock.calls.length, 1);
   act(() => assert.equal(second().applySettings({ ...settings, model: 'session-only' }), true));
   assert.equal(second().settings.model, 'session-only');
+});
+
+test('stored API keys can be cleared and credential failures keep the dialog open', async () => {
+  const state = await renderProvider();
+  await act(() => state().saveSettings(settings));
+  assert.equal(state().credentials.configured, true);
+  deleteStoredApiKey.mockRejectedValueOnce(new ApiError('清除失败', 503));
+  await act(() => state().clearStoredApiKey());
+  assert.match(state().settingsError, /清除失败/);
+  await act(() => state().clearStoredApiKey());
+  assert.deepEqual(deleteStoredApiKey.mock.calls, [[ready.token], [ready.token]]);
+  assert.equal(state().credentials.configured, false);
+  assert.equal(state().settingsError, '');
+  assert.match(state().toasts.at(-1).message, /已清除系统凭据库/);
+
+  saveStoredApiKey.mockRejectedValueOnce(new ApiError('系统凭据库不可用', 503));
+  act(() => state().openSettings());
+  await act(() => state().saveSettings(settings));
+  assert.equal(state().settingsOpen, true);
+  assert.match(state().settingsError, /系统凭据库不可用/);
 });
 
 test('clipboard fallback cleans up its textarea after copying or failure', async () => {
@@ -332,8 +388,6 @@ test('invalid or cleared settings fall back to empty defaults', async () => {
   act(() => state().openSettings());
   act(() => state().closeSettings());
   assert.equal(state().settingsOpen, false);
-  act(() => state().saveSettings(empty));
-  assert.equal(localStorage.getItem(storageKey), null);
 });
 
 test('developer fixture loader initializes a project and review rejects missing parsed sources', async () => {

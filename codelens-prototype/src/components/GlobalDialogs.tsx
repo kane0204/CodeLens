@@ -89,7 +89,7 @@ export function ConfirmReimportDialog() {
       }
     >
       <p className="text-[12.5px] leading-relaxed text-[#57534e]">
-        将返回导入页并重新读取文件夹。当前分析结果仍会保留，可在导入页点击「查看上一次结果」返回。
+        将进入导入页以选择新文件夹。当前分析结果仍会保留；不想重新导入时，可返回当前结果。
       </p>
     </Modal>
   );

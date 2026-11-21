@@ -50,12 +50,15 @@ API_AI = "/api/ai"
 API_EXPLAIN = "/api/explain"
 API_REVIEW = "/api/review"
 API_REVIEW_CACHED = "/api/review/cached"
+API_CREDENTIAL_SAVE = "/api/credentials/save"
+API_CREDENTIAL_DELETE = "/api/credentials/delete"
 API_HISTORY_PROJECTS = "/api/history/projects"
 API_HISTORY_RUNS = "/api/history/runs"
 API_HISTORY_DETAIL = "/api/history/detail"
 API_HISTORY_DELETE = "/api/history/delete"
 API_PATHS = frozenset({API_STATUS, API_AI_STATUS, API_ANALYZE, API_AI,
                        API_EXPLAIN, API_REVIEW, API_REVIEW_CACHED,
+                       API_CREDENTIAL_SAVE, API_CREDENTIAL_DELETE,
                        API_HISTORY_PROJECTS, API_HISTORY_RUNS,
                        API_HISTORY_DETAIL, API_HISTORY_DELETE})
 

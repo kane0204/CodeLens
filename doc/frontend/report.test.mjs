@@ -6,6 +6,9 @@ import {
 } from '../../codelens-prototype/src/lib/format.ts';
 import { finding, projectResult, report } from './fixtures.mjs';
 
+const noAi = { includeLogic: false, includeDesign: false, includeRisks: false };
+const allAi = { includeLogic: true, includeDesign: true, includeRisks: true };
+
 function captureDownload() {
   const anchor = { click: vi.fn(), remove: vi.fn(), setAttribute: vi.fn() };
   const append = vi.fn();
@@ -33,14 +36,14 @@ test('JSON export strips source by default without changing the analysis result'
   const download = captureDownload();
   const result = projectResult();
   const original = result.files[0].source;
-  exportReport(result, 'json', { includeAi: false, includeSource: false, review: report });
+  exportReport(result, 'json', { ...noAi, includeSource: false, review: report });
   const { text, type } = await download.read('json');
   const data = JSON.parse(text);
   assert.equal(type, 'application/json;charset=utf-8');
   assert.equal(data.files[0].source, '');
   assert.equal(Object.hasOwn(data, 'ai_review'), false);
   assert.equal(result.files[0].source, original);
-  exportReport(result, 'json', { includeAi: true, includeSource: true, review: report });
+  exportReport(result, 'json', { ...allAi, includeSource: true, review: report });
   const included = JSON.parse((await download.read('json', 1)).text);
   assert.equal(included.files[0].source, original);
   assert.deepEqual(included.ai_review, report);
@@ -49,7 +52,7 @@ test('JSON export strips source by default without changing the analysis result'
 test('CSV export escapes quotes and neutralizes spreadsheet formulas', async () => {
   const download = captureDownload();
   exportReport(projectResult({ findings: [{ ...finding, message: '=SUM(1,2)', suggestion: 'Use "quotes"' }] }),
-    'csv', { includeAi: false, includeSource: false, review: null });
+    'csv', { ...noAi, includeSource: false, review: null });
   const { text, type } = await download.read('csv');
   assert.equal(type, 'text/csv;charset=utf-8');
   const [header, row] = text.split('\r\n');
@@ -67,7 +70,7 @@ test('Markdown includes chosen review sections and escapes report fields', async
     solid: { limitations: ['Known bases only'], coverage_gaps: [{ class: 'C', file: 'a.py', line: 1, reason: 'external' }] },
     graph: { class_relations: [{ source: 'A', target: 'B', kind: 'composition', file: 'a.py', line: 2 }] },
   });
-  exportReport(result, 'md', { includeAi: true, includeSource: false, review: report });
+  exportReport(result, 'md', { ...allAi, includeSource: false, review: report });
   const { text, type } = await download.read('md');
   assert.equal(type, 'text/markdown;charset=utf-8');
   for (const expected of ['a\\|b', '\\<invalid\\>', 'Complex branch', 'AI 逻辑解读', 'Flow',
@@ -76,10 +79,26 @@ test('Markdown includes chosen review sections and escapes report fields', async
     assert.ok(text.includes(expected), expected);
   }
   exportReport(projectResult({ findings: [], limitations: [] }), 'md',
-    { includeAi: true, includeSource: false, review: null });
-  assert.match((await download.read('md', 1)).text, /本次尚未生成 AI 审查/);
-  exportReport(result, 'md', { includeAi: false, includeSource: false, review: report });
+    { ...allAi, includeSource: false, review: null });
+  assert.match((await download.read('md', 1)).text, /本次尚未生成所选 AI 内容/);
+  exportReport(result, 'md', { ...noAi, includeSource: false, review: report });
   assert.doesNotMatch((await download.read('md', 2)).text, /Design notes|Risk notes/);
+});
+
+test('Markdown and JSON include only independently selected AI sections', async () => {
+  const download = captureDownload();
+  const options = { ...allAi, includeDesign: false, includeSource: false, review: report };
+  exportReport(projectResult(), 'md', options);
+  const markdown = (await download.read('md')).text;
+  assert.match(markdown, /AI 逻辑解读[\s\S]*Flow/);
+  assert.match(markdown, /AI 风险评估[\s\S]*Risk notes/);
+  assert.doesNotMatch(markdown, /AI 设计检查|Design notes/);
+
+  exportReport(projectResult(), 'json', options);
+  const data = JSON.parse((await download.read('json', 1)).text);
+  assert.deepEqual(Object.keys(data.ai_review.sections), ['logic', 'risks']);
+  assert.deepEqual(data.ai_review.sections.logic, report.sections.logic);
+  assert.deepEqual(data.ai_review.sections.risks, report.sections.risks);
 });
 
 test('formatter distinguishes missing evidence, metrics and confidence from zero', () => {
@@ -115,7 +134,7 @@ test('Markdown and JSON export scoped reviews only when AI output is included', 
   const scoped = { ...report, scope: 'file', sections: {
     logic: { ...report.sections.logic, markdown: 'Scoped explanation' },
   } };
-  const options = { includeAi: true, includeSource: false, review: null,
+  const options = { ...allAi, includeSource: false, review: null,
     scopedReviews: new Map([['file:src/main.py', scoped]]) };
   exportReport(projectResult(), 'md', options);
   assert.match((await download.read('md')).text, /文件与文件夹解读[\s\S]*src\/main.py[\s\S]*Scoped explanation/);
@@ -123,6 +142,6 @@ test('Markdown and JSON export scoped reviews only when AI output is included', 
   assert.deepEqual(JSON.parse((await download.read('json', 1)).text).ai_scoped_reviews, {
     'file:src/main.py': scoped,
   });
-  exportReport(projectResult(), 'json', { ...options, includeAi: false });
+  exportReport(projectResult(), 'json', { ...options, ...noAi });
   assert.equal(JSON.parse((await download.read('json', 2)).text).ai_scoped_reviews, undefined);
 });

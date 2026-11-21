@@ -7,6 +7,13 @@ export interface StatusInfo {
   api_revision: number;
   capabilities: string[];
   token: string;
+  credentials: CredentialStoreInfo;
+}
+
+export interface CredentialStoreInfo {
+  available: boolean;
+  configured: boolean;
+  backend: string;
 }
 
 export interface Summary {

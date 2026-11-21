@@ -3,3 +3,4 @@ uvicorn==0.54.0
 langchain-core==1.8.0
 langgraph==1.2.21
 langsmith==0.14.17
+keyring==25.7.0

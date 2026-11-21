@@ -66,7 +66,7 @@ function Gauge({ maxCc, averageCc }: { maxCc: number | null; averageCc: number |
 function RiskPie({ counts }: { counts: Record<Severity, number> }) {
   const total = SEVERITIES.reduce((sum, key) => sum + counts[key], 0);
   if (!total) {
-    return <EmptyState compact title="本次分析没有发现风险" />;
+    return <EmptyState compact title="本次静态分析没有发现问题" />;
   }
   const radius = 52;
   const circumference = 2 * Math.PI * radius;
@@ -75,7 +75,7 @@ function RiskPie({ counts }: { counts: Record<Severity, number> }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-2">
       <div className="relative">
-        <svg viewBox="0 0 150 150" className="h-[132px] w-[132px]" role="img" aria-label="风险严重度分布">
+        <svg viewBox="0 0 150 150" className="h-[132px] w-[132px]" role="img" aria-label="静态问题严重度分布">
           <circle cx="75" cy="75" r={radius} fill="none" stroke="#f1eeea" strokeWidth="17" />
           {SEVERITIES.map((key) => {
             const value = counts[key];
@@ -103,7 +103,7 @@ function RiskPie({ counts }: { counts: Record<Severity, number> }) {
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <span className="num text-[24px] font-medium leading-none text-ink">{total}</span>
-          <span className="mt-1 text-[9.5px] text-faint">风险条目</span>
+          <span className="mt-1 text-[9.5px] text-faint">静态问题</span>
         </div>
       </div>
       <div className="flex items-center gap-3">
@@ -142,7 +142,7 @@ export function OverviewView() {
           <Gauge maxCc={summary.max_cc} averageCc={summary.average_cc} />
         </Card>
         <Card className="min-h-0">
-          <CardHeader title="风险分布" icon="shield" />
+          <CardHeader title="静态问题分布" icon="shield" subtitle="静态规则发现 · 非 AI 风险评估" />
           <RiskPie counts={counts} />
         </Card>
       </div>
@@ -158,7 +158,7 @@ interface OverviewStat {
   label: string;
   value: string;
   hint: string;
-  route?: 'structure' | 'risks';
+  route?: 'structure' | 'metrics';
   accent?: string;
 }
 
@@ -183,10 +183,10 @@ function overviewStats(result: OverviewResult, counts: Record<Severity, number>)
       route: 'structure',
     },
     {
-      label: '风险条目',
+      label: '静态问题',
       value: formatNumber(summary.findings),
       hint: `高 ${counts.critical} · 中 ${counts.warning} · 低 ${counts.info}`,
-      route: 'risks',
+      route: 'metrics',
       accent: counts.critical ? 'text-danger' : counts.warning ? 'text-warning' : '',
     },
     {

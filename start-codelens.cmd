@@ -27,12 +27,12 @@ if errorlevel 1 (
   echo CodeLens requires Python 3.11 or later. Recreate .venv with a supported Python.
   goto backend_setup_failed
 )
-"%BACKEND_PYTHON%" -B code/backend/asgi.py --help >nul 2>&1
+"%BACKEND_PYTHON%" -c "import fastapi, keyring" >nul 2>&1
 if errorlevel 1 (
   echo Installing backend dependencies...
   "%BACKEND_PYTHON%" -m pip install -r requirements-backend.txt
   if errorlevel 1 goto backend_setup_failed
-  "%BACKEND_PYTHON%" -B code/backend/asgi.py --help >nul
+  "%BACKEND_PYTHON%" -c "import fastapi, keyring" >nul
   if errorlevel 1 goto backend_setup_failed
 )
 

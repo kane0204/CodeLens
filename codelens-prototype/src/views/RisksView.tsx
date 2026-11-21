@@ -1,9 +1,6 @@
-import { useMemo } from 'react';
 import { useApp } from '../state/AppState';
 import { ReviewMarkdown } from '../components/ReviewMarkdown';
-import { Badge, Button, Card, CardHeader, EmptyState, Tag } from '../components/Ui';
-import { confidenceLabel, evidenceLabel, ruleName } from '../lib/format';
-import type { Finding } from '../types';
+import { Button, Card, CardHeader } from '../components/Ui';
 
 export function RisksView() {
   const { result } = useApp();
@@ -11,52 +8,36 @@ export function RisksView() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-2.5">
       <RiskReviewCard />
-      <RiskEvidence />
     </div>
   );
 }
-
 function RiskReviewCard() {
-  const { aiReview } = useApp();
-  const section = aiReview?.sections.risks;
   return (
     <Card className="min-h-0 flex-1">
       <CardHeader
         title="严重危害风险评估"
         icon="shield"
-        subtitle="AI 综合评估 · 只报告会造成严重危害的风险"
-        actions={<RiskReviewActions hasReview={Boolean(section)} />}
+        subtitle="AI 生成 · 逻辑解读完成后自动进行，只报告严重危害"
+        actions={<RiskReviewActions />}
       />
       <RiskReviewBody />
     </Card>
   );
 }
 
-interface RiskReviewActionsProps {
-  hasReview: boolean;
-}
-
-function RiskReviewActions({ hasReview }: RiskReviewActionsProps) {
-  const { reviewBusy, reviewProgress, runReview, cancelReview, openSettings } = useApp();
+function RiskReviewActions() {
+  const { aiReview, reviewBusy, reviewProgress, cancelReview, openSettings } = useApp();
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
       {reviewBusy && reviewProgress ? (
         <span className="num mr-1 text-[10px] text-primary">
           {reviewProgress.label} · {reviewProgress.done}/{reviewProgress.total}
         </span>
-      ) : null}
-      <Button size="sm" variant="primary" icon="play" onClick={() => void runReview()} disabled={reviewBusy}>
-        {hasReview ? '重新评估' : '生成风险评估'}
-      </Button>
-      {reviewBusy ? (
-        <Button size="sm" variant="danger" icon="stop" onClick={cancelReview}>
-          取消
-        </Button>
-      ) : (
-        <Button size="sm" variant="ghost" icon="settings" onClick={openSettings}>
-          模型设置
-        </Button>
-      )}
+      ) : <span className="text-[10px] text-muted">
+        {aiReview?.sections.risks ? '已随逻辑解读生成' : '逻辑解读完成后自动生成'}
+      </span>}
+      {reviewBusy && <Button size="sm" variant="danger" icon="stop" onClick={cancelReview}>取消</Button>}
+      <Button size="sm" variant="ghost" icon="settings" onClick={openSettings}>模型设置</Button>
     </div>
   );
 }
@@ -96,9 +77,9 @@ function EmptyRiskReview() {
   return (
     <div className="flex h-full items-center justify-center">
       <div className="w-full max-w-[620px] rounded-[6px] border border-dashed border-[#ddd4c8] bg-[#faf8f4] px-6 py-7">
-        <h3 className="serif text-[15px] font-semibold text-ink">让 AI 评估严重危害风险</h3>
+        <h3 className="serif text-[15px] font-semibold text-ink">风险评估会在逻辑解读完成后生成</h3>
         <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
-          AI 通读全部源码后，只报告可能造成数据泄露、资金损失、服务中断等严重危害的风险。
+          返回「逻辑说明」完成一键解读后，AI 会一并生成设计检查与严重危害风险评估。
         </p>
         <ul className="mt-3 space-y-1.5 text-[11px] leading-relaxed text-muted">
           {['每项按「危害 / 证据 / 建议」三行输出', '结论附源码行号，可直接点击核对', '没有严重危害就明确写未检出，不凑中低危条目'].map((item) => (
@@ -109,80 +90,6 @@ function EmptyRiskReview() {
           ))}
         </ul>
       </div>
-    </div>
-  );
-}
-
-function RiskEvidence() {
-  const { result, locateFinding } = useApp();
-  const severeFindings = useMemo<Finding[]>(() => {
-    if (!result) return [];
-    return result.findings.filter((finding) =>
-      finding.severity === 'critical' || finding.rule_id === 'PRIVACY-01');
-  }, [result]);
-
-  const severeGroups = useMemo(() => {
-    const map = new Map<string, Finding[]>();
-    for (const finding of severeFindings) {
-      if (!map.has(finding.rule_id)) map.set(finding.rule_id, []);
-      map.get(finding.rule_id)?.push(finding);
-    }
-    return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
-  }, [severeFindings]);
-
-  return (
-    <details className="shrink-0 rounded-[6px] border border-line bg-card px-3 py-2 shadow-[0_1px_2px_#0000000d]">
-      <summary className="flex items-center gap-2 text-[10.5px] font-medium text-primary">
-        静态风险证据
-        <span className="num text-faint">{severeFindings.length ? `${severeFindings.length} 条 · ${severeGroups.length} 类` : '无高级别条目'}</span>
-      </summary>
-      <div className="scroll-thin mt-2 max-h-48 overflow-auto border-t border-line pt-2">
-        {severeGroups.length ? (
-          <RiskEvidenceGroups groups={severeGroups} locate={locateFinding} />
-        ) : (
-          <EmptyState compact title="没有高风险或隐私条目" hint="其他风险与未覆盖检测不在此展示。" />
-        )}
-      </div>
-    </details>
-  );
-}
-
-interface RiskEvidenceGroupsProps {
-  groups: [string, Finding[]][];
-  locate: (findingId: string) => void;
-}
-
-function RiskEvidenceGroups({ groups, locate }: RiskEvidenceGroupsProps) {
-  return (
-    <div className="space-y-2 pb-1">
-      {groups.map(([rule, hits]) => (
-        <section key={rule}>
-          <p className="mb-1 flex items-center gap-2 text-[10.5px] font-medium text-ink">
-            {ruleName(rule)}
-            <Tag tone="neutral">{hits.length}</Tag>
-          </p>
-          <ul className="space-y-1">
-            {hits.map((finding) => (
-              <li key={finding.id} className="rounded-[4px] border border-line bg-[#fffdf9] px-2.5 py-1.5">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge severity={finding.severity} />
-                  <button
-                    type="button"
-                    className="num text-[10px] text-muted hover:text-primary hover:underline"
-                    onClick={() => locate(finding.id)}
-                  >
-                    {finding.file}:{finding.line ?? '—'}
-                  </button>
-                  <span className="text-[9.5px] text-faint">
-                    {evidenceLabel(finding.evidence_type)} · 置信度 {confidenceLabel(finding.confidence)}
-                  </span>
-                </div>
-                <p className="mt-1 text-[11px] leading-relaxed text-[#57534e]">{finding.message}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
     </div>
   );
 }

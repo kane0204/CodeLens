@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from backend import credentials as secure
 from backend import observability as obs, server as core
 from backend.history import DEFAULT_PATH as HISTORY_PATH, HistoryStore
 
@@ -39,6 +40,14 @@ class ReviewRequest(SourceRequest):
 class HistoryRequest(BaseModel):
     project_id: str
     analysis_id: int | None = None
+
+
+class CredentialSaveRequest(BaseModel):
+    api_key: str
+
+
+class EmptyRequest(BaseModel):
+    pass
 
 
 class ExplainRequest(ReviewRequest):
@@ -95,6 +104,8 @@ def _error(request, exc):
         return exc.status, str(exc)
     if isinstance(exc, core.explanation.ExplanationError):
         return 502, obs.redact(str(exc))
+    if isinstance(exc, secure.CredentialError):
+        return 503, obs.redact(str(exc))
     if isinstance(exc, core.ai_contract.SkillError):
         return 400, core.ai_error(exc.kind, str(exc)[:200])["error"]
     if isinstance(exc, TimeoutError):
@@ -220,21 +231,27 @@ def _review_store(store, history, options):
     return history.checkpoints(options["history_project"]) if options else store
 
 
-def create_app(store, history=None):
+def create_app(store, history=None, credential_store=None):
     app = FastAPI(title="CodeLens API", version=core.VERSION, redoc_url=None)
     app.middleware("http")(_observe)
-    _routes(app, store, history)
+    _routes(app, store, history, credential_store or secure.CREDENTIALS)
     if history is not None:
         _history_routes(app, history)
     return app
 
 
-def _routes(app, store, history):
+def _routes(app, store, history, credential_store):
     @app.get(obs.API_STATUS)
     def status():
-        capabilities = core.CAPABILITIES + (["project-history"] if history is not None else [])
+        credential_status = credential_store.status()
+        capabilities = list(core.CAPABILITIES)
+        if credential_status["available"]:
+            capabilities.append("secure-credentials")
+        if history is not None:
+            capabilities.append("project-history")
         return {"ready": True, "engine_version": core.VERSION, "api_revision": core.API_REVISION,
-                "capabilities": capabilities, "token": core.TOKEN}
+                "capabilities": capabilities, "token": core.TOKEN,
+                "credentials": credential_status}
 
     @app.get(obs.API_AI_STATUS)
     def ai_status():
@@ -249,7 +266,8 @@ def _routes(app, store, history):
 
     @app.post(obs.API_EXPLAIN, openapi_extra=_schema(ExplainRequest))
     def explain(payload=Depends(_read_payload)):
-        return core.explanation.explain(_validate(payload, ExplainRequest))
+        payload = secure.with_stored_api_key(_validate(payload, ExplainRequest), credential_store)
+        return core.explanation.explain(payload)
 
     @app.post(obs.API_AI, openapi_extra=_schema(SkillRequest))
     def skills(payload=Depends(_read_payload)):
@@ -257,13 +275,27 @@ def _routes(app, store, history):
 
     @app.post(obs.API_REVIEW, response_class=StreamingResponse, openapi_extra=_schema(ReviewRequest))
     def review(request: Request, payload=Depends(_read_payload)):
+        payload = secure.with_stored_api_key(payload, credential_store)
         return StreamingResponse(_review_stream(request, payload, store, history), media_type="application/x-ndjson")
 
     @app.post(obs.API_REVIEW_CACHED, openapi_extra=_schema(ReviewRequest))
     def cached(payload=Depends(_read_payload)):
         payload = _validate(payload, ReviewRequest)
+        payload = secure.with_stored_api_key(payload, credential_store)
         options = _review_history(history, payload)
         return {"result": core.explanation.cached_review(payload, _review_store(store, history, options), **options)}
+
+    @app.post(obs.API_CREDENTIAL_SAVE, openapi_extra=_schema(CredentialSaveRequest))
+    def save_credential(payload=Depends(_read_payload)):
+        request = CredentialSaveRequest.model_validate(_validate(payload, CredentialSaveRequest))
+        credential_store.set_api_key(request.api_key)
+        return credential_store.status()
+
+    @app.post(obs.API_CREDENTIAL_DELETE)
+    def delete_credential(payload=Depends(_read_payload)):
+        _validate(payload, EmptyRequest)
+        deleted = credential_store.clear_api_key()
+        return {**credential_store.status(), "deleted": deleted}
 
 
 def _history_routes(app, history):

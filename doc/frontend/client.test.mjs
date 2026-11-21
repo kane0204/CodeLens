@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
-  analyzeProject, ApiError, errorText, explainCode, fetchStatus, isAbortError, readCachedReview, reviewProject, toBase64,
+  analyzeProject, ApiError, deleteStoredApiKey, errorText, explainCode, fetchStatus, isAbortError,
+  readCachedReview, reviewProject, saveStoredApiKey, toBase64,
 } from '../../codelens-prototype/src/api/client.ts';
 
 const token = 'unit-token';
@@ -23,6 +24,7 @@ test('status requests an uncached token and applies response defaults', async ()
 
   assert.deepEqual(await fetchStatus(), {
     ready: true, token, engine_version: '', api_revision: 2, capabilities: [],
+    credentials: { available: false, configured: false, backend: '' },
   });
 });
 
@@ -30,6 +32,37 @@ test('status rejects a ready response without a token', async () => {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ ready: true }));
   vi.stubGlobal('window', { setTimeout, clearTimeout });
   await assert.rejects(fetchStatus(), { name: 'ApiError', status: 200, message: /令牌/ });
+});
+
+test('credential endpoints save and delete through the local token guard', async () => {
+  const calls = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+    calls.push([url, options.headers['X-CodeLens-Token'], JSON.parse(options.body)]);
+    return Response.json({
+      available: true,
+      configured: url.endsWith('/save'),
+      backend: 'WindowsCredentialManager',
+    });
+  });
+  assert.deepEqual(await saveStoredApiKey('fake-key', token), {
+    available: true, configured: true, backend: 'WindowsCredentialManager',
+  });
+  assert.deepEqual(await deleteStoredApiKey(token), {
+    available: true, configured: false, backend: 'WindowsCredentialManager',
+  });
+  assert.deepEqual(calls, [
+    ['/api/credentials/save', token, { api_key: 'fake-key' }],
+    ['/api/credentials/delete', token, {}],
+  ]);
+});
+
+test('credential failures keep the backend message instead of the API key', async () => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    Response.json({ error: '系统凭据库不可用' }, { status: 503 }),
+  );
+  await assert.rejects(saveStoredApiKey('secret-value', token), (error) =>
+    error instanceof ApiError && error.status === 503 &&
+    /系统凭据库不可用/.test(error.message) && !error.message.includes('secret-value'));
 });
 
 test('status handles non-OK responses and timeout without waiting for the network', async () => {
@@ -232,13 +265,42 @@ test('HTTP failures accept a plain JSON string and fall back for a non-JSON resp
   const fetch = vi.spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(Response.json('backend busy', { status: 503 }))
     .mockResolvedValueOnce(new Response('non-JSON', { status: 503 }));
-  const request = { ...reviewRequest, settings: { baseUrl: '', model: '', apiKey: '' } };
   const { signal } = new AbortController();
-  await assert.rejects(reviewProject(request, token, ignoreProgress, signal),
+  await assert.rejects(reviewProject(reviewRequest, token, ignoreProgress, signal),
     { status: 503, message: 'backend busy' });
-  await assert.rejects(reviewProject(request, token, ignoreProgress, signal),
+  await assert.rejects(reviewProject(reviewRequest, token, ignoreProgress, signal),
     { status: 503, message: /AI 审查失败/ });
-  assert.equal(Object.hasOwn(JSON.parse(fetch.mock.calls[0][1].body), 'provider'), false);
+  assert.equal(fetch.mock.calls.length, 2);
+});
+
+test('review rejects an incomplete provider before sending a request', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch');
+  for (const settings of [
+    { baseUrl: '', model: 'model-a', apiKey: 'fake-key' },
+    { baseUrl: 'https://model.invalid/v1', model: '', apiKey: 'fake-key' },
+    { baseUrl: 'https://model.invalid/v1', model: 'model-a', apiKey: '' },
+  ]) {
+    await assert.rejects(
+      reviewProject({ ...reviewRequest, settings }, token, ignoreProgress, new AbortController().signal),
+      { message: /完整填写.*API Key/ },
+    );
+  }
+  assert.equal(fetch.mock.calls.length, 0);
+});
+
+test('review accepts an OS-stored credential without exposing a key in the request', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_, options) => {
+    assert.equal(JSON.parse(options.body).provider.api_key, '');
+    return new Response('{"type":"result","result":{"scope":"project"}}\n');
+  });
+  const request = {
+    ...reviewRequest,
+    settings: { ...settings, apiKey: '' },
+    useStoredCredential: true,
+  };
+  assert.deepEqual(await reviewProject(request, token, ignoreProgress, new AbortController().signal),
+    { scope: 'project' });
+  assert.equal(fetch.mock.calls.length, 1);
 });
 
 test('error text preserves API and ordinary error messages and explains connection failures', () => {

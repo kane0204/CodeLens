@@ -8,6 +8,7 @@ import type {
   LlmSettings,
   SelectedFile,
   StatusInfo,
+  CredentialStoreInfo,
   AnalysisHistory,
   HistoryProject,
   HistoryDetail,
@@ -163,12 +164,18 @@ export function fetchStatus(): Promise<StatusInfo> {
 
 function normalizeStatus(data: Partial<StatusInfo>, status: number): StatusInfo {
   if (!data.ready || !data.token) throw new ApiError('分析服务未返回可用令牌', status);
+  const credentials = data.credentials;
   return {
     ready: data.ready,
     engine_version: String(data.engine_version ?? ''),
     api_revision: Number(data.api_revision ?? 0),
     capabilities: Array.isArray(data.capabilities) ? data.capabilities : [],
     token: String(data.token),
+    credentials: {
+      available: Boolean(credentials?.available),
+      configured: Boolean(credentials?.configured),
+      backend: String(credentials?.backend ?? ''),
+    },
   };
 }
 
@@ -306,6 +313,14 @@ function withProvider(payload: Record<string, unknown>, { baseUrl, model, apiKey
   return { ...payload, provider: { base_url: baseUrl, model, api_key: apiKey } };
 }
 
+export function providerConfigured(settings: LlmSettings, useStoredCredential = false): boolean {
+  return Boolean(
+    settings.baseUrl.trim() &&
+    settings.model.trim() &&
+    (settings.apiKey.trim() || useStoredCredential),
+  );
+}
+
 function explanationLocation(result: Partial<ExplainResult>, target: ExplainTarget) {
   const { function: name = null, line = null, end_line = null } = result;
   return { file: String(result.file ?? target.file), function: name, line, end_line };
@@ -335,6 +350,7 @@ export interface ReviewRequest {
   settings: LlmSettings;
   history?: AnalysisHistory;
   useHistory?: boolean;
+  useStoredCredential?: boolean;
 }
 
 async function historyRequest<T>(endpoint: string, body: object, token: string, signal: AbortSignal): Promise<T> {
@@ -352,6 +368,34 @@ export const historyDetail = (project: string, run: number, token: string, signa
 
 export const deleteHistory = (project: string, run: number, token: string, signal: AbortSignal) =>
   historyRequest<{ deleted: boolean }>('delete', { project_id: project, analysis_id: run }, token, signal);
+
+async function credentialRequest(
+  endpoint: string,
+  payload: Record<string, unknown>,
+  token: string,
+): Promise<CredentialStoreInfo> {
+  const response = await postJson('/api/credentials/' + endpoint, payload, token, new AbortController().signal);
+  const data = await parseJson(response);
+  if (!response.ok) throw apiErrorFrom(data, '更新系统凭据失败', response.status);
+  const value = data as Partial<CredentialStoreInfo>;
+  return {
+    available: Boolean(value.available),
+    configured: Boolean(value.configured),
+    backend: String(value.backend ?? ''),
+  };
+}
+
+export function saveStoredApiKey(apiKey: string, token: string): Promise<CredentialStoreInfo> {
+  return withLogging('api', '/api/credentials/save', {}, () =>
+    credentialRequest('save', { api_key: apiKey }, token),
+  );
+}
+
+export function deleteStoredApiKey(token: string): Promise<CredentialStoreInfo> {
+  return withLogging('api', '/api/credentials/delete', {}, () =>
+    credentialRequest('delete', {}, token),
+  );
+}
 
 function reviewPayload(request: ReviewRequest & { scope?: ScopedReviewResult['scope'] }) {
   return withProvider({
@@ -413,6 +457,9 @@ async function reviewProjectInner(
   onProgress: (progress: AiReviewProgress) => void,
   signal: AbortSignal,
 ): Promise<AiReviewResult | ScopedReviewResult> {
+  if (!providerConfigured(request.settings, request.useStoredCredential)) {
+    throw new ApiError('请先在模型设置中完整填写接口地址、模型名称和 API Key。');
+  }
   const payload = reviewPayload(request);
   const response = await postJson('/api/review', payload, token, signal);
   if (!response.ok) {

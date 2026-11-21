@@ -4,31 +4,39 @@ import { useApp } from '../state/AppState';
 import { Button, Modal } from './Ui';
 import { logger } from '../lib/logger';
 
+const DEEPSEEK_DOCS = 'https://api-docs.deepseek.com/zh-cn/';
+
 export function SettingsDialog() {
-  const { settingsOpen, settings, settingsError, closeSettings, saveSettings } = useApp();
+  const {
+    settingsOpen, settings, credentials, settingsError,
+    closeSettings, saveSettings, clearStoredApiKey,
+  } = useApp();
 
   return (
     <Modal
       open={settingsOpen}
       title="模型设置"
-      subtitle="用于「逻辑说明」页的 AI 解读；配置只保存在本机浏览器。"
+      subtitle="接口地址与模型名称保存在本机；API Key 保存在操作系统凭据库。"
       onClose={closeSettings}
       width={540}
       footer={<SettingsFooter onClose={closeSettings} />}
     >
-      <SettingsForm settings={settings}
-        settingsError={settingsError} saveSettings={saveSettings} />
+      <SettingsForm settings={settings} credentials={credentials}
+        settingsError={settingsError} saveSettings={saveSettings}
+        clearStoredApiKey={clearStoredApiKey} />
     </Modal>
   );
 }
 
 interface SettingsFormProps {
   settings: LlmSettings;
+  credentials: ReturnType<typeof useApp>['credentials'];
   settingsError: string;
-  saveSettings: (settings: LlmSettings) => void;
+  saveSettings: (settings: LlmSettings) => Promise<void>;
+  clearStoredApiKey: () => Promise<void>;
 }
 
-function SettingsForm({ settings, settingsError, saveSettings }: SettingsFormProps) {
+function SettingsForm({ settings, credentials, settingsError, saveSettings, clearStoredApiKey }: SettingsFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const [reveal, setReveal] = useState(false);
 
@@ -36,16 +44,18 @@ function SettingsForm({ settings, settingsError, saveSettings }: SettingsFormPro
     <form id="llm-settings-form" ref={formRef} onSubmit={(event) => {
       event.preventDefault();
       const fields = new FormData(event.currentTarget);
-      saveSettings({
+      void saveSettings({
         baseUrl: String(fields.get('baseUrl')),
         model: String(fields.get('model')),
         apiKey: String(fields.get('apiKey')),
       });
     }}>
       <ModelFields baseUrl={settings.baseUrl} model={settings.model} />
-      <ApiKeyField apiKey={settings.apiKey} reveal={reveal} toggleReveal={() => setReveal((value) => !value)} />
+      <DeepSeekDocs />
+      <ApiKeyField apiKey={settings.apiKey} credentials={credentials}
+        reveal={reveal} toggleReveal={() => setReveal((value) => !value)} />
       <SettingsError message={settingsError} />
-      <SettingsActions onClear={() => {
+      <SettingsActions credentials={credentials} onClearStored={clearStoredApiKey} onClear={() => {
         clearSettingsFields(formRef.current);
         setReveal(false);
       }} />
@@ -133,13 +143,27 @@ function ModelFields({ baseUrl, model }: ModelFieldsProps) {
   );
 }
 
+function DeepSeekDocs() {
+  return (
+    <a
+      href={DEEPSEEK_DOCS}
+      target="_blank"
+      rel="noreferrer"
+      className="mt-3 inline-flex text-[10.5px] font-medium text-primary hover:underline"
+    >
+      查看 DeepSeek 官方教程
+    </a>
+  );
+}
+
 interface ApiKeyFieldProps {
   apiKey: string;
+  credentials: ReturnType<typeof useApp>['credentials'];
   reveal: boolean;
   toggleReveal: () => void;
 }
 
-function ApiKeyField({ apiKey, reveal, toggleReveal }: ApiKeyFieldProps) {
+function ApiKeyField({ apiKey, credentials, reveal, toggleReveal }: ApiKeyFieldProps) {
   return (
     <>
       <label className="mt-5 block text-[11.5px] font-medium text-ink" htmlFor="llm-api-key">
@@ -151,23 +175,39 @@ function ApiKeyField({ apiKey, reveal, toggleReveal }: ApiKeyFieldProps) {
           type={reveal ? 'text' : 'password'}
           autoComplete="off"
           spellCheck={false}
-          placeholder="仅保存在当前页面内存中"
+          placeholder={credentials.configured ? '已安全保存；留空保持不变' : '输入 API Key'}
           name="apiKey"
           defaultValue={apiKey}
-          className="num h-9 min-w-0 flex-1 rounded-[4px] border border-line bg-card px-3 text-[12px] outline-none transition-colors placeholder:text-faint focus:border-primary"
+          className="api-key-input num h-9 min-w-0 flex-1 rounded-[4px] border border-line bg-card px-3 text-[12px] outline-none transition-colors placeholder:text-faint focus:border-primary"
         />
         <Button size="sm" className="h-9" aria-pressed={reveal} onClick={toggleReveal}>
           {reveal ? '隐藏' : '显示'}
         </Button>
       </div>
       <p className="mt-1 text-[10.5px] leading-relaxed text-faint">
-        API Key 不写入 localStorage，也不会出现在导出报告中。留空则使用服务端配置。
+        {credentialHint(credentials)}
       </p>
     </>
   );
 }
 
-function SettingsActions({ onClear }: { onClear: () => void }) {
+function credentialHint(credentials: ReturnType<typeof useApp>['credentials']) {
+  if (!credentials.available) {
+    return '系统凭据库不可用。请重新运行 start-codelens 启动脚本安装后端依赖。';
+  }
+  if (credentials.configured) {
+    return `已保存在 ${credentials.backend || '系统凭据库'}。输入新值可替换，留空则保持不变。`;
+  }
+  return `保存后会写入 ${credentials.backend || '系统凭据库'}，不会写入 localStorage 或导出报告。`;
+}
+
+interface SettingsActionsProps {
+  credentials: ReturnType<typeof useApp>['credentials'];
+  onClearStored: () => Promise<void>;
+  onClear: () => void;
+}
+
+function SettingsActions({ credentials, onClearStored, onClear }: SettingsActionsProps) {
   return (
     <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
       <div className="flex items-center gap-2">
@@ -176,13 +216,16 @@ function SettingsActions({ onClear }: { onClear: () => void }) {
         </Button>
         <span className="text-[10px] leading-relaxed text-faint">仅本机记录，不含源码与密钥</span>
       </div>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={onClear}
-      >
-        清空草稿
-      </Button>
+      <div className="flex items-center gap-1.5">
+        {credentials.configured ? (
+          <Button size="sm" variant="ghost" onClick={() => void onClearStored()}>
+            清除已保存密钥
+          </Button>
+        ) : null}
+        <Button size="sm" variant="ghost" onClick={onClear}>
+          清空草稿
+        </Button>
+      </div>
     </div>
   );
 }

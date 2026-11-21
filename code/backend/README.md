@@ -28,6 +28,7 @@ FastAPI 默认监听 `127.0.0.1:18766`。接口文档位于 `/docs`，OpenAPI �
 - 语言与框架：Python 3.11 + FastAPI；
 - 目录建议：`app/api/`、`app/services/`、`app/models/`、`app/workers/`、`config/`；
 - 配置通过环境变量注入，禁止硬编码密钥；
+- 用户提供的模型 API Key 通过 `keyring` 写入 Windows Credential Manager、macOS Keychain 或 Linux Secret Service；浏览器只接收 `available/configured/backend` 状态，不读回密钥；
 - 报告与结果中必须保留规则版本与阈值配置，保证历史结果可复核；
 - 逻辑说明与风险结论必须保留 `evidence_type`（事实/推断），前端据此区分展示；
 - 上传的压缩包需限制大小并防止路径穿越（zip slip）；
@@ -55,6 +56,13 @@ FastAPI 默认监听 `127.0.0.1:18766`。接口文档位于 `/docs`，OpenAPI �
 
 - 前端：`codelens-prototype/src/lib/logger.ts` 为 200 条内存环形缓冲 + 脱敏；`info / warn / error` 同步写入本机 `localStorage`（键 `codelens.diag.v1`，上限 100 条），刷新或崩溃后自动恢复，可在「模型设置 → 下载诊断日志」导出含历史记录的 JSON；`ErrorBoundary` 兜底渲染崩溃并提供同一入口；全局 `error` / `unhandledrejection` / `pagehide` 也入日志。日志不上传，不含源码与密钥。
 - 回归测试：`tests/unit_2/test_observability.py`、`tests/integration/test_error_handling.py`。
+
+## 系统凭据接口
+
+- `GET /api/status` 的 `credentials` 字段只返回 `available / configured / backend`，不包含密钥。
+- `POST /api/credentials/save` 使用本机来源、Host、`X-CodeLens-Token` 校验，将 API Key 写入操作系统凭据库。
+- `POST /api/credentials/delete` 清除当前系统的 CodeLens API Key。
+- 审查请求未携带 `api_key` 时，后端从系统凭据库读取并注入，密钥不会出现在前端持久存储、报告或请求日志中。
 
 ## 待补充
 

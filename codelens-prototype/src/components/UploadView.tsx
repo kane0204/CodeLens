@@ -212,7 +212,7 @@ function ImportFeedback() {
           className="mt-4 inline-flex items-center gap-1 text-[11.5px] font-medium text-primary hover:underline"
           onClick={returnToResult}
         >
-          查看上一次结果
+          返回当前结果
           <Icon name="arrowRight" size={12} />
         </button>
       ) : null}

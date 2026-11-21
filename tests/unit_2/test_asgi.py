@@ -11,13 +11,30 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code"))
-from backend import asgi, server
+from backend import asgi, credentials, server
+
+
+class FakeCredentialBackend:
+    priority = 1
+
+    def __init__(self):
+        self.values = {}
+
+    def get_password(self, service, account):
+        return self.values.get((service, account))
+
+    def set_password(self, service, account, value):
+        self.values[(service, account)] = value
+
+    def delete_password(self, service, account):
+        self.values.pop((service, account), None)
 
 
 class FastApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.store = object()
-        self.app = asgi.create_app(self.store)
+        self.credentials = credentials.CredentialStore(backend=FakeCredentialBackend())
+        self.app = asgi.create_app(self.store, credential_store=self.credentials)
         self.payload = {"project": "demo", "files": [{"path": "main.py", "content": "pass"}]}
         logger = patch.object(asgi.obs, "get_logger")
         self.enterContext(logger)
@@ -45,11 +62,41 @@ class FastApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_status_docs_and_analysis(self):
         status, body = await self.request("GET", "/api/status")
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)["token"], server.TOKEN)
+        status_body = json.loads(body)
+        self.assertEqual(status_body["token"], server.TOKEN)
+        self.assertIn("secure-credentials", status_body["capabilities"])
+        self.assertEqual(status_body["credentials"]["configured"], False)
         status, body = await self.request("GET", "/openapi.json")
         self.assertIn("requestBody", json.loads(body)["paths"]["/api/analyze"]["post"])
         status, body = await self.request("POST", "/api/analyze", self.payload)
         self.assertEqual(json.loads(body)["summary"]["parsed"], 1)
+
+    async def test_secure_credential_routes_and_review_injection(self):
+        status, body = await self.request("POST", "/api/credentials/save", {"api_key": "stored-key"})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["configured"])
+        self.assertEqual(self.credentials.get_api_key(), "stored-key")
+
+        payload = {**self.payload, "provider": {
+            "base_url": "https://model.invalid/v1", "model": "unit", "api_key": "",
+        }}
+        with patch.object(server.explanation, "review", return_value={"scope": "project"}) as review:
+            status, _ = await self.request("POST", "/api/review", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(review.call_args.args[0]["provider"]["api_key"], "stored-key")
+
+        status, body = await self.request("POST", "/api/credentials/delete", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["deleted"])
+        self.assertFalse(self.credentials.status()["configured"])
+
+    async def test_secure_credential_failures_and_validation(self):
+        status, _ = await self.request("POST", "/api/credentials/save", {"api_key": ""})
+        self.assertEqual(status, 400)
+        with patch.object(self.credentials, "set_api_key", side_effect=credentials.CredentialError("vault locked")):
+            status, body = await self.request("POST", "/api/credentials/save", {"api_key": "secret"})
+        self.assertEqual(status, 503)
+        self.assertIn("vault locked", json.loads(body)["error"])
 
     async def test_project_history_endpoints_and_review_archive(self):
         directory = self.enterContext(TemporaryDirectory())

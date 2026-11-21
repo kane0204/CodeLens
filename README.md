@@ -142,6 +142,7 @@ CodeLens/
 | [docs/software/local-workbench.md](docs/software/local-workbench.md) | 本地真实分析工作台、接口与限制 |
 | [docs/mgmt/project-setup.md](docs/mgmt/project-setup.md) | 看板、标签、里程碑配置 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
+| https://kane0204.github.io/CodeLens/ | 答辩报告|
 
 ## 许可证
 

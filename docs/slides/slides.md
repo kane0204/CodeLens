@@ -9,6 +9,8 @@ title: CodeLens 项目答辩
 
 Make Code Visible · 【光圈】 · 2026 年 11 月
 
+实现说明涵盖本机工作台与当前工作区的网页同步版。
+
 ---
 
 ## 一、产品使命、口号与策略
@@ -30,6 +32,8 @@ Make Code Visible · 【光圈】 · 2026 年 11 月
 > 对于**使用 AI 编码的开发者与评审者**，CodeLens 是一套**支持本机运行与浏览器访问的代码分析工作台**。导入项目可查看语句级逻辑、结构图、质量指标和静态风险。启用模型后，可按项目、目录或文件发起 AI 审查，并通过源码引用复核报告。
 
 **解决的问题**：AI 代码能跑，但逻辑不透明、假设多、风险难定位，评审只能逐行读。
+
+![当前本机工作台的项目导入页](./public/import-ui.png)
 
 ---
 
@@ -81,12 +85,13 @@ flowchart LR
     SYNC --> DB[("SQLite 账号历史")]
 ```
 
+网页历史由同步版提供。纯浏览器版使用 IndexedDB 保存本地历史。
 
 ---
 
 ## 七、智能体技术设计 · 总览
 
-<img src="/agent-flow.png" class="mx-auto" style="width:92%" />
+![智能体从静态分析到报告输出的流程图](./public/agent-flow.png)
 
 图示概括本地 Skill 与分批审查的共同步骤。**静态事实与模型表述分开处理**。
 
@@ -122,7 +127,7 @@ flowchart LR
 **证据与输出校验**
 
 - 本机 Skill 校验信封、条目和证据引用，过滤无法解析的条目。
-- 分批审查校验结构化输出与源码引用，对部分格式或输出超限错误重试。
+- 分批审查校验输出结构和引用的文件与行号范围。部分格式或输出超限错误会重试。
 - 分批审查失败时显示错误，静态结果继续可用。
 
 ---
@@ -151,11 +156,17 @@ MEM -.续跑复用.-> R
 
 | 项 | 设计 |
 |---|---|
-| 数据库 | 本机 SQLite 保存项目历史与检查点，网页版 SQLite 按账号保存记录 |
-| 接口 | 本机 `/api/analyze`、`/api/explain`、`/api/review`（流式），网页 `/api/sync/` |
+| 数据库 | 本机 SQLite 保存项目历史与检查点，网页同步版用服务端 SQLite 按账号保存记录 |
+| 接口 | 本机 `/api/analyze`、`/api/review`（流式）及兼容接口 `/api/explain`，网页同步版使用 `/api/sync/` |
 | 前端 | React + Vite + Tailwind，导入项目后查看报告并回查源码 |
 
 本机接口校验 Host、Origin 和 Token。启用网页 AI 后，浏览器直接请求模型服务。历史与检查点通过 HTTPS 按账号同步。
+
+| 项目总览 | AI 风险评估 |
+| --- | --- |
+| ![当前项目总览，显示演示项目的静态分析结果](./public/overview.png) | ![当前风险评估页，等待逻辑解读完成](./public/risk-list.png) |
+
+截图来自本机工作台导入 `codelens-demo` 后的实测。总览中的 30 条为静态问题，AI 风险评估在逻辑解读完成后生成。
 
 ---
 
@@ -178,6 +189,20 @@ MEM -.续跑复用.-> R
 
 **提交历史**　本地 `HEAD` 可达 **84 个提交**，`git shortlog -s HEAD` 统计到 **5 个作者名**。
 
+| Pylint 历史检查截图 | GitHub Pulse 历史截图 |
+| --- | --- |
+| ![IDE 的 Pylint 与类型检查截图](./public/pylint.png) | ![GitHub Pulse 历史截图](./public/pulse.png) |
+
+---
+
+## 十三、代码统计截图
+
+以下是原答辩稿的前后端统计截图。上一页的数字使用修订时的工作区统计口径。
+
+| 后端代码统计 | 前端代码统计 |
+| --- | --- |
+| ![后端代码统计截图](./public/counter-backend.png) | ![前端代码统计截图](./public/counter-frontend.png) |
+
 ---
 
 ## 十四、参考与来源
@@ -185,7 +210,7 @@ MEM -.续跑复用.-> R
 - Python `ast` / `tokenize` — Python 官方标准库
 - 分析设计与验证见 `docs/software/quality-evaluation.md`
 - 工作台与审查见 `docs/software/local-workbench.md`、`ai-logic-explanation.md`
-- 浏览器运行与账号历史同步见 `docs/deployment.md`
+- 浏览器运行与账号历史同步见当前工作区的 `docs/deployment.md`
 - 需求与用户场景见 `docs/requirements/srs.md`、`user-stories.md`
 
 ---

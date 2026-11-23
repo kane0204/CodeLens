@@ -293,9 +293,6 @@ erDiagram
 | `POST /api/explain` | 单文件逻辑解读 | 源码、目标函数、上下文开关 | 逻辑说明和源码引用 | 兼容保留接口 |
 | `POST /api/sync/*` | 历史与检查点同步 | 账号、历史记录或检查点 | 同步状态和同步结果 | 网页部署版使用 |
 
-- 本机接口校验 Host、Origin 和 `X-CodeLens-Token`，请求体上限 12 MB。
-- 错误响应包含 `request_id`；FastAPI 自动生成 `/docs` 和 `/openapi.json`。
-- 另有 `/api/history/*` 和 `/api/credentials/*` 等辅助接口，表中不展开。
 
 <style>
 table {
@@ -365,5 +362,3 @@ img {
   object-fit: contain !important;
 }
 </style>
-
-AI Vibe coding / 团队自己编写代码的比例：当前材料未提供可核验统计。

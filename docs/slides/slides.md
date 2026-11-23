@@ -1,6 +1,7 @@
 ---
 theme: seriph
 title: CodeLens 项目答辩
+preloadImages: false
 ---
 
 # CodeLens
@@ -102,7 +103,7 @@ AI 代码能跑，但逻辑不透明、隐含假设多、风险难定位，评�
 
 本地 `HEAD` 可达 **84 个提交**，`git shortlog -s HEAD` 统计到 **5 个作者名**。
 
-![GitHub Pulse 历史截图](/pulse.png)
+![GitHub Pulse 历史截图](./images/pulse.png)
 
 <style>
 img {
@@ -156,7 +157,28 @@ flowchart LR
 
 ### 3.5.3 智能体技术设计 · 总览
 
-![智能体从静态分析到报告输出的流程图](/agent-flow.png)
+```mermaid
+flowchart LR
+    A["原始任务<br/>导入项目并启动审查"] --> B["静态分析<br/>生成 AST、IR、指标与 Finding"]
+    B --> C["生成执行计划<br/>确定技能、目标或源码批次"]
+    C --> D["执行当前步骤<br/>切片、阅读并生成结果"]
+    D --> E["检查结果<br/>校验证据与引用"]
+    E --> F{"是否需要调整<br/>当前结果？"}
+    F -- "是" --> G["补充一次上下文"]
+    G --> D
+    F -- "否" --> H{"还有下一步骤？"}
+    H -- "是" --> I["切换到下一计划步骤"]
+    I --> D
+    H -- "否" --> J["汇总结果并完成最终校验"]
+    J --> K["输出结果<br/>逻辑 / 设计 / 风险报告"]
+
+    classDef step fill:#173a63,stroke:#4b78a6,color:#fff;
+    classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
+    classDef output fill:#285d6b,stroke:#71a9b8,color:#fff;
+    class A,B,C,D,E,G,I,J step;
+    class F,H decision;
+    class K output;
+```
 
 图示概括本地 Skill 与分批审查的共同步骤。**静态事实与模型表述分开处理**。
 
@@ -255,7 +277,7 @@ erDiagram
 
 | 项目总览 | AI 风险评估 |
 |---|---|
-| <img src="/overview.png" alt="当前项目总览，显示演示项目的静态分析结果" height="110" /> | <img src="/risk-list.png" alt="当前风险评估页，等待逻辑解读完成" height="110" /> |
+| <img src="./images/overview.png" alt="当前项目总览，显示演示项目的静态分析结果" height="110" /> | <img src="./images/risk-list.png" alt="当前风险评估页，等待逻辑解读完成" height="110" /> |
 
 截图来自本机工作台导入 `codelens-demo` 后的实测。总览中的 30 条为静态问题，AI 风险评估在逻辑解读完成后生成。
 
@@ -271,7 +293,7 @@ erDiagram
 
 Pylint 静态检查结果：
 
-![IDE 的 Pylint 与类型检查截图](/pylint.png)
+![IDE 的 Pylint 与类型检查截图](./images/pylint.png)
 
 <style>
 img {
@@ -294,7 +316,7 @@ img {
 
 | 后端代码统计 | 前端代码统计 |
 |---|---|
-| <img src="/counter-backend.png" alt="后端代码统计截图" style="width:100%; max-height:430px; object-fit:contain;" /> | <img src="/counter-frontend.png" alt="前端代码统计截图" style="width:100%; max-height:430px; object-fit:contain;" /> |
+| <img src="./images/counter-backend.png" alt="后端代码统计截图" style="width:100%; max-height:430px; object-fit:contain;" /> | <img src="./images/counter-frontend.png" alt="前端代码统计截图" style="width:100%; max-height:430px; object-fit:contain;" /> |
 
 <style>
 img {

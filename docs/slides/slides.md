@@ -284,14 +284,30 @@ erDiagram
 
 ### 3.5.5 接口设计
 
-| 接口名称 | 接口功能 |
-|---|---|
-| `/api/analyze` | 本机项目静态分析 |
-| `/api/review` | 本机流式项目审查 |
-| `/api/explain` | 兼容的单文件逻辑解读 |
-| `/api/sync/` | 网页同步版历史与检查点同步 |
+| 方法 / 接口 | 接口功能 | 输入 | 输出 | 备注 |
+|---|---|---|---|---|
+| `GET /api/status` | 获取服务状态 | 无 | 版本、能力、令牌和凭据状态 | 页面初始化 |
+| `POST /api/analyze` | 项目静态分析 | 项目名称、源码文件列表 | 文件、函数、指标、问题和结构关系 | 核心业务接口 |
+| `POST /api/review` | AI 项目审查 | 源码、审查范围、模型配置 | `progress`、`result`、`error` 事件流 | 流式返回，支持续跑 |
+| `POST /api/review/cached` | 获取缓存审查结果 | 与项目审查相同的输入 | 已完成的审查结果或空结果 | 避免重复调用模型 |
+| `POST /api/explain` | 单文件逻辑解读 | 源码、目标函数、上下文开关 | 逻辑说明和源码引用 | 兼容保留接口 |
+| `POST /api/sync/*` | 历史与检查点同步 | 账号、历史记录或检查点 | 同步状态和同步结果 | 网页部署版使用 |
 
-本机接口校验 Host、Origin 和 Token。Swagger 文档由 FastAPI 自动生成。
+- 本机接口校验 Host、Origin 和 `X-CodeLens-Token`，请求体上限 12 MB。
+- 错误响应包含 `request_id`；FastAPI 自动生成 `/docs` 和 `/openapi.json`。
+- 另有 `/api/history/*` 和 `/api/credentials/*` 等辅助接口，表中不展开。
+
+<style>
+table {
+  font-size: 0.62em;
+  line-height: 1.3;
+}
+
+th,
+td {
+  padding: 0.28rem 0.35rem !important;
+}
+</style>
 
 ---
 

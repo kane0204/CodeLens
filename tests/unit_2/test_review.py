@@ -127,6 +127,43 @@ class ProjectReviewTests(unittest.TestCase):
         self.assertEqual(self.chat.call_count, 9)
         self.assertIn("return 2", self.chat.call_args_list[3].args[-1])
 
+    def test_changed_file_reuses_unchanged_file_reading_units_and_reruns_summary(self):
+        report = json.dumps({
+            "logic": "A [a.py:L1] B [b.py:L1] C [c.py:L1]",
+            "design": "A [a.py:L1] B [b.py:L1] C [c.py:L1]",
+            "risks": "A [a.py:L1] B [b.py:L1] C [c.py:L1]",
+        })
+        self.chat.return_value = (report, False)
+        first = {
+            **self.payload,
+            "files": [
+                {"path": "a.py", "content": "def a():\n    return 1\n"},
+                {"path": "b.py", "content": "def b():\n    return 1\n"},
+                {"path": "c.py", "content": "def c():\n    return 1\n"},
+            ],
+        }
+        changed = {
+            **first,
+            "files": [
+                first["files"][0],
+                {"path": "b.py", "content": "def b():\n    return 2\n"},
+                first["files"][2],
+            ],
+        }
+        with TemporaryDirectory() as directory:
+            store = ReviewStore(Path(directory) / "reviews.sqlite3")
+            saved = explanation.review(first, store=store)
+            calls_after_first = self.chat.call_count
+            updated = explanation.review(changed, store=store)
+
+        self.assertEqual(calls_after_first, 6)
+        self.assertEqual(self.chat.call_count, 10)
+        self.assertEqual(saved["incremental"], {"reused_units": 0, "recomputed_units": 3})
+        self.assertEqual(updated["incremental"], {"reused_units": 2, "recomputed_units": 1})
+        read_prompt = self.chat.call_args_list[6].args[-1]
+        self.assertIn("b.py", read_prompt)
+        self.assertIn("return 2", read_prompt)
+
     def test_failed_batch_resumes_after_last_completed_batch(self):
         self.payload["files"] = [
             {"path": "main.py", "content": "# " + "a" * 500 + "\n"},

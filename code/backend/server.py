@@ -35,7 +35,7 @@ from backend import observability as obs
 TOKEN = secrets.token_urlsafe(32)
 API_REVISION = 2
 CAPABILITIES = ["analyze", "explain", "explain-context", "project-review", "review-checkpoints", "class-metrics",
-                "duplicates", "class-relations", "multi-language", "special-risks"]
+                "incremental-review", "duplicates", "class-relations", "multi-language", "special-risks"]
 MAX_BODY = 12 * 1024 * 1024
 MAX_AI_TARGETS = ai_runner.MAX_TARGETS
 

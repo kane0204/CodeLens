@@ -69,6 +69,11 @@ function LogicReport({ aiReview, section }: { aiReview: AiReviewResult | ScopedR
         <span className="num">
           覆盖 {aiReview.source_files ?? 0} 个已解析文件{aiReview.batch_count > 1 ? ` · ${aiReview.batch_count} 批` : ''}
         </span>
+        {aiReview.incremental ? (
+          <span className="num">
+            阅读单元：复用 {aiReview.incremental.reused_units} · 重算 {aiReview.incremental.recomputed_units}
+          </span>
+        ) : null}
         <span>解读基于完整源码与静态分析事实，点击引用回到源码核对</span>
       </div>
       <ReviewLimits review={aiReview} section="logic" />

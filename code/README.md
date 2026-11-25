@@ -52,7 +52,7 @@ code/
 | `skills/ai_risk_review.py` | 风险条目解读 | 输入只有 findings，无 finding 直接 `insufficient_evidence`（没命中阈值 ≠ 没有风险）；8 条规则 PLAYBOOK 文案；severity 权重 {critical:3, warning:2, info:1} 聚合排序 |
 | `skills/solid_review.py` | SOLID findings 解读 | 固定附声明「L 与 I 只覆盖已解析单继承契约，未命中不等于符合」 |
 | `provider.py` | 表达方抽象 | `TemplateProvider`（确定性模板，逐字节可复现）与 `HttpProvider`（标准库 `urllib.request` 调 OpenAI 兼容 `/chat/completions`，`temperature=0`，响应上限 256KB）；`CODELENS_AI_ENDPOINT/MODEL/KEY/TIMEOUT` 四个环境变量**全部到齐**才启用外部模型；HTTP 失败抛 `ProviderError` 由 runner 降级为模板；prompt 只含已切片事实，不含源码全文 |
-| `runner.py` | 固定 DAG：切片 → 表达 → 校验 → 缓存 | 上限 24 目标 / 每 skill 默认 12 条；缓存 key 由 skill 版本 + prompt 版本 + provider/model + 目标 ref + `index.fingerprint` 组成，不含时间与随机数（LRU，容量 256）；局部回退只允许「补一次上下文」（gap → repair → 再 gap），外层不重规划；模型失败自动回退模板并记入 diagnostics |
+| `runner.py` | 固定 DAG：切片 → 表达 → 校验 → 缓存 | 上限 24 目标 / 每 skill 默认 12 条；缓存 key 由 skill 版本 + prompt 版本 + provider/model + 目标 ref + 实际上下文 hash + 传递调用/继承依赖指纹组成，不再让全项目任意变化击穿所有目标（LRU，容量 256）；局部回退只允许「补一次上下文」（gap → repair → 再 gap），外层不重规划；模型失败自动回退模板并记入 diagnostics |
 | `explanation.py` | 按需源码解读与全项目审查（**无模板兜底**） | 上限：单次解读源码 60000 字符、审查单批 40000 字符、并发审查任务 6 个、兜底超时 1800s；全项目流程 = 按行号分段/打包小文件 → 分批阅读产出笔记 → 交叉整合，模型只输出 `{logic, design, risks}` JSON；**断点续跑**：`_ReviewJob` 内存检查点，指纹 = 项目内容+endpoint+model+key 的 SHA256，浏览器断开任务在服务端继续跑，并发重试复用同一任务；`context_for` 取已解析被调者两跳，单片段 20000 字符/最多 6 个；行号引用 `[file:Lx-Ly]` 正则校验落在已提供范围内；端点校验拒绝带账号/查询参数的 URL 与换行注入；`temperature=0.2`；检查点仅存内存随进程消失 |
 
 ## backend/ —— 适配层

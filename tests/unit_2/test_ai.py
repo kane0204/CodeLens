@@ -548,6 +548,28 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual([item["cache_key"] for item in first["results"]],
                          [item["cache_key"] for item in again["results"]])
 
+    def test_changed_callee_invalidates_callers_even_when_caller_context_is_unchanged(self):
+        original = {
+            "a.py": "from b import x\ndef caller():\n    return x()\n",
+            "b.py": "def x():\n    return 1\n",
+        }
+        changed = {
+            **original,
+            "b.py": "def x():\n    return 2\n",
+        }
+        _, _, _, first_env = build(original)
+        _, _, _, second_env = build(changed)
+        cache = runner.Cache()
+        first, = runner.Runner(first_env, cache=cache).run(
+            ["logic-summary"], targets=["def:a.caller"])["results"]
+        second, = runner.Runner(second_env, cache=cache).run(
+            ["logic-summary"], targets=["def:a.caller"])["results"]
+
+        self.assertEqual(first["diagnostics"]["context_hash"],
+                         second["diagnostics"]["context_hash"])
+        self.assertFalse(second["diagnostics"]["cache_hit"])
+        self.assertNotEqual(first["cache_key"], second["cache_key"])
+
     def test_unknown_skill_is_reported_not_silently_ignored(self):
         _, _, _, env = build()
         out = runner.Runner(env).run(["nope", "solid-review"])

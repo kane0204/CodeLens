@@ -14,7 +14,8 @@
 2. **表达失败不影响事实**。模板是基线，外部模型是可选增强；模型报错或输出不合格
    就退回模板，`generator` 字段会如实记录这次到底是谁产出的。
 3. **缓存 key 只由确定性输入构成**：skill 版本、prompt 版本、provider/model、
-   目标指纹。不含时间、不含随机数，所以同一个 key 永远对应同一份输出。
+   目标实际上下文与传递依赖指纹。不含时间、不含随机数，所以同一个 key 永远
+   对应同一份输出。
 """
 from __future__ import annotations
 
@@ -47,7 +48,7 @@ LIMITATIONS = [
     "表达层不产出事实：每条 claim 都挂在 IR 能解析的引用上，解析不到的引用与整条 claim 一起丢弃。",
     "默认使用确定性模板，同一输入得到逐字节相同的输出；配置外部模型后文本会随模型变化，但校验规则不变。",
     "SOLID 提供五项静态检查；L/I 仅覆盖可解析的继承方法，无法证明运行时行为契约。",
-    "缓存 key 由 skill 版本、prompt 版本、provider/model 与目标指纹构成，不含时间与随机数。",
+    "缓存 key 由 skill 版本、prompt 版本、provider/model、目标上下文与传递依赖指纹构成，不含时间与随机数。",
 ]
 
 
@@ -175,8 +176,81 @@ class Runner:
                 scope = candidate
         return self.env["index"].fingerprint(scope)
 
-    def cache_key(self, skill, ref):
+    def _module_dependency_fingerprint(self, module):
+        index = self.env["index"]
+        modules, pending = {module}, [module]
+        while pending:
+            source = pending.pop()
+            for left, right in index.deps:
+                if left == source and right not in modules:
+                    modules.add(right)
+                    pending.append(right)
+        facts = [
+            ("module", name, index.files.get(path, {}).get("sha256"),
+             index.files.get(path, {}).get("status"))
+            for name, path in sorted(index.modules.items()) if name in modules
+        ]
+        return contract.short_hash({"modules": facts})
+
+    def _symbol_dependency_manifest(self, root):
+        index = self.env["index"]
+        visited, pending = set(), [root]
+        manifests, unresolved = [], set()
+        while pending and len(visited) < 128:
+            ident = pending.pop(0)
+            if ident in visited or ident not in index.defs:
+                continue
+            visited.add(ident)
+            manifests.append((ident, index.fingerprint(ident)))
+            self._collect_dependencies(index, ident, visited, pending, unresolved)
+        return sorted(manifests), sorted(unresolved), bool(pending)
+
+    @staticmethod
+    def _collect_call_dependencies(index, ident, visited, pending, unresolved):
+        for call in index.calls_by_source.get(ident, []):
+            target = call.get("target")
+            if call.get("status") == "resolved" and target in index.defs:
+                if target not in visited:
+                    pending.append(target)
+            else:
+                unresolved.add((call.get("expression") or "", call.get("status") or ""))
+
+    @staticmethod
+    def _collect_inheritance_dependencies(index, ident, visited, pending):
+        for edge in index.inheritance:
+            target = edge.get("target")
+            if edge.get("source") == ident and target in index.defs and target not in visited:
+                pending.append(target)
+
+    @staticmethod
+    def _collect_dependencies(index, ident, visited, pending, unresolved):
+        Runner._collect_call_dependencies(index, ident, visited, pending, unresolved)
+        Runner._collect_inheritance_dependencies(index, ident, visited, pending)
+
+    def _dependency_fingerprint(self, ref):
+        """Hash the target and every reachable internal symbol it can use."""
+        index = self.env["index"]
+        if ref.startswith("summary:"):
+            return index.fingerprint("all")
+        kind, _, payload = ref.partition(":")
+        if kind == "module":
+            return self._module_dependency_fingerprint(payload)
+        root = payload if kind in ("def", "function", "class") else ""
+        if root not in index.defs:
+            return index.fingerprint("all")
+        symbols, unresolved, truncated = self._symbol_dependency_manifest(root)
+        return contract.short_hash({"symbols": symbols, "unresolved": unresolved,
+                                    "truncated": truncated})
+
+    def cache_key(self, skill, ref, ctx=None):
         """缓存 key 必须包含目标本身：不同 ref 的同一个 skill 不是同一份输出。"""
+        if ctx is None:
+            try:
+                context = skill.context(self.env, ref)
+            except contract.SkillError as exc:
+                context = {"error": exc.kind, "message": str(exc)}
+        else:
+            context = ctx
         return contract.short_hash({
             "schema": contract.SCHEMA_VERSION,
             "skill": skill.id,
@@ -185,7 +259,8 @@ class Runner:
             "provider": self.provider.id,
             "model": self.provider.model,
             "target": ref,
-            "fingerprint": self.env["index"].fingerprint("all"),
+            "context": contract.short_hash(context),
+            "dependencies": self._dependency_fingerprint(ref),
         })[:32]
 
     def _slice_stats(self, ctx):
@@ -218,24 +293,26 @@ class Runner:
         return validated
 
     def _one(self, skill, ref):
-        key = self.cache_key(skill, ref)
-        cached = self.cache.get(key)
-        if cached is not None:
-            hit = dict(cached)
-            hit["diagnostics"] = dict(cached.get("diagnostics") or {})
-            hit["diagnostics"]["cache_hit"] = True
-            hit["cache_key"] = key
-            return hit
-
         index = self.env["index"]
         try:
             ctx = skill.context(self.env, ref)
         except contract.SkillError as exc:
+            key = self.cache_key(skill, ref, {"error": exc.kind, "message": str(exc)})
             result = self._degraded(skill, ref, exc.kind, str(exc), key)
             self.cache.put(key, result)
             return result
 
         ctx, attempts, gap_reason = self._prepare_context(skill, ctx)
+        key = self.cache_key(skill, ref, ctx)
+        cached = self.cache.get(key)
+        if cached is not None:
+            hit = dict(cached)
+            hit["diagnostics"] = dict(cached.get("diagnostics") or {})
+            hit["diagnostics"]["cache_hit"] = True
+            hit["diagnostics"]["context_hash"] = contract.short_hash(ctx)[:16]
+            hit["cache_key"] = key
+            return hit
+
         if gap_reason is not None:
             result = self._degraded(skill, ref, "insufficient_evidence", gap_reason,
                                     key, attempts=attempts, ctx=ctx)
@@ -278,6 +355,7 @@ class Runner:
         diagnostics = dict(diagnostics or {})
         diagnostics.setdefault("attempts", attempts)
         diagnostics["cache_hit"] = False
+        diagnostics["context_hash"] = contract.short_hash(ctx)[:16]
         diagnostics["slice"] = self._slice_stats(ctx)
         raw["diagnostics"] = diagnostics
         raw.setdefault("skill", skill.id)

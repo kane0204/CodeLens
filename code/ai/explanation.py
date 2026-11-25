@@ -337,6 +337,71 @@ def _project_batches(records, budget=None):
     return batches
 
 
+def _project_units(records, budget=None):
+    """One cache unit per file segment, so an unrelated file can be reused."""
+    budget = MAX_PROJECT_BATCH_CHARS if budget is None else budget
+    units = []
+    for record in records:
+        for text in _project_batches([record], budget):
+            key = hashlib.sha256(json.dumps({
+                "version": "review-unit-v1",
+                "instruction": _REVIEW_BATCH_INSTRUCTION,
+                "reader": _REVIEW_READER_SYSTEM,
+                "text": text,
+            }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            units.append({"key": key, "text": text})
+    return units
+
+
+def _unit_cache_key(unit, project, endpoint, model):
+    return "unit:" + hashlib.sha256(json.dumps({
+        "version": "review-unit-v1",
+        "project": project,
+        "endpoint": endpoint,
+        "model": model,
+        "instruction": _REVIEW_BATCH_INSTRUCTION,
+        "reader": _REVIEW_READER_SYSTEM,
+        "text": unit["text"],
+    }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _load_unit_note(store, key):
+    if store is None:
+        return None
+    try:
+        row = store.load(key)
+    except (OSError, sqlite3.Error, ValueError):
+        return None
+    return row if isinstance(row, dict) and isinstance(row.get("note"), str) else None
+
+
+def _save_unit_note(store, key, note, limited):
+    if store is None:
+        return
+    try:
+        store.save(key, {"note": note, "limited": bool(limited)}, time.time())
+    except (OSError, sqlite3.Error, ValueError):
+        pass
+
+
+def _obtain_unit_note(unit, project, endpoint, model, key, index, total, cache_store):
+    cache_key = _unit_cache_key(unit, project, endpoint, model)
+    cached = _load_unit_note(cache_store, cache_key)
+    if cached is not None:
+        return cached["note"], bool(cached.get("limited")), True
+    prompt = (f"项目：{project}\n这是全项目源码的第 {index}/{total} 个单元。"
+              + _REVIEW_BATCH_INSTRUCTION + "\n\n" + unit["text"])
+    note, hit_limit = _chat(endpoint, model, key, _REVIEW_READER_SYSTEM, prompt)
+    _save_unit_note(cache_store, cache_key, note, hit_limit)
+    return note, hit_limit, False
+
+
+def _read_progress(progress, done, total, label):
+    if progress:
+        progress({"type": "progress", "stage": "read", "done": done,
+                  "total": total, "label": label})
+
+
 def _evidenced_rows(result):
     dependencies = [edge for edge in result["graph"]["dependencies"] if edge.get("internal")]
     calls = [edge for edge in result["graph"]["calls"] if edge.get("status") == "resolved"]
@@ -379,6 +444,28 @@ def _read_batches(batches, project, endpoint, model, key, batch_instruction, rea
             progress({"type": "progress", "stage": "read", "done": index,
                       "total": total, "label": f"已完成第 {index}/{len(batches)} 批源码"})
     return notes, truncated
+
+
+def _read_units(units, project, endpoint, model, key, progress=None, job=None, total=None,
+                cache_store=None):
+    notes = job.notes if job is not None else []
+    resumed = len(notes)
+    total = total or len(units)
+    truncated = job.truncated if job is not None else False
+    reused = resumed
+    recomputed = 0
+    for index, unit in enumerate(units[resumed:], resumed + 1):
+        _read_progress(progress, index - 1, total, f"阅读第 {index}/{len(units)} 个源码单元")
+        note, hit_limit, cache_hit = _obtain_unit_note(
+            unit, project, endpoint, model, key, index, len(units), cache_store)
+        if cache_hit:
+            reused += 1
+        else:
+            recomputed += 1
+        _save_batch_note(notes, f"第 {index} 批阅读记录：\n{note}", job, hit_limit)
+        truncated = truncated or hit_limit
+        _read_progress(progress, index, total, f"已完成第 {index}/{len(units)} 个源码单元")
+    return notes, truncated, reused, recomputed
 
 
 _EXPLAIN_BATCH_INSTRUCTION = (
@@ -514,21 +601,42 @@ def _review_scope(payload):
     return scope
 
 
-def _review_project(result, endpoint, model, key, progress=None, job=None, scope="project", memory=()):
+def _review_batches(records, budget):
+    if len(records) == 1:
+        return _project_batches(records, budget), []
+    units = _project_units(records, budget)
+    return [unit["text"] for unit in units], units
+
+
+def _review_records(result):
     records = sorted((record for record in result["files"] if record["status"] == "ok"),
                      key=lambda record: record["path"])
     if not records:
         raise ValueError("没有成功解析的源码，不能生成全项目审查")
+    return records
+
+
+def _review_ranges(records):
+    return [{"file": record["path"], "line": 1,
+             "end_line": max(1, len(record["source"].splitlines())), "kind": "project"}
+            for record in records]
+
+
+def _review_truncated(limits):
+    return any(value for key, value in limits.items() if key != "facts_omitted")
+
+
+def _review_project(result, endpoint, model, key, progress=None, job=None, scope="project", memory=()):
+    records = _review_records(result)
     budget = min(MAX_REVIEW_SYNTHESIS_CHARS, _review_budget())
-    batches = _project_batches(records, min(MAX_PROJECT_BATCH_CHARS, budget * 3 // 4))
-    ranges = [{"file": record["path"], "line": 1,
-               "end_line": max(1, len(record["source"].splitlines())), "kind": "project"}
-              for record in records]
+    batches, units = _review_batches(records, min(MAX_PROJECT_BATCH_CHARS, budget * 3 // 4))
+    ranges = _review_ranges(records)
     facts = _review_facts(result, scope, budget // 4)
-    context = _ReviewContext(endpoint, model, key, progress, job, memory)
+    cache_store = job.storage[0] if job is not None and job.storage is not None else None
+    context = _ReviewContext(endpoint, model, key, progress, job, memory, cache_store)
     with tracing_context(enabled=False):
         review = _REVIEW_GRAPH.invoke(
-            {"project": result["project"], "scope": scope, "batches": batches,
+            {"project": result["project"], "scope": scope, "batches": batches, "units": units,
              "facts": facts, "budget": budget, "ranges": ranges}, context=context,
         )
     limits = review["limits"]
@@ -536,7 +644,9 @@ def _review_project(result, endpoint, model, key, progress=None, job=None, scope
             "source_files": len(records), "batch_count": len(batches),
             "context": ranges, "omitted_context": bool(limits["facts_omitted"]),
             "sections": review["sections"], "limits": limits,
-            "truncated": any(limits[key] for key in limits if key != "facts_omitted"),
+            "truncated": _review_truncated(limits),
+            "incremental": {"reused_units": review.get("units_reused", 0),
+                            "recomputed_units": review.get("units_recomputed", 0)},
             **review.get("history_metadata", {})}
 
 
@@ -579,6 +689,7 @@ class _ReviewState(TypedDict, total=False):
     project: str
     scope: str
     batches: list[str]
+    units: list[dict]
     facts: dict
     budget: int
     ranges: list[dict]
@@ -589,6 +700,8 @@ class _ReviewState(TypedDict, total=False):
     limits: dict
     sections: dict
     history_metadata: dict
+    units_reused: int
+    units_recomputed: int
 
 
 @dataclass(frozen=True)
@@ -599,6 +712,7 @@ class _ReviewContext:
     progress: object
     job: _ReviewJob | None
     memory: tuple | list
+    cache_store: object | None = None
 
     def emit(self, stage, done, total, label):
         if self.progress:
@@ -608,9 +722,26 @@ class _ReviewContext:
 def _review_read(state: _ReviewState, runtime: Runtime[_ReviewContext]):
     context = runtime.context
     batches = state["batches"]
+    units = state.get("units") or []
+    if units:
+        return _review_read_units(state, context, units)
     if len(batches) == 1:
         return {"material": "以下是全部已解析源码：\n" + batches[0]}
     return _review_read_multiple(state, context, batches)
+
+
+def _review_read_units(state, context, units):
+    job = context.job
+    total = len(units) + len(state["facts"])
+    notes, truncated, reused, recomputed = _read_units(
+        units, state["project"], context.endpoint, context.model, context.key,
+        progress=context.progress, job=job, total=total, cache_store=context.cache_store,
+    )
+    summary = _summary_material(notes, context, len(units), total, state["budget"] * 3 // 4)
+    return {"material": "以下是源码阅读记录。请交叉核对并保留关键引用：\n" + summary["text"],
+            "reading_limited": truncated, "summary_compressed": summary["compressed"],
+            "summary_limited": summary["limited"],
+            "units_reused": reused, "units_recomputed": recomputed}
 
 
 def _review_read_multiple(state, context, batches):

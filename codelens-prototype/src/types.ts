@@ -333,6 +333,7 @@ export interface AiReviewResult {
   batch_count: number;
   context: { file: string; line: number; end_line: number }[];
   omitted_context: boolean;
+  incremental?: { reused_units: number; recomputed_units: number };
   sections: Record<AiReviewSectionId, AiReviewSection>;
   truncated: boolean;
   limits?: {

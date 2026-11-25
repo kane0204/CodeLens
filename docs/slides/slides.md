@@ -6,7 +6,7 @@ preloadImages: false
 
 # CodeLens
 
-## AI 生成代码的可解释性与可信度分析
+## 项目结构可视化工具
 
 【光圈】 · 2026 年 11 月
 
@@ -14,7 +14,6 @@ preloadImages: false
 
 # 1.产品设计
 
-## 1.1 产品使命、口号和策略
 
 ### 1.1.1 使命
 
@@ -27,8 +26,6 @@ Make Code Visible.
 ### 1.1.3 目标用户
 
 使用 AI 编码的开发者
-
----
 
 ### 1.1.4 如何获得用户
 
@@ -50,8 +47,6 @@ Make Code Visible.
 | Noodles | 控制流可视化 | 函数级控制流图 | 提供 CFG，不负责完整项目审查与源码证据链 |
 | Sourcetrail | 代码导航 | 跨文件符号跳转和依赖浏览 | 侧重阅读与导航，不直接给出质量判断 |
 | **CodeLens** | **可审查的代码分析 Agent** | **逻辑、结构、质量与风险统一分析** | **一次解析、多视图、可复核** |
-
-**差异点：把分散的指标、调用与控制流放进同一次分析，并保留源码证据链。**
 
 <style>
 table {
@@ -87,7 +82,7 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 
 # 2 产品设计应用的原则
 
-| 原则 | 在 CodeLens 的落地 |
+| 原则 | 落地 |
 |---|---|
 | 需求 / 信息 / 创新 | 从总览进入文件、结构和逻辑步骤，再查看质量与风险，并可回查源码 |
 | 系统 / 收敛 / 优化 | 用统一静态事实组装报告，区分事实与推断，并标明覆盖缺口 |
@@ -110,8 +105,8 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 
 ## 3.2 技术选型
 
-| 条目 | 技术 | 版本 | 选型理由 |
-|---|---|---|---|
+| 条目 | 技术 | 版本 |
+|---|---|---|
 | 语言 | Python / TypeScript | 本机 Python 3.11+ / TS `~5.7.2` | 共用静态核心与前端类型定义 |
 | 后端 | FastAPI / Uvicorn | 见依赖文件 | 本机分析与审查 API，网页历史同步 |
 | 前端 | React + Vite | `^18.3.1` / `^6.0.5` | 组件化界面与构建 |
@@ -124,8 +119,6 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 ## 3.3 代码仓库链接及代码提交历史截图
 
 代码仓库：https://github.com/kane0204/CodeLens
-
-本地 `HEAD` 可达 **84 个提交**，`git shortlog -s HEAD` 统计到 **5 个作者名**。
 
 ![GitHub Pulse 历史截图](./images/pulse.png)
 
@@ -151,9 +144,6 @@ img {
 
 ## 3.5 软件概要设计
 
-### 3.5.0 使用工具
-
-画图使用 Mermaid，文档使用 Markdown，IDE 使用 VS Code 与 PyCharm。
 
 ### 3.5.1 系统架构图
 
@@ -179,35 +169,66 @@ flowchart LR
 
 ---
 
-### 3.5.3 智能体技术设计 · 总览
+### 3.5.3 智能体技术设计 · 端到端流程
 
 ```mermaid
 flowchart LR
-    A["原始任务<br/>导入项目并启动审查"] --> B["静态分析<br/>生成 AST、IR、指标与 Finding"]
-    B --> C["生成执行计划<br/>确定技能、目标或源码批次"]
-    C --> D["执行当前步骤<br/>切片、阅读并生成结果"]
-    D --> E["检查结果<br/>校验证据与引用"]
-    E --> F{"是否需要调整<br/>当前结果？"}
-    F -- "是" --> G["补充一次上下文"]
-    G --> D
-    F -- "否" --> H{"还有下一步骤？"}
-    H -- "是" --> I["切换到下一计划步骤"]
-    I --> D
-    H -- "否" --> J["汇总结果并完成最终校验"]
-    J --> K["输出结果<br/>逻辑 / 设计 / 风险报告"]
+    A["导入并静态分析<br/>AST、IR、指标、Finding"] --> B{"启用 Agent？"}
 
-    classDef step fill:#173a63,stroke:#4b78a6,color:#fff;
+    B -- "否" --> S["静态报告"]
+    B -- "是" --> E["Agent 审查<br/>输入：静态事实与 IR 切片<br/>复用已有记忆"]
+    E --> R["结构化审查结果"]
+    R --> M["合并审查结果"]
+
+    S --> G["展示、回查与导出"]
+    M --> G
+
+    classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
     classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
-    classDef output fill:#285d6b,stroke:#71a9b8,color:#fff;
-    class A,B,C,D,E,G,I,J step;
-    class F,H decision;
-    class K output;
+    classDef agent fill:#285d6b,stroke:#71a9b8,color:#fff;
+    classDef output fill:#173a63,stroke:#4b78a6,color:#fff;
+
+    class A,S input;
+    class B decision;
+    class E agent;
+    class R,M,G output;
 ```
 
-图示概括本地 Skill 与分批审查的共同步骤。**静态事实与模型表述分开处理**。
+静态分析先给出可审查事实；Agent 作为可选增强读取结构化输入，最终统一进入展示与导出。
 
-- 项目、目录和文件审查按范围读取源码，再生成结构化报告。
-- 图中的补充上下文用于本地 Skill。分批审查按模型预算切片，校验通过后再计入进度。
+---
+
+### 3.5.3 智能体技术设计 · Agent 内部流程
+
+```mermaid
+flowchart LR
+    A["加载上下文<br/>静态事实、IR、缓存与检查点"] --> B{"已有可复用结果？"}
+
+    B -- "是" --> H["汇总并输出<br/>最终校验与记忆写回"]
+    B -- "否" --> C["规划与切片<br/>确定目标并构造证据上下文"]
+
+    C --> D["模型解读与校验<br/>生成并校验逻辑、设计与风险"]
+    D --> E{"证据与引用充分？"}
+
+    E -- "否" --> F["补充一次上下文"]
+    F --> D
+    E -- "是" --> G{"还有下一步骤？"}
+
+    G -- "是" --> C
+    G -- "否" --> H
+
+    classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
+    classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
+    classDef repair fill:#4b3040,stroke:#9f7282,color:#fff;
+    classDef output fill:#285d6b,stroke:#71a9b8,color:#fff;
+
+    class A input;
+    class B,E,G decision;
+    class F repair;
+    class C,D,H output;
+```
+
+缓存属于 Agent 记忆：流程开始时读取，完成后写回；证据不足只补一次上下文。
 
 ---
 
@@ -264,8 +285,6 @@ flowchart LR
 
 ### 3.5.4 数据库设计
 
-本机 SQLite 保存项目历史与检查点，网页同步版用服务端 SQLite 按账号保存记录。
-
 ```mermaid
 erDiagram
     PROJECT ||--o{ ANALYSIS : contains
@@ -316,18 +335,13 @@ td {
 |---|---|
 | <img src="./images/overview.png" alt="当前项目总览，显示演示项目的静态分析结果" height="110" /> | <img src="./images/risk-list.png" alt="当前风险评估页，等待逻辑解读完成" height="110" /> |
 
-截图来自本机工作台导入 `codelens-demo` 后的实测。总览中的 30 条为静态问题，AI 风险评估在逻辑解读完成后生成。
-
 ---
 
 ## 3.6 软件质量
 
 ### 3.6.1 质量控制和保证方法
-
 结构化脱敏日志，unittest 与 Vitest 回归测试，以及带标签样例的 SOLID 基准。
-
 ### 3.6.2 质量工具使用
-
 Pylint 静态检查结果：
 
 ![IDE 的 Pylint 与类型检查截图](./images/pylint.png)

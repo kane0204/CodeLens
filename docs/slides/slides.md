@@ -173,28 +173,39 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A["导入并静态分析<br/>AST、IR、指标、Finding"] --> B{"启用 Agent？"}
+    A["导入项目"] --> B{"文件语言？"}
+    B -- "Python" --> P["engine.analyze()<br/>AST、CFG、def-use"]
+    B -- "其他语言" --> G["generic.analyze_record()<br/>词法、结构、依赖"]
 
-    B -- "否" --> S["静态报告"]
-    B -- "是" --> E["Agent 审查<br/>输入：静态事实与 IR 切片<br/>复用已有记忆"]
-    E --> R["结构化审查结果"]
-    R --> M["合并审查结果"]
+    P --> R["rules.merge()<br/>生成并统一 Finding"]
+    G --> R
+    P --> Q["quality.apply()<br/>health.apply()<br/>类指标与健康度"]
+    P --> S["sequence.build()<br/>special.build()<br/>调用序列与专项风险"]
 
-    S --> G["展示、回查与导出"]
-    M --> G
+    R --> F["静态处理结果"]
+    Q --> F
+    S --> F
+
+    F --> H{"启用 Agent？"}
+    H -- "否" --> T["静态报告"]
+    H -- "是" --> E["Agent 审查<br/>输入：静态事实与 IR 切片<br/>复用已有记忆"]
+    E --> U["结构化审查结果"]
+
+    T --> V["展示、回查与导出"]
+    U --> V
 
     classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
     classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
     classDef agent fill:#285d6b,stroke:#71a9b8,color:#fff;
     classDef output fill:#173a63,stroke:#4b78a6,color:#fff;
 
-    class A,S input;
-    class B decision;
+    class A,P,G input;
+    class B,H decision;
     class E agent;
-    class R,M,G output;
+    class R,Q,S,F,T,U,V output;
 ```
 
-静态分析先给出可审查事实；Agent 作为可选增强读取结构化输入，最终统一进入展示与导出。
+Python 走 AST 精确解析；其他语言走通用解析。规则、指标、调用序列和专项风险都汇入同一份静态处理结果。
 
 ---
 
@@ -202,7 +213,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A["加载上下文<br/>静态事实、IR、缓存与检查点"] --> B{"已有可复用结果？"}
+    A["静态处理结果"] --> B{"已有可复用结果？"}
 
     B -- "是" --> H["汇总并输出<br/>最终校验与记忆写回"]
     B -- "否" --> C["规划与切片<br/>确定目标并构造证据上下文"]
@@ -211,7 +222,7 @@ flowchart LR
     D --> E{"证据与引用充分？"}
 
     E -- "否" --> F["补充一次上下文"]
-    F --> D
+    F --> A
     E -- "是" --> G{"还有下一步骤？"}
 
     G -- "是" --> C

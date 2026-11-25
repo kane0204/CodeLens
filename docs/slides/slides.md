@@ -169,64 +169,78 @@ flowchart LR
 
 ---
 
-### 3.5.3 智能体技术设计 · 端到端流程
+### 3.5.3 总工作流
 
 ```mermaid
 flowchart LR
-    A["导入项目"] --> B{"文件语言？"}
-    B -- "Python" --> P["engine.analyze()<br/>AST、CFG、def-use"]
-    B -- "其他语言" --> G["generic.analyze_record()<br/>词法、结构、依赖"]
+    subgraph FE["前端"]
+        direction LR
+        A["导入项目"] --> B["提交分析任务"]
+        U["结果展示"] --> X["源码回查与导出"]
+    end
 
-    P --> R["rules.merge()<br/>生成并统一 Finding"]
-    G --> R
-    P --> Q["quality.apply()<br/>health.apply()<br/>类指标与健康度"]
-    P --> S["sequence.build()<br/>special.build()<br/>调用序列与专项风险"]
+    subgraph CORE["后端（静态分析）"]
+        direction LR
+        C["文件识别（结构、语言）"] --> P["Python<br/>：AST(tokenize)"]
+        C --> G["其他语言<br/>：类AST(tokenize)函数"]
+        P --> R["生成IR、CFG、def-use等/定量计算code smell"]
+        G --> R
+        R --> E["切片/静态证据"]
+        E --> S["静态报告"]
+    end
 
-    R --> F["静态处理结果"]
-    Q --> F
-    S --> F
+    subgraph MEM["Agent 与记忆"]
+        direction LR
+        Q{"配置模型？"}
+        AG["Agent处理"]
+        MC["缓存 / 历史线索 / 检查点"]
+        AR["结果合并"]
+        DB[("SQLite<br/>分析历史")]
+    end
 
-    F --> H{"启用 Agent？"}
-    H -- "否" --> T["静态报告"]
-    H -- "是" --> E["Agent 审查<br/>输入：静态事实与 IR 切片<br/>复用已有记忆"]
-    E --> U["结构化审查结果"]
+    B --> C
+    S --> Q
+    Q -- "否" --> U
+    Q -- "是" --> AG
 
-    T --> V["展示、回查与导出"]
-    U --> V
+    AG <--> MC
+    AG --> AR
+    S --> DB
+    AR --> DB
+    DB -. "历史回看" .-> U
+    AR --> U
 
     classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
     classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
     classDef agent fill:#285d6b,stroke:#71a9b8,color:#fff;
     classDef output fill:#173a63,stroke:#4b78a6,color:#fff;
 
-    class A,P,G input;
-    class B,H decision;
-    class E agent;
-    class R,Q,S,F,T,U,V output;
+    class A,B,C,P,G input;
+    class Q decision;
+    class AG,MC agent;
+    class R,E,S,AR,DB,U,X output;
 ```
 
-Python 走 AST 精确解析；其他语言走通用解析。规则、指标、调用序列和专项风险都汇入同一份静态处理结果。
 
 ---
 
-### 3.5.3 智能体技术设计 · Agent 内部流程
+### 3.5.3 Agent工作流：Plan-and-Execute
 
 ```mermaid
 flowchart LR
-    A["静态处理结果"] --> B{"已有可复用结果？"}
+    A["静态处理结果"] --> C["构造上下文"]
+    C --> B{"缓存命中？"}
 
-    B -- "是" --> H["汇总并输出<br/>最终校验与记忆写回"]
-    B -- "否" --> C["规划与切片<br/>确定目标并构造证据上下文"]
+    B -- "是" --> R["输出已有结果"]
+    B -- "否" --> D["模型处理"]
+    D --> E{"（gap函数）校验通过？"}
 
-    C --> D["模型解读与校验<br/>生成并校验逻辑、设计与风险"]
-    D --> E{"证据与引用充分？"}
-
-    E -- "否" --> F["补充一次上下文"]
-    F --> A
-    E -- "是" --> G{"还有下一步骤？"}
+    E -- "否" --> F["补充一次上下文（仅有一次）"]
+    F --> C
+    E -- "是" --> G{"还有下一部分？"}
 
     G -- "是" --> C
-    G -- "否" --> H
+    G -- "否" --> H["输出结果"]
 
     classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
     classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
@@ -236,16 +250,16 @@ flowchart LR
     class A input;
     class B,E,G decision;
     class F repair;
-    class C,D,H output;
+    class C,D,H,R output;
 ```
 
-缓存属于 Agent 记忆：流程开始时读取，完成后写回；证据不足只补一次上下文。
+
 
 ---
 
 ### 3.5.3 智能体 · 任务编排与工具调用
 
-本机 LangGraph 按**阅读 → 综合**编排。单批直接使用源码，多批先生成共享阅读记录。网页在浏览器内运行，并与本机版共用核心审查提示词。
+LangGraph 按**阅读 → 综合**编排。单批直接使用源码，多批先生成共享阅读记录。网页在浏览器内运行，并与本机版共用核心审查提示词。
 
 下表为本机 Skill 接口。每次请求最多处理 **24 个目标**，可补一次上下文。
 
@@ -340,7 +354,6 @@ td {
 
 ### 3.5.6 前端设计
 
-前端使用 React + Vite + Tailwind，导入项目后查看报告并回查源码。
 
 | 项目总览 | AI 风险评估 |
 |---|---|
@@ -370,11 +383,11 @@ img {
 
 ### 模块数
 
-当前工作区的 `code/`、`codelens-prototype/src/` 和 `deploy/sync/` 共 **68 个 Python / TypeScript 源文件**。
+ 共 **68 个 Python / TypeScript 源文件**。
 
 ### 行数
 
-合计 **16,045 个物理行**，含空行和注释。
+合计 **16,045 行**
 
 | 后端代码统计 | 前端代码统计 |
 |---|---|

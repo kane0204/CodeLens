@@ -105,13 +105,13 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 
 ## 3.2 技术选型
 
-| 条目 | 技术 | 版本 |
-|---|---|---|
+| 条目 | 技术 | 版本 | 备注 |
+|---|---|---|---|
 | 语言 | Python / TypeScript | 本机 Python 3.11+ / TS `~5.7.2` | 共用静态核心与前端类型定义 |
 | 后端 | FastAPI / Uvicorn | 见依赖文件 | 本机分析与审查 API，网页历史同步 |
 | 前端 | React + Vite | `^18.3.1` / `^6.0.5` | 组件化界面与构建 |
 | 样式 / 网页引擎 | Tailwind / Pyodide | `^4.1.7` / `0.27.7` | 网页界面与浏览器内静态分析 |
-| 数据库 | SQLite | Python 标准库 | 持久化本机与网页历史 |
+| 数据库 | PostgreSQL | 16 | 持久化本机与网页历史 |
 | 测试 | unittest + Vitest | 标准库 / `^5.1.0` | 覆盖引擎、接口与前端 |
 
 ---
@@ -156,16 +156,9 @@ flowchart LR
     API --> AI["用户配置的模型服务"]
     U -->|网页 AI 审查| AI
     U -->|网页 HTTPS| SYNC["Nginx 静态托管<br/>FastAPI 历史同步"]
-    SYNC --> DB[("SQLite 账号历史")]
+    SYNC --> DB[("PostgreSQL 账号历史")]
 ```
 
----
-
-### 3.5.2 基础设施图
-
-本机接口校验 Host、Origin 和 Token。启用网页 AI 后，浏览器直接请求模型服务。历史与检查点通过 HTTPS 按账号同步。
-
-本项目按单机服务部署，不单独绘制基础设施图。
 
 ---
 
@@ -195,7 +188,7 @@ flowchart LR
         AG["Agent处理"]
         MC["缓存 / 历史线索 / 检查点"]
         AR["结果合并"]
-        DB[("SQLite<br/>分析历史")]
+        DB[("PostgreSQL<br/>分析历史")]
     end
 
     B --> C
@@ -254,41 +247,9 @@ flowchart LR
 ```
 
 
-
 ---
 
-### 3.5.3 智能体 · 任务编排与工具调用
-
-LangGraph 按**阅读 → 综合**编排。单批直接使用源码，多批先生成共享阅读记录。网页在浏览器内运行，并与本机版共用核心审查提示词。
-
-下表为本机 Skill 接口。每次请求最多处理 **24 个目标**，可补一次上下文。
-
-| 方法 | 职责 |
-|---|---|
-| `candidates` | 确定性排序候选目标 |
-| `context` | 从 IR 切片结构化事实 |
-| `gap` / `repair` | 判断证据是否够，补一次上下文 |
-| `render` | 确定性模板产出 |
-| `prompt` | 将切片事实组装成模型提示 |
-
----
-
-### 3.5.3 智能体 · 记忆与护栏
-
-**本机与网页记忆**
-
-- 本机 Skill 有 256 条进程内 LRU 缓存。分批审查用 SQLite 保存阅读批次和报告，支持按指纹恢复。
-- 网页通过 IndexedDB 暂存待同步记录，服务端 SQLite 按账号保存历史和续跑检查点。
-
-**证据与输出校验**
-
-- 本机 Skill 校验信封、条目和证据引用，过滤无法解析的条目。
-- 分批审查校验输出结构和引用的文件与行号范围。部分格式或输出超限错误会重试。
-- 分批审查失败时显示错误，静态结果继续可用。
-
----
-
-### 3.5.3 智能体 · 项目事实、结构关系与记忆如何协作 ★
+### 3.5.3 智能体 · 项目事实、结构关系与记忆如何协作
 
 ```mermaid
 flowchart LR
@@ -304,7 +265,6 @@ flowchart LR
 - **结构关系**包括类关系、依赖关系与静态调用序列。
 - **上下文获取**按目标切片，或按项目、目录、文件范围分批读取。
 - **记忆**保存可复用的阅读批次和报告。
-- 分析引擎生成结构关系。审查流程读取切片和检查点。
 
 ---
 
@@ -312,10 +272,12 @@ flowchart LR
 
 ```mermaid
 erDiagram
-    PROJECT ||--o{ ANALYSIS : contains
-    PROJECT ||--o{ PROJECT_CHECKPOINT : stores
-    ANALYSIS }o--|| VERSION : uses
-    REVIEW_CHECKPOINT
+    direction LR
+    PROJECT ||--o{ VERSION : "本机项目版本"
+    VERSION ||--o{ ANALYSIS : "分析历史"
+    PROJECT ||--o{ PROJECT_CHECKPOINT : "项目检查点"
+    ACCOUNTS ||--o{ RUNS : "账号审查历史"
+    RUNS ||--o{ CHECKPOINTS : "续跑检查点"
 ```
 
 <style>
@@ -332,10 +294,10 @@ erDiagram
 |---|---|---|---|---|
 | `GET /api/status` | 获取服务状态 | 无 | 版本、能力、令牌和凭据状态 | 页面初始化 |
 | `POST /api/analyze` | 项目静态分析 | 项目名称、源码文件列表 | 文件、函数、指标、问题和结构关系 | 核心业务接口 |
-| `POST /api/review` | AI 项目审查 | 源码、审查范围、模型配置 | `progress`、`result`、`error` 事件流 | 流式返回，支持续跑 |
+| `POST /api/review` | AI 项目审查 | 源码、审查范围、模型配置、`source_consent: true` | `progress`、`result`、`error` 事件流 | 流式返回，支持续跑 |
 | `POST /api/review/cached` | 获取缓存审查结果 | 与项目审查相同的输入 | 已完成的审查结果或空结果 | 避免重复调用模型 |
-| `POST /api/explain` | 单文件逻辑解读 | 源码、目标函数、上下文开关 | 逻辑说明和源码引用 | 兼容保留接口 |
-| `POST /api/sync/*` | 历史与检查点同步 | 账号、历史记录或检查点 | 同步状态和同步结果 | 网页部署版使用 |
+| `POST /api/explain` | 单文件逻辑解读 | 源码、目标函数、上下文开关、`source_consent: true` | 逻辑说明和源码引用 | 兼容保留接口 |
+| `/api/sync/*` | 历史与检查点同步 | 账号、历史记录或检查点 | 同步状态和同步结果 | 网页部署版使用 |
 
 
 <style>
@@ -364,8 +326,11 @@ td {
 ## 3.6 软件质量
 
 ### 3.6.1 质量控制和保证方法
-结构化脱敏日志，unittest 与 Vitest 回归测试，以及带标签样例的 SOLID 基准。
+
+日志，unittest 与 Vitest 测试
+
 ### 3.6.2 质量工具使用
+
 Pylint 静态检查结果：
 
 ![IDE 的 Pylint 与类型检查截图](./images/pylint.png)

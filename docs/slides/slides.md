@@ -147,119 +147,28 @@ img {
 
 ### 3.5.1 系统架构图
 
-```mermaid
-flowchart LR
-    U["React 工作台"] -->|本机版| API["FastAPI / LangGraph"]
-    U -->|网页版| WEB["Worker / Pyodide"]
-    API --> CORE["静态分析核心"]
-    WEB --> CORE
-    API --> AI["用户配置的模型服务"]
-    U -->|网页 AI 审查| AI
-    U -->|网页 HTTPS| SYNC["Nginx 静态托管<br/>FastAPI 历史同步"]
-    SYNC --> DB[("PostgreSQL 账号历史")]
-```
+<img src="./images/system-architecture.png" alt="系统架构图" style="display:block;width:100%;max-height:470px;object-fit:contain;margin:auto;" />
 
 
 ---
 
 ### 3.5.3 总工作流
 
-```mermaid
-flowchart LR
-    subgraph FE["前端"]
-        direction LR
-        A["导入项目"] --> B["提交分析任务"]
-        U["结果展示"] --> X["源码回查与导出"]
-    end
-
-    subgraph CORE["后端（静态分析）"]
-        direction LR
-        C["文件识别（结构、语言）"] --> P["Python<br/>：AST(tokenize)"]
-        C --> G["其他语言<br/>：类AST(tokenize)函数"]
-        P --> R["生成IR、CFG、def-use等/定量计算code smell"]
-        G --> R
-        R --> E["切片/静态证据"]
-        E --> S["静态报告"]
-    end
-
-    subgraph MEM["Agent 与记忆"]
-        direction LR
-        Q{"配置模型？"}
-        AG["Agent处理"]
-        MC["缓存 / 历史线索 / 检查点"]
-        AR["结果合并"]
-        DB[("PostgreSQL<br/>分析历史")]
-    end
-
-    B --> C
-    S --> Q
-    Q -- "否" --> U
-    Q -- "是" --> AG
-
-    AG <--> MC
-    AG --> AR
-    S --> DB
-    AR --> DB
-    DB -. "历史回看" .-> U
-    AR --> U
-
-    classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
-    classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
-    classDef agent fill:#285d6b,stroke:#71a9b8,color:#fff;
-    classDef output fill:#173a63,stroke:#4b78a6,color:#fff;
-
-    class A,B,C,P,G input;
-    class Q decision;
-    class AG,MC agent;
-    class R,E,S,AR,DB,U,X output;
-```
+<img src="./images/total-workflow.png" alt="总工作流" style="display:block;width:100%;max-height:430px;object-fit:contain;margin:auto;" />
 
 
 ---
 
 ### 3.5.3 Agent工作流：Plan-and-Execute
 
-```mermaid
-flowchart LR
-    A["静态处理结果"] --> C["构造上下文"]
-    C --> B{"缓存命中？"}
-
-    B -- "是" --> R["输出已有结果"]
-    B -- "否" --> D["模型处理"]
-    D --> E{"（gap函数）校验通过？"}
-
-    E -- "否" --> F["补充一次上下文（仅有一次）"]
-    F --> C
-    E -- "是" --> G{"还有下一部分？"}
-
-    G -- "是" --> C
-    G -- "否" --> H["输出结果"]
-
-    classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
-    classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
-    classDef repair fill:#4b3040,stroke:#9f7282,color:#fff;
-    classDef output fill:#285d6b,stroke:#71a9b8,color:#fff;
-
-    class A input;
-    class B,E,G decision;
-    class F repair;
-    class C,D,H,R output;
-```
+<img src="./images/agent-workflow.png" alt="Agent工作流" style="display:block;width:100%;max-height:430px;object-fit:contain;margin:auto;" />
 
 
 ---
 
 ### 3.5.3 智能体 · 项目事实、结构关系与记忆如何协作
 
-```mermaid
-flowchart LR
-    IR["静态事实与源码"] --> G["结构关系与风险线索"]
-    G --> R["按目标切片或按范围分批"]
-    R --> M["模型表述"]
-    M --> V["报告校验"]
-    V --> MEM[("缓存 / 检查点")]
-    MEM -.续跑复用.-> R
-```
+<img src="./images/knowledge-flow.png" alt="项目事实、结构关系与记忆协作" style="display:block;width:100%;max-height:430px;object-fit:contain;margin:auto;" />
 
 - **知识来源**包括本次导入的源码、逻辑模型、指标和规则命中。
 - **结构关系**包括类关系、依赖关系与静态调用序列。
@@ -270,21 +179,7 @@ flowchart LR
 
 ### 3.5.4 数据库设计
 
-```mermaid
-erDiagram
-    direction LR
-    PROJECT ||--o{ VERSION : "本机项目版本"
-    VERSION ||--o{ ANALYSIS : "分析历史"
-    PROJECT ||--o{ PROJECT_CHECKPOINT : "项目检查点"
-    ACCOUNTS ||--o{ RUNS : "账号审查历史"
-    RUNS ||--o{ CHECKPOINTS : "续跑检查点"
-```
-
-<style>
-.mermaid svg {
-  max-height: 330px !important;
-}
-</style>
+<img src="./images/database-er.png" alt="数据库关系图" style="display:block;width:100%;max-height:430px;object-fit:contain;margin:auto;" />
 
 ---
 

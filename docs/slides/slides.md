@@ -1,6 +1,7 @@
 ---
 theme: seriph
 title: CodeLens 项目答辩
+background: '#ffffff'
 preloadImages: false
 ---
 

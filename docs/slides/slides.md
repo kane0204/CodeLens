@@ -30,11 +30,23 @@ Make Code Visible.
 
 ### 1.1.4 如何获得用户
 
-- 与高校开发者社团、开源项目合作；
-- 在 GitHub、掘金、抖音和 B 站发布推广与使用教程。
+- 首批用户来自高校开发者社团、开源项目和 AI 编程社群；
+- 用免费项目扫描和可分享的审查报告获客，按“渠道触达—首次扫描—团队采用”跟踪转化；
+- 个人版建立口碑，后续通过团队版、私有部署和定制规则探索商业化。
+
+---
 
 ### 1.1.5 团队优势
-重视结果可信、贴近真实用户
+
+苏州大学计算机学院课程小组，具备代码分析工具和 Web 应用的完整开发能力。
+
+| 方面 | 现有基础 |
+|---|---|
+| 技术 | Python / TypeScript、静态分析、React / Vite、FastAPI |
+| 协作 | Git / GitHub、Pull Request、GitHub Actions 持续集成 |
+| 产品 | 真实演示项目、确定可复现的静态结果、源码证据链 |
+
+小团队迭代快，能根据真实项目反馈校准规则并持续改进。
 
 ---
 
@@ -77,7 +89,7 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 
 ### 1.2.3 解决方案
 
-网站
+**Web 应用**：用户导入项目文件夹后，系统完成静态分析、逻辑解读、设计检查和风险评估，输出可回查源码行的报告，并支持历史记录与报告导出。
 
 ---
 
@@ -121,14 +133,9 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 
 代码仓库：https://github.com/kane0204/CodeLens
 
-![GitHub Pulse 历史截图](./images/pulse.png)
+项目使用 Git 和 GitHub 管理版本，`main` 分支持续接收团队提交；GitHub Actions 自动执行后端测试、前端测试和构建检查，Pulse 截图作为团队协作与持续提交的证据。
 
-<style>
-img {
-  max-height: 430px !important;
-  object-fit: contain !important;
-}
-</style>
+<img src="./images/pulse.png" alt="GitHub Pulse 历史截图" style="display:block;width:auto;max-width:100%;max-height:340px;object-fit:contain;margin:auto;" />
 
 ---
 

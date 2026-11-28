@@ -409,7 +409,7 @@ flowchart LR
 | **记忆** | `code/ai/review_store.py`<br/>`code/backend/history.py` | PostgreSQL 检查点 + 阅读单元缓存 + 分层摘要 | 断点恢复和未变源码复用 |
 | **知识** | `code/core_engine/` | 本地 AST等、调用图、依赖图、复杂度指标 | 提供结构化事实和源码位置 |
 | **执行与可靠性** | `code/backend/asgi.py`<br/>`code/ai/explanation.py` | NDJSON 进度流、有限重试、断点续跑 | 展示审查进度并从异常中恢复；失败时保留已有静态结果 |
-| **安全护栏** | `code/backend/credentials.py`<br/>`code/backend/observability.py`<br/>`code/ai/contract.py` | `source_consent` 授权、系统 `keyring` 密钥管理、证据校验、日志脱敏 | 未经授权不发送源码，不泄露密钥，丢弃无证据结论，不执行或修改目标代码 |
+| **安全护栏** | `code/backend/credentials.py`<br/>`code/backend/observability.py`<br/>`code/ai/contract.py` | `source_consent` 授权、系统 `keyring` 密钥管理、gap函数（逻辑解读是否拿到了函数语句和控制流、风险审查是否存在可复核的 findings）、日志脱敏 | 未经授权不发送源码，不泄露密钥，丢弃无证据结论，不执行或修改目标代码 |
 
 <style>
 table {

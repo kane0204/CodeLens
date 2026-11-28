@@ -378,7 +378,10 @@ def _block_edges(edges, block_of):
 
 
 def build_control_flow(node):
-    """为一个函数/方法构建控制流。返回可直接放进 JSON 的紧凑结构。"""
+    """以函数为边界建立控制流，并把直行语句合并为可序列化的基本块。
+
+    语句过多时返回未覆盖原因和实际语句数，避免把缺省控制流误认为没有分支。
+    """
     statements = [item for item in own_walk(node) if isinstance(item, ast.stmt)]
     if len(statements) > MAX_FLOW_STATEMENTS:
         return {"available": False,
@@ -445,7 +448,10 @@ def _record_parameters(node, defs):
 
 
 def build_def_use(node):
-    """函数内变量的定义点与使用点。只统计 Name，属性/下标读写不计。"""
+    """按变量名收集同一函数的定义与读取位置，形参视为入口处定义。
+
+    结果供证据引用。它记录出现位置，不判断运行时某次读取取到了哪个定义。
+    """
     defs, uses = {}, {}
     params = _record_parameters(node, defs)
     for item in own_walk(node):

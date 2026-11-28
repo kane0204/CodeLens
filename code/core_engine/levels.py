@@ -7,6 +7,7 @@ finding contract the single source of truth for its vocabulary.
 from __future__ import annotations
 
 # --- Rule ids -------------------------------------------------------------
+# 规则 ID 会被报告、历史比较和证据引用使用。修改中文说明时保留既有 ID。
 
 RULE_CC = "CC-01"
 RULE_LEN = "LEN-01"

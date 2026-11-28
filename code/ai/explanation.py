@@ -1,4 +1,9 @@
-"""On-demand natural-language source explanations. No template fallback."""
+"""按需生成源码解释和项目审查。
+
+项目审查先准备源码和静态事实，再分批阅读、综合各章节。检查点记录
+已完成的批次与章节，便于续跑。模型失败会明确报错，避免生成误导性的替代结论。
+"""
+from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
@@ -66,6 +71,7 @@ def _analyze_review_input(source_payload):
 
 
 def _review_input(payload):
+    """同一份源码在缓存命中查询和审查启动时可复用静态分析结果。"""
     source = {"files": payload.get("files"), "project": payload.get("project")}
     try:
         serialized = json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -166,13 +172,17 @@ def context_for(result, record, start, end, enabled=True):
 
 
 def citations_for(text, ranges, default_file):
+    """提取带有文本位置的源码引用，只有完整落在已提供片段内才标记为有效。"""
+    ranges_by_file = defaultdict(list)
+    for item in ranges:
+        ranges_by_file[item["file"]].append((item["line"], item["end_line"]))
     citations = []
     pattern = r'\[([^\]\n]+?):L(\d+)(?:-L?(\d+))?\]|第\s*(\d+)\s*(?:[–—-]\s*(\d+)\s*)?行'
     for match in re.finditer(pattern, text):
         path = match.group(1) or default_file
         start = int(match.group(2) or match.group(4))
         end = int(match.group(3) or match.group(5) or start)
-        valid = any(r['file'] == path and r['line'] <= start <= end <= r['end_line'] for r in ranges)
+        valid = any(first <= start <= end <= last for first, last in ranges_by_file.get(path, ()))
         citations.append({'start': match.start(), 'end': match.end(), 'file': path, 'line': start,
                           'end_line': end, 'valid': valid, 'label': match.group(0)})
     return citations
@@ -203,7 +213,9 @@ def _retry_delay(headers, attempt):
 
 
 def _read_model_response(request):
+    """重试短暂传输失败和可重试 HTTP 状态，最多发起三次请求。"""
     for attempt in (1, 2, 3):
+        # 每次重试单独构建 opener，并始终禁止将模型请求重定向到其他地址。
         opener = urllib.request.build_opener(NoRedirect())
         try:
             with opener.open(request, timeout=_CHAT_TIMEOUT) as response:
@@ -302,6 +314,7 @@ def _line_pieces(line, limit):
 
 
 def _file_segments(record, budget=None):
+    """按预算切分单文件，保留原行号，让模型引用能映射回源码。"""
     path = record["path"]
     budget = MAX_PROJECT_BATCH_CHARS if budget is None else budget
     limit = budget - min(_text_size(path) + 128, budget - 32)
@@ -354,6 +367,7 @@ def _project_units(records, budget=None):
 
 
 def _unit_cache_key(unit, project, endpoint, model):
+    """按单元内容和模型配置隔离缓存，允许项目中未变化的单元复用阅读结果。"""
     return "unit:" + hashlib.sha256(json.dumps({
         "version": "review-unit-v1",
         "project": project,
@@ -815,6 +829,7 @@ def _summary_material(notes, context, done, total, budget):
 
 
 def _review_synthesize(state: _ReviewState, runtime: Runtime[_ReviewContext]):
+    """按章节综合阅读材料。检查点中已有的章节直接复用。"""
     context = runtime.context
     fields = tuple(state["facts"])
     read_steps = len(state["batches"]) if len(state["batches"]) > 1 else 0
@@ -905,6 +920,7 @@ def _generate_review_section(context, system, prompt, field, done, total):
 
 
 def _build_review_graph():
+    """固定阅读与综合的依赖顺序。切分、压缩和重试由节点内部负责。"""
     graph = StateGraph(_ReviewState, context_schema=_ReviewContext)
     graph.add_node("read", _review_read)
     graph.add_node("synthesize", _review_synthesize)
@@ -933,6 +949,7 @@ def review(payload, result=None, progress=None, store=None, *, memory=(), histor
 
 
 def _claim_review_job(fingerprint, store=None):
+    """在同一把锁内判断缓存命中或执行归属，避免同指纹重复调用模型。"""
     with _REVIEW_LOCK:
         job = _REVIEW_JOBS.get(fingerprint) or _restore_job(store, fingerprint)
         if job is not None and job.status == "done":
@@ -965,6 +982,7 @@ def cached_review(payload, store, *, memory=(), history_project=None):
 
 
 def _restore_job(store, fingerprint):
+    """从磁盘恢复进度。未完成的检查点保留已有数据，供下一次请求续跑。"""
     checkpoint = _load_checkpoint(store, fingerprint)
     if checkpoint is None:
         return None

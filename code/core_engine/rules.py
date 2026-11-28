@@ -307,6 +307,7 @@ def evaluate(result):
     finding 的结构与 `engine.findings` 完全一致（含 rule_id/severity/file/line/
     message/suggestion/evidence_type/actual/threshold/confidence），只是没有 `id`——
     合并时由 `merge()` 统一重编号，保证全文 id 唯一且稳定。
+    规则按可获得的 AST 与关系证据评估，证据不足通过 notes 和覆盖统计说明。
     """
     if not isinstance(result, dict):
         raise ValueError("补充规则需要 analyze() 的结果对象")

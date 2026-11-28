@@ -3,13 +3,12 @@
 两种实现，契约完全相同——都只返回"未校验的信封"，合法性由 `contract.validate_skill_result()`
 判定，所以换模型不会换掉安全边界。
 
-1. `TemplateProvider`：确定性模板，默认启用，不需要网络与密钥。
-   同一份输入必须得到逐字节相同的输出，这是 `test_ai_golden.py` 的对拍基准。
-2. `HttpProvider`：OpenAI 兼容的 `/chat/completions`，**必须由环境变量显式开启**。
-   失败（超时、非 200、JSON 不合法）一律降级为模板，不会让整个请求失败。
+1. `TemplateProvider`：从 Skill 的上下文生成确定性结果，无需网络和密钥。
+2. `HttpProvider`：从构造参数或环境变量读取配置，发送 OpenAI 兼容请求。
+   HTTP 或响应格式错误由调用方处理，Skill Runner 可回退到模板。
 
-外部模型拿到的 prompt 里只有已切片的结构化事实，没有源码全文，也没有文件系统路径
-以外的信息；模型返回的每个引用都要重新在 IR 上解析，解析不了就丢弃。
+发给模型的材料由 Skill 自行组装，可能包含相对路径和源码片段。返回的
+证据引用仍须由调用方对照 IR 校验，才能成为报告的一部分。
 """
 from __future__ import annotations
 
@@ -84,7 +83,7 @@ class TemplateProvider(Provider):
 
 
 class HttpProvider(Provider):
-    """OpenAI 兼容接口。默认关闭，由 `frontend` 明确配置环境变量后才参与。"""
+    """通过 OpenAI 兼容接口改写 Skill 提供的分析材料。"""
 
     id = "openai-compatible"
     kind = "http"
@@ -102,6 +101,7 @@ class HttpProvider(Provider):
         return bool(self.endpoint and self.model and self.api_key)
 
     def produce(self, skill, ctx):
+        """先读取兼容协议的正文，再提取 Skill 规约所需的 JSON 对象。"""
         if not self.available():
             raise ProviderError("外部模型未配置完整")
         body = {
@@ -115,20 +115,30 @@ class HttpProvider(Provider):
         request.add_header("Authorization", "Bearer " + self.api_key)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw_bytes = response.read(MAX_RESPONSE_BYTES)
+                # 多读一字节，才能区分正常达到上限和响应被截断。
+                raw_bytes = response.read(MAX_RESPONSE_BYTES + 1)
         except (urllib.error.URLError, OSError, ValueError) as exc:
             raise ProviderError("请求外部模型失败：" + str(exc)[:120])
-        try:
-            envelope = json.loads(raw_bytes.decode("utf-8", "replace"))
-            text = envelope["choices"][0]["message"]["content"]
-        except (ValueError, KeyError, IndexError, TypeError):
-            raise ProviderError("外部模型响应结构不符合 chat/completions 约定")
-        raw = contract.extract_json_object(text)
+        raw = contract.extract_json_object(_response_text(raw_bytes))
         raw.setdefault("skill", skill.id)
         raw.setdefault("target", ctx["ref"])
         raw["generator"] = {"provider": self.id, "model": self.model,
                             "prompt_version": skill.prompt_version}
         return raw, {"attempts": 1, "provider": self.id}
+
+
+def _response_text(raw_bytes):
+    """校验模型响应大小与正文类型，统一以 ProviderError 报告协议错误。"""
+    if len(raw_bytes) > MAX_RESPONSE_BYTES:
+        raise ProviderError("外部模型响应过大")
+    try:
+        envelope = json.loads(raw_bytes.decode("utf-8", "replace"))
+        text = envelope["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise ProviderError("外部模型响应结构不符合 chat/completions 约定") from None
+    if not isinstance(text, str):
+        raise ProviderError("外部模型响应结构不符合 chat/completions 约定")
+    return text
 
 
 def candidates():

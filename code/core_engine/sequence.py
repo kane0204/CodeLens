@@ -74,12 +74,13 @@ def _build_file_steps(path, module, ordered, functions_by_file, max_steps):
 
 
 def _collect_participants(files):
+    # 字典去重同时保留首次出现的顺序，避免参与者增多后反复扫描列表。
     participants = []
     for entry in files:
         for name in [entry["module"]] + [s["participant"] for s in entry["steps"]]:
-            if name and name not in participants:
+            if name:
                 participants.append(name)
-    return participants
+    return list(dict.fromkeys(participants))
 
 
 def build(result, max_steps=MAX_STEPS_PER_FILE):

@@ -62,7 +62,11 @@ def _split(payload, sep, count):
 
 
 class Index:
-    """对一次 `analyze()` 结果建立的只读索引。构造后不再修改。"""
+    """按路径、符号和证据类型索引一次分析的静态结果。
+
+    切片和引用解析复用同一份结果及其行号。调用方应将结果视为只读，
+    避免索引中的关联与原报告字段发生偏移。
+    """
 
     def __init__(self, result):
         if not isinstance(result, dict):

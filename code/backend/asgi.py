@@ -68,6 +68,7 @@ class RequestError(Exception):
 
 
 def _guard(request):
+    """仅接受本机 Host。POST 还要求 Origin 与工作台令牌同时匹配。"""
     port = request.scope["server"][1]
     hosts = {f"localhost:{port}", f"127.0.0.1:{port}"}
     if request.headers.get("host") not in hosts:
@@ -82,13 +83,25 @@ def _guard_post(request, hosts):
         raise RequestError(403, "请从本机 CodeLens 页面发起分析")
 
 
+def _guard_content_length(declared):
+    """提前拒绝无效或超限的声明。省略该头时由流式读取检查。"""
+    if declared is None:
+        return
+    try:
+        length = int(declared)
+    except ValueError:
+        raise RequestError(400, "Content-Length 无效") from None
+    if not 0 < length <= core.MAX_BODY:
+        raise RequestError(413, "请求超过 12 MB 或为空")
+
+
 async def _read_payload(request: Request):
+    """在时间和字节预算内读取 JSON，提前拒绝声明过大的请求。"""
     if request.headers.get("content-type", "").split(";")[0] != "application/json":
         raise RequestError(415, "仅支持 JSON 请求")
-    declared = request.headers.get("content-length")
-    if declared is not None and not 0 < int(declared) <= core.MAX_BODY:
-        raise RequestError(413, "请求超过 12 MB 或为空")
+    _guard_content_length(request.headers.get("content-length"))
     body = bytearray()
+    # 即使没有 Content-Length，也按已收到的字节数执行同一个上限。
     async with asyncio.timeout(30):
         async for chunk in request.stream():
             if len(body) + len(chunk) > core.MAX_BODY:
@@ -100,6 +113,7 @@ async def _read_payload(request: Request):
 
 
 def _error(request, exc):
+    """映射已知业务错误，内部错误由响应中的请求编号关联日志。"""
     if isinstance(exc, RequestError):
         return exc.status, str(exc)
     if isinstance(exc, core.explanation.ExplanationError):
@@ -138,6 +152,7 @@ async def _observe(request, call_next):
 
 
 def _produce_review(request, payload, store, emit, history):
+    """在线程内运行同步审查，将进度和终态交给流式响应。"""
     logger = obs.get_logger()
     rid = request.state.request_id
     obs.log_event(logger, logging.INFO, "review.start", request_id=rid)
@@ -168,11 +183,13 @@ def _produce_review(request, payload, store, emit, history):
 
 
 async def _review_stream(request, payload, store, history=None):
+    """连接同步模型调用与异步 NDJSON 响应。每一行是独立 JSON 事件。"""
     loop = asyncio.get_running_loop()
     events = asyncio.Queue()
     stopped = threading.Event()
 
     def emit(event):
+        # asyncio.Queue 由事件循环管理，审查线程只安排入队回调。
         if stopped.is_set():
             raise BrokenPipeError()
         loop.call_soon_threadsafe(events.put_nowait, event)
@@ -191,6 +208,7 @@ async def _review_stream(request, payload, store, history=None):
         while (event := await events.get()) is not None:
             yield json.dumps(event, ensure_ascii=False) + "\n"
     finally:
+        # 取消协程不会强制终止已开始的同步调用，由后续 emit 通知线程停止。
         stopped.set()
         worker.cancel()
 

@@ -29,6 +29,7 @@ import secrets
 import sys
 import threading
 import traceback
+from collections import deque
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -119,6 +120,7 @@ class _PrivacyFilter(logging.Filter):
     """Last line of defence: every outgoing record is sanitised."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # 先合并参数再脱敏，清空 args 避免 handler 二次格式化原始参数。
         record.msg = redact(record.getMessage(), 1000)
         record.args = ()
         return True
@@ -221,9 +223,14 @@ def flush_all(logger: logging.Logger) -> None:
 
 def exception_summary(exc: BaseException) -> dict[str, str]:
     """Type + sanitised message + frame names. Never includes source lines."""
-    frames = traceback.extract_tb(exc.__traceback__)[-6:]
+    # 从 traceback 直接读取元数据，避免查找源码行或生成完整堆栈。
+    frames = deque(
+        ((frame.f_code.co_filename, frame.f_code.co_name, line)
+         for frame, line in traceback.walk_tb(exc.__traceback__)),
+        maxlen=6,
+    )
     chain = ";".join(
-        f"{Path(frame.filename).name}:{frame.name}:{frame.lineno}" for frame in frames
+        f"{Path(filename).name}:{name}:{line}" for filename, name, line in frames
     )
     return {
         "type": type(exc).__name__,

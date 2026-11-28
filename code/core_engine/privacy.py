@@ -51,7 +51,10 @@ _PATTERNS = (
 
 
 def findings(source, path):
-    """Return sanitized privacy findings for one source file."""
+    """按原始行号生成凭据信息发现，仅记录类型、位置和建议。
+
+    正则匹配只用于判定是否命中，匹配到的值不进入发现对象。
+    """
     results = []
     for line_number, line in enumerate(source.splitlines(), 1):
         for pattern, label, severity, suggestion in _PATTERNS:

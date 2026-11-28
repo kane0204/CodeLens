@@ -8,6 +8,7 @@ import io
 import re
 import tokenize
 from bisect import bisect_left, bisect_right
+from itertools import islice
 from pathlib import PurePosixPath
 
 from . import generic
@@ -463,6 +464,7 @@ def _check_file_count(records):
 
 
 def _load_records(payload):
+    """统一文件路径，过滤排除项并检查导入配额，再按路径排序供后续阶段使用。"""
     records, total, seen, excluded_count = [], 0, set(), 0
     for item in _request_files(payload):
         if not isinstance(item, dict):
@@ -515,6 +517,7 @@ def _parse_nonpython(ctx, record):
 
 
 def _python_code_lines(tree, source):
+    """用词法结果统计有效行，再从 AST 定位并排除文档字符串。"""
     active_lines = code_line_numbers(source)
     for item in ast.walk(tree):
         if not isinstance(item, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -526,11 +529,12 @@ def _python_code_lines(tree, source):
 
 
 def _score_function(ctx, function, active_lines):
+    """利用排序后的行号二分统计长度，另外保留语句级位置供报告引用。"""
     node = ctx.definition_nodes[function["id"]]
     cc = complexity(node)
     function.update(cc=cc, rank=rank(cc), nesting=nesting(node),
                     length=bisect_right(active_lines, node.end_lineno) - bisect_left(active_lines, node.lineno),
-                    params=len(node.args.posonlyargs + node.args.args + node.args.kwonlyargs) +
+                    params=len(node.args.posonlyargs) + len(node.args.args) + len(node.args.kwonlyargs) +
                     bool(node.args.vararg) + bool(node.args.kwarg))
     statements = sorted((s for s in own_walk(node) if isinstance(s, ast.stmt)),
                         key=lambda s: (s.lineno, s.col_offset))
@@ -561,7 +565,8 @@ def _score_python(ctx, record):
     """Parse one Python record and attach symbols, metrics and threshold findings."""
     try:
         tree = ast.parse(record["source"], filename=record["path"], feature_version=(3, 11))
-        if sum(1 for _ in ast.walk(tree)) > 100000:
+        # 第 100001 个节点已足以判定超限，避免继续遍历剩余节点。
+        if next(islice(ast.walk(tree), 100000, None), None) is not None:
             raise ValueError("AST 节点超过 100000 个")
         ctx.trees[record["path"]] = tree
         record["status"] = "ok"
@@ -801,7 +806,11 @@ def _assemble_report(ctx, project, dependencies, cycles):
 
 
 def analyze(payload):
-    """Analyze a project payload. Orchestrates the pipeline stages above."""
+    """加载文件、提取符号、解析跨文件关系，再执行规则和组装报告。
+
+    先收集所有文件的符号再解析关系，因此调用目标可以来自后扫描的文件。
+    单文件解析失败会保留错误记录，已成功分析的文件仍可进入报告。
+    """
     records, excluded_count = _load_records(payload)
     project = str(payload.get("project", "代码项目"))[:120]
     ctx = _AnalysisContext(records, excluded_count)

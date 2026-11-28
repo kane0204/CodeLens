@@ -9,7 +9,7 @@ Design constraints:
 from __future__ import annotations
 
 import re
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from itertools import islice
 from pathlib import PurePosixPath
 
@@ -282,13 +282,14 @@ def _resolve_include(current_path, target, known):
 
 
 def _inner_spans(spans):
-    """Map each function span to the spans strictly nested inside it."""
+    """按起点二分缩小候选范围，只保留严格位于当前函数内部的子函数。"""
     ordered = sorted(spans)
-    inner = {span: [] for span in ordered}
+    starts = [start for start, _ in ordered]
+    inner = {}
     for outer_start, outer_end in ordered:
-        for start, end in ordered:
-            if outer_start < start and end < outer_end:
-                inner[(outer_start, outer_end)].append((start, end))
+        first = bisect_right(starts, outer_start)
+        stop = bisect_left(starts, outer_end)
+        inner[(outer_start, outer_end)] = [span for span in ordered[first:stop] if span[1] < outer_end]
     return inner
 
 
@@ -525,7 +526,11 @@ def _dead_code_findings(functions, calls, path):
 
 
 def analyze_record(record, known_paths):
-    """Return functions/classes/findings/edges for one non-Python record."""
+    """用保留字符偏移的词法掩码识别非 Python 符号、指标和关系。
+
+    花括号与正则只提供近似边界，原始源码用于映射行号和检测行内规则。
+    返回与 Python 分析兼容的记录，让报告可用同一种结构展示。
+    """
     source = record["source"]
     path = record["path"]
     module = record["module"]

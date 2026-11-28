@@ -194,6 +194,7 @@ def _class_metrics(ident, cls, functions, nodes, relations):
 
 
 def _fingerprint(node):
+    """哈希函数体的 AST，排除位置和文档字符串，查找结构完全匹配的实现。"""
     body = node.body[1:] if ast.get_docstring(node, clean=False) is not None else node.body
     if sum(isinstance(n, ast.stmt) for statement in body for n in ast.walk(statement)) < 4:
         return None
@@ -238,6 +239,7 @@ def _project_class_metrics(classes, functions, nodes, relations, parents):
 
 
 def apply(result):
+    """基于已解析的类和可证实的静态关系计算内聚度、耦合度及重复实现。"""
     classes = {c["id"]: c for c in result.get("classes", [])}
     functions = {f["id"]: f for f in result.get("functions", [])}
     nodes, trees = _index_trees(result)

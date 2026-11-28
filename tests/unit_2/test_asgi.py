@@ -146,6 +146,7 @@ class FastApiTests(unittest.IsolatedAsyncioTestCase):
             (403, {b"origin": b"http://example.invalid"}, b"{}"),
             (415, {b"content-type": b"text/plain"}, b"{}"),
             (413, {b"content-length": b"99999999"}, b"{}"),
+            (400, {b"content-length": b"invalid"}, b"{}"),
             (413, {}, b""),
             (400, {}, b"{"),
             (400, {}, b"{}"),

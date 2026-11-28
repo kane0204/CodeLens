@@ -269,6 +269,7 @@ def _qualified(aliases, base):
 
 
 def evaluate(result, nodes):
+    """按已解析继承关系配对基类与实现，生成 LSP、ISP 发现及覆盖说明。"""
     classes = {c["id"]: c for c in result.get("classes", [])}
     parents = {}
     for edge in result.get("graph", {}).get("inheritance", []):

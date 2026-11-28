@@ -61,11 +61,20 @@ class ModelProviderTests(unittest.TestCase):
         self.assertEqual(diagnostics, {"attempts": 1, "provider": self.http.id})
 
     def test_http_provider_reports_malformed_responses(self):
-        for body in (b"invalid JSON", b"{}", b'{"choices": []}'):
+        for body in (b"invalid JSON", b"{}", b'{"choices": []}',
+                     b'{"choices":[{"message":{"content":null}}]}'):
             with self.subTest(body=body), patch("ai.provider.urllib.request.urlopen",
                                                return_value=io.BytesIO(body)):
                 with self.assertRaises(provider.ProviderError):
                     self.http.produce(self.skill, self.ctx)
+
+    def test_http_provider_rejects_oversized_payload_even_with_a_valid_json_prefix(self):
+        content = json.dumps({"claims": [], "outputs": {}})
+        envelope = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+        body = envelope.ljust(provider.MAX_RESPONSE_BYTES + 1)
+        with patch("ai.provider.urllib.request.urlopen", return_value=io.BytesIO(body)):
+            with self.assertRaisesRegex(provider.ProviderError, "响应过大"):
+                self.http.produce(self.skill, self.ctx)
 
     def test_incomplete_configuration_fails_before_network_request(self):
         with patch.dict(os.environ, clear=True), patch("ai.provider.urllib.request.urlopen") as open_url:

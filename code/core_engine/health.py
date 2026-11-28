@@ -15,6 +15,7 @@
 """
 
 from copy import deepcopy
+from heapq import nsmallest
 
 DEFAULT_THRESHOLDS = {"cc": 10, "length": 50, "nesting": 4}
 RATES = {"cc": 2, "length": 3, "nesting": 4}
@@ -70,6 +71,7 @@ def function_score(function, thresholds=None):
         if over <= 0:
             deductions.append({"dimension": dimension, "over": 0, "penalty": 0, "measured": measured})
             continue
+        # 有效行数每超过十行算一档，不足十行也计入一档。
         units = -(-over // 10) if dimension == "length" else over
         penalty = min(CAPS[dimension], RATES[dimension] * units)
         score -= penalty
@@ -121,11 +123,12 @@ def _distribution(numbers):
 
 
 def _health_summary(functions, limits):
+    """统计全部函数的算术平均分。最低分清单只需要前十项。"""
     scored = _score_functions(functions, limits)
     numbers = [f["score"] for f in scored]
     distribution = _distribution(numbers)
     average = round(sum(numbers) / len(numbers)) if numbers else None
-    worst = sorted(scored, key=lambda f: (f["score"], str(f.get("id", ""))))[:10]
+    worst = nsmallest(10, scored, key=lambda f: (f["score"], str(f.get("id", ""))))
     return {
         "available": True,
         "score": average,

@@ -102,6 +102,7 @@ def _rule_categories(findings, nonpython):
 
 
 def build(result):
+    """按风险主题整理静态事实，并在结果中保留各主题的覆盖与截断状态。"""
     if not isinstance(result, dict):
         return {"categories": []}
     findings = [item for item in (result.get("findings") or []) if isinstance(item, dict)]

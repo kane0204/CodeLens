@@ -1,7 +1,6 @@
 ---
 theme: seriph
 title: CodeLens 项目答辩
-background: '#ffffff'
 preloadImages: false
 ---
 
@@ -12,8 +11,6 @@ preloadImages: false
 【光圈】 · 2026 年 11 月
 
 ---
-
-# 1.产品设计
 
 
 ### 1.1.1 使命
@@ -30,23 +27,11 @@ Make Code Visible.
 
 ### 1.1.4 如何获得用户
 
-- 首批用户来自高校开发者社团、开源项目和 AI 编程社群；
-- 用免费项目扫描和可分享的审查报告获客，按“渠道触达—首次扫描—团队采用”跟踪转化；
-- 个人版建立口碑，后续通过团队版、私有部署和定制规则探索商业化。
-
----
+- 与高校开发者社团、开源项目合作；
+- 在 GitHub、掘金、抖音和 B 站发布推广与使用教程。
 
 ### 1.1.5 团队优势
-
-苏州大学计算机学院课程小组，具备代码分析工具和 Web 应用的完整开发能力。
-
-| 方面 | 现有基础 |
-|---|---|
-| 技术 | Python / TypeScript、静态分析、React / Vite、FastAPI |
-| 协作 | Git / GitHub、Pull Request、GitHub Actions 持续集成 |
-| 产品 | 真实演示项目、确定可复现的静态结果、源码证据链 |
-
-小团队迭代快，能根据真实项目反馈校准规则并持续改进。
+具备 Python、TypeScript、React、FastAPI、静态分析和自动化测试能力，采用分工开发与交叉评审协作;真实用户，重视用户体验，能根据真实项目反馈快速校准规则。
 
 ---
 
@@ -89,7 +74,7 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 
 ### 1.2.3 解决方案
 
-**Web 应用**：用户导入项目文件夹后，系统完成静态分析、逻辑解读、设计检查和风险评估，输出可回查源码行的报告，并支持历史记录与报告导出。
+Web 应用
 
 ---
 
@@ -118,8 +103,8 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 
 ## 3.2 技术选型
 
-| 条目 | 技术 | 版本 | 备注 |
-|---|---|---|---|
+| 条目 | 技术 | 版本 |
+|---|---|---|
 | 语言 | Python / TypeScript | 本机 Python 3.11+ / TS `~5.7.2` | 共用静态核心与前端类型定义 |
 | 后端 | FastAPI / Uvicorn | 见依赖文件 | 本机分析与审查 API，网页历史同步 |
 | 前端 | React + Vite | `^18.3.1` / `^6.0.5` | 组件化界面与构建 |
@@ -133,9 +118,14 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 
 代码仓库：https://github.com/kane0204/CodeLens
 
-项目使用 Git 和 GitHub 管理版本，`main` 分支持续接收团队提交；GitHub Actions 自动执行后端测试、前端测试和构建检查，Pulse 截图作为团队协作与持续提交的证据。
+![GitHub Pulse 历史截图](./images/pulse.png)
 
-<img src="./images/pulse.png" alt="GitHub Pulse 历史截图" style="display:block;width:auto;max-width:100%;max-height:340px;object-fit:contain;margin:auto;" />
+<style>
+img {
+  max-height: 430px !important;
+  object-fit: contain !important;
+}
+</style>
 
 ---
 
@@ -155,39 +145,129 @@ AI 代码逻辑不透明、隐含假设多、风险难定位。
 
 ### 3.5.1 系统架构图
 
-<img src="./images/system-architecture.png" alt="系统架构图" style="display:block;width:100%;max-height:470px;object-fit:contain;margin:auto;" />
+```mermaid
+flowchart LR
+    U["React 工作台"] -->|本机版| API["FastAPI / LangGraph"]
+    U -->|网页版| WEB["Worker / Pyodide"]
+    API --> CORE["静态分析核心"]
+    WEB --> CORE
+    API --> AI["用户配置的模型服务"]
+    U -->|网页 AI 审查| AI
+    U -->|网页 HTTPS| SYNC["Nginx 静态托管<br/>FastAPI 历史同步"]
+    SYNC --> DB[("PostgreSQL 账号历史")]
+```
 
 
 ---
 
 ### 3.5.3 总工作流
 
-<img src="./images/total-workflow.png" alt="总工作流" style="display:block;width:100%;max-height:430px;object-fit:contain;margin:auto;" />
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "16px"}}}%%
+flowchart LR
+    subgraph FE["前端"]
+        direction LR
+        A["导入项目"] --> B["提交分析任务"]
+        U["结果展示"] --> X["源码回查与导出"]
+    end
+
+    subgraph CORE["后端（静态分析）"]
+        direction LR
+        C["文件识别（结构、语言）"] --> P["Python<br/>：AST(tokenize)"]
+        C --> G["其他语言<br/>：类AST(tokenize)函数"]
+        P --> R["生成IR、CFG、def-use等/定量计算code smell"]
+        G --> R
+        R --> E["切片/静态证据"]
+        E --> S["静态报告"]
+    end
+
+    subgraph MEM["Agent 与记忆"]
+        direction LR
+        Q{"配置模型？"}
+        AG["Agent处理"]
+        MC["缓存 / 历史线索 / 检查点"]
+        AR["结果合并"]
+        DB[("PostgreSQL<br/>分析历史")]
+    end
+
+    B --> C
+    S --> Q
+    Q -- "否" --> U
+    Q -- "是" --> AG
+
+    AG <--> MC
+    AG --> AR
+    S --> DB
+    AR --> DB
+    DB -. "历史回看" .-> U
+    AR --> U
+
+    classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
+    classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
+    classDef agent fill:#285d6b,stroke:#71a9b8,color:#fff;
+    classDef output fill:#173a63,stroke:#4b78a6,color:#fff;
+
+    class A,B,C,P,G input;
+    class Q decision;
+    class AG,MC agent;
+    class R,E,S,AR,DB,U,X output;
+```
 
 
 ---
 
 ### 3.5.3 Agent工作流：Plan-and-Execute
 
-<img src="./images/agent-workflow.png" alt="Agent工作流" style="display:block;width:100%;max-height:430px;object-fit:contain;margin:auto;" />
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "16px"}}}%%
+flowchart LR
+    A["静态处理结果"] --> C["构造上下文"]
+    C --> B{"缓存命中？"}
+
+    B -- "是" --> R["输出已有结果"]
+    B -- "否" --> D["模型处理"]
+    D --> E{"（gap函数）校验通过？"}
+
+    E -- "否" --> F["补充一次上下文（仅有一次）"]
+    F --> C
+    E -- "是" --> G{"还有下一部分？"}
+
+    G -- "是" --> C
+    G -- "否" --> H["输出结果"]
+
+    classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
+    classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
+    classDef repair fill:#4b3040,stroke:#9f7282,color:#fff;
+    classDef output fill:#285d6b,stroke:#71a9b8,color:#fff;
+
+    class A input;
+    class B,E,G decision;
+    class F repair;
+    class C,D,H,R output;
+```
 
 
 ---
 
-### 3.5.3 智能体 · 项目事实、结构关系与记忆如何协作
-
-<img src="./images/knowledge-flow.png" alt="项目事实、结构关系与记忆协作" style="display:block;width:100%;max-height:430px;object-fit:contain;margin:auto;" />
-
-- **知识来源**包括本次导入的源码、逻辑模型、指标和规则命中。
-- **结构关系**包括类关系、依赖关系与静态调用序列。
-- **上下文获取**按目标切片，或按项目、目录、文件范围分批读取。
-- **记忆**保存可复用的阅读批次和报告。
-
----
 
 ### 3.5.4 数据库设计
 
-<img src="./images/database-er.png" alt="数据库关系图" style="display:block;width:100%;max-height:430px;object-fit:contain;margin:auto;" />
+```mermaid
+erDiagram
+    direction LR
+    PROJECT ||--o{ VERSION : "本机项目版本"
+    VERSION ||--o{ ANALYSIS : "分析历史"
+    PROJECT ||--o{ PROJECT_CHECKPOINT : "项目检查点"
+    REVIEW_CHECKPOINT
+    ACCOUNTS ||--o{ RUNS : "账号审查历史"
+    RUNS ||--o{ CHECKPOINTS : "续跑检查点"
+```
+
+<style>
+.mermaid svg {
+  max-height: 330px !important;
+}
+</style>
 
 ---
 

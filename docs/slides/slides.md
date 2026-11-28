@@ -6,9 +6,10 @@ preloadImages: false
 
 # CodeLens
 
-## 项目结构可视化工具
+## 软件项目代码审查解读工具
 
 【光圈】 · 2026 年 11 月
+成员：钱永康 张耀宇 张淑欣 王宇航 林悠然
 
 ---
 
@@ -81,10 +82,10 @@ Web 应用
 
 | 原则 | 落地 |
 |---|---|
-| 需求 / 信息 / 创新 | 需求真实存在；通过静态处理降低大模型理解成本 |
-| 系统 / 收敛 / 优化 | 通过统一的静态事实保证结果一致性，使得 AI 推断收敛于源码，并通过源码证据和缺口标注优化报告质量。|
-| 继承 / 效益 / 时间 | 充分调研复用成熟技术，在保证分析效果的同时，控制开发时间成本|
-| 定量 / 简化 / 审核 | 统计圈复杂度、函数长度和最大嵌套将代码质量量化，结果可审核 |
+| 需求  / 创新 | 痛点真实存在；通过静态处理降低大模型理解成本 |
+| 收敛 | 通过统一的静态事实保证结果一致性，使得 AI 推断收敛于源码。|
+| 继承 / 时间 | 充分调研复用成熟技术，在保证分析效果的同时，控制开发时间成本|
+| 定量 / 审核 | 统计圈复杂度、函数长度和最大嵌套将代码质量量化，结果可审核 |
 
 ---
 
@@ -406,7 +407,7 @@ flowchart LR
 |---|---|---|---|
 | **模型** | `code/ai/provider.py`<br/>`code/ai/explanation.py`<br/>`code/ai/prompts.py` | OpenAI 兼容 `chat/completions`，支持 GPT、DeepSeek、Qwen等 | 生成逻辑、设计与风险说明（将静态输出翻译成人话） |
 | **规划** | `code/ai/explanation.py` | LangGraph 固定流程：`阅读 → 综合`，依次生成逻辑、设计、风险三部分 | 将复杂审查拆分为源码阅读与报告综合 |
-| **记忆** | `code/ai/review_store.py`<br/>`code/backend/history.py` | PostgreSQL 检查点 + 阅读单元缓存 + 分层摘要 | 断点恢复和未变源码复用 |
+| **记忆** | `code/ai/review_store.py`<br/>`code/backend/history.py` | PostgreSQL 检查点、 阅读单元缓存  | 断点恢复和未变源码复用 |
 | **知识** | `code/core_engine/` | 本地 AST等、调用图、依赖图、复杂度指标 | 提供结构化事实和源码位置 |
 | **护栏** | `code/backend/credentials.py`<br/>`code/backend/observability.py`<br/>`code/ai/contract.py` | `source_consent` 授权、系统 `keyring` 密钥管理、gap函数（逻辑解读是否拿到了函数语句和控制流、风险审查是否存在可复核的 findings）、日志脱敏 | 未经授权不发送源码，不泄露密钥，丢弃无证据结论，不执行或修改目标代码 |
 
@@ -480,8 +481,8 @@ td {
 | <img src="./images/overview.png" alt="当前项目总览，显示演示项目的静态分析结果" height="110" /> | <img src="./images/risk-list.png" alt="当前风险评估页，等待逻辑解读完成" height="110" /> |
 
 ---
-
-## 3.6 软件质量
+class: text-sm
+---
 
 ### 3.6.1 质量控制和保证方法
 
@@ -495,7 +496,7 @@ Pylint 静态检查结果：
 
 <style>
 img {
-  max-height: 330px !important;
+  max-height: 300px !important;
   object-fit: contain !important;
 }
 </style>

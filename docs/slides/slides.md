@@ -162,89 +162,14 @@ flowchart LR
 
 ### 3.5.3 总工作流
 
-```mermaid
-%%{init: {"themeVariables": {"fontSize": "16px"}}}%%
-flowchart LR
-    subgraph FE["前端"]
-        direction LR
-        A["导入项目"] --> B["提交分析任务"]
-        U["结果展示"] --> X["源码回查与导出"]
-    end
-
-    subgraph CORE["后端（静态分析）"]
-        direction LR
-        C["文件识别（结构、语言）"] --> P["Python<br/>：AST(tokenize)"]
-        C --> G["其他语言<br/>：类AST(tokenize)函数"]
-        P --> R["生成IR、CFG、def-use等/定量计算code smell"]
-        G --> R
-        R --> E["切片/静态证据"]
-        E --> S["静态报告"]
-    end
-
-    subgraph MEM["Agent 与记忆"]
-        direction LR
-        Q{"配置模型？"}
-        AG["Agent处理"]
-        MC["缓存 / 历史线索 / 检查点"]
-        AR["结果合并"]
-        DB[("PostgreSQL<br/>分析历史")]
-    end
-
-    B --> C
-    S --> Q
-    Q -- "否" --> U
-    Q -- "是" --> AG
-
-    AG <--> MC
-    AG --> AR
-    S --> DB
-    AR --> DB
-    DB -. "历史回看" .-> U
-    AR --> U
-
-    classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
-    classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
-    classDef agent fill:#285d6b,stroke:#71a9b8,color:#fff;
-    classDef output fill:#173a63,stroke:#4b78a6,color:#fff;
-
-    class A,B,C,P,G input;
-    class Q decision;
-    class AG,MC agent;
-    class R,E,S,AR,DB,U,X output;
-```
+<WorkflowDiagram kind="total" />
 
 
 ---
 
 ### 3.5.3 Agent工作流：Plan-and-Execute
 
-```mermaid
-%%{init: {"themeVariables": {"fontSize": "16px"}}}%%
-flowchart LR
-    A["静态处理结果"] --> C["构造上下文"]
-    C --> B{"缓存命中？"}
-
-    B -- "是" --> R["输出已有结果"]
-    B -- "否" --> D["模型处理"]
-    D --> E{"（gap函数）校验通过？"}
-
-    E -- "否" --> F["补充一次上下文（仅有一次）"]
-    F --> C
-    E -- "是" --> G{"还有下一部分？"}
-
-    G -- "是" --> C
-    G -- "否" --> H["输出结果"]
-
-    classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
-    classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
-    classDef repair fill:#4b3040,stroke:#9f7282,color:#fff;
-    classDef output fill:#285d6b,stroke:#71a9b8,color:#fff;
-
-    class A input;
-    class B,E,G decision;
-    class F repair;
-    class C,D,H,R output;
-```
+<WorkflowDiagram kind="agent" />
 
 
 ---

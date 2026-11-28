@@ -502,6 +502,8 @@ img {
 </style>
 
 ---
+class: text-sm
+---
 
 ## 3.7 代码统计
 

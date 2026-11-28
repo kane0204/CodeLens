@@ -1,4 +1,4 @@
-"""Unit tests for model configuration, transport, and skill fallback."""
+"""验证模型配置、请求传输和 Skill 降级行为的单元测试。"""
 import io
 import json
 import os

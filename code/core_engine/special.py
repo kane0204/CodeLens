@@ -1,8 +1,7 @@
-"""Code-specific special risk report.
+"""根据代码中的静态证据生成专项风险报告。
 
-Every item is derived from facts the engine already produced (findings, graph,
-duplicate groups). A category the engine cannot judge is returned as
-``covered: False`` with an explicit reason instead of an invented empty result.
+报告条目来自引擎已生成的发现、关系图与重复实现分组。
+无法判断的类别标为 ``covered: False`` 并提供原因。
 """
 from __future__ import annotations
 

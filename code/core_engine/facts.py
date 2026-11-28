@@ -89,13 +89,13 @@ class _Flow:
         return current
 
     def statement(self, stmt, depth, loop, pending_break, pending_continue):
-        """Dispatch to a per-node-type handler, then fall back to a simple node."""
+        """按节点类型选择处理器，未单独处理的节点按普通语句记录。"""
         handler = _STATEMENT_HANDLERS.get(type(stmt))
         if handler is not None:
             return handler(self, stmt, depth, loop, pending_break, pending_continue)
         return self._simple(stmt, depth)
 
-    # -- structural handlers (was one long if/elif chain; now a dispatch table) --
+    # 各类控制结构的处理器由节点类型映射表调度。
 
     def _if(self, stmt, depth, loop, pending_break, pending_continue):
         line = stmt.lineno

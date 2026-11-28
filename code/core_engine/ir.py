@@ -310,7 +310,7 @@ class Index:
             return {"ok": False, "error": "未知的引用类型：" + kind[:24]}
         return handler(self, payload)
 
-    # -- per-kind resolvers (was one long if/elif chain; now a dispatch table) --
+    # 按证据引用类型选择对应的解析器。
 
     def _resolve_summary(self, payload):
         if payload != "project":

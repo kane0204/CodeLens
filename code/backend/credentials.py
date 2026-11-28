@@ -1,4 +1,4 @@
-"""Persist the model API key in the operating system's credential store."""
+"""使用操作系统凭据库保存模型 API Key。"""
 from __future__ import annotations
 
 import keyring
@@ -14,7 +14,7 @@ BACKEND_LABELS = (
 
 
 class CredentialError(RuntimeError):
-    """The operating-system credential store could not complete the request."""
+    """操作系统凭据库无法完成请求时抛出的异常。"""
 
 
 class CredentialStore:
@@ -98,7 +98,7 @@ class CredentialStore:
 
 
 def with_stored_api_key(payload, store):
-    """Fill an omitted key from the OS vault without exposing it to the browser."""
+    """在服务端用系统凭据补齐省略的 Key，避免把它返回给浏览器。"""
     # 仅复制需要补写的两层，调用者持有的原始请求不会被写入系统 Key。
     if not isinstance(payload, dict):
         return payload

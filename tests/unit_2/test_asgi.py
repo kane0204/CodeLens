@@ -1,4 +1,4 @@
-"""Verify the FastAPI adapter using HTTP-shaped requests without opening a socket."""
+"""使用符合 HTTP 格式的请求验证 FastAPI 接口，无需打开网络套接字。"""
 import asyncio
 import json
 import runpy

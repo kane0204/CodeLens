@@ -1,7 +1,6 @@
-"""High-confidence privacy and credential literal detection.
+"""检测具有较高置信度的隐私数据与凭据字面量。
 
-Only the kind of data found is reported. Matched values never enter the
-analysis result, logs or exported reports.
+发现只描述命中的数据类型。命中值不会写入规则发现、日志或导出的报告。
 """
 from __future__ import annotations
 

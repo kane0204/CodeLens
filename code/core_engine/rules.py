@@ -1,4 +1,4 @@
-"""Deterministic SOLID and supplementary risk rules, shared by both API paths."""
+"""由两种 API 实现共用的确定性 SOLID 检查和补充风险规则。"""
 from __future__ import annotations
 
 import ast
@@ -91,7 +91,7 @@ def _compared_type(left, right):
 
 
 def _is_type_test(node):
-    """Recognize isinstance(x, T) and identity comparisons with type(x)."""
+    """识别 `isinstance(x, T)` 与检查 `type(x)` 是否为指定对象的比较。"""
     if _is_named_call(node, "isinstance"):
         return _type_name_of(node.args[1]) if len(node.args) >= 2 else None
     if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Is):
@@ -228,8 +228,8 @@ def _python_functions(functions):
         name = fn.get("name")
         if not isinstance(ident, str) or not isinstance(name, str):
             continue
-        # Non-Python dead code is judged by the language analyzer (private helpers
-        # with no inbound call); this rule only understands Python call semantics.
+    # 这里仅按 Python 调用语义判断。其他语言由各自的分析器检查
+    # 未发现入向调用的私有辅助函数。
         if not str(fn.get("file") or "").lower().endswith(".py"):
             continue
         yield fn, ident, name
@@ -240,7 +240,7 @@ def _is_entry_point(name):
 
 
 def _referenced_names(trees):
-    """Collect loaded names and attribute references, including callbacks and properties."""
+    """收集读取的名称和属性引用，涵盖回调引用和属性访问。"""
     return {path: set(_loaded_names(tree)) for path, tree in trees.items()}
 
 

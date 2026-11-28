@@ -1,22 +1,18 @@
-"""Structured, privacy-preserving logging for the local CodeLens API.
+"""本机 CodeLens API 的结构化日志与隐私保护。
 
-Invariants — do not relax these when adding new log sites:
+新增日志时遵守以下约束。
 
-* Never log source text, project names, file paths, tokens, API keys or request
-  bodies. This service handles private code that only lives in memory.
-* Only metadata is recorded: endpoint, verb, status, duration, byte counts and
-  exception types. A short correlation id is shared with the UI so a user can
-  report "请求 a1b2c3d4" without disclosing what was analysed.
-* Exception messages are sanitised and truncated; tracebacks are reduced to
-  frame names, never source lines.
+* 不记录源码文本、项目名、文件路径、令牌、API Key 或请求体。
+* 请求日志仅记录接口、方法、状态、耗时、字节数和异常类型等元数据。
+  请求编号会同时返回给界面，用户反馈「请求 a1b2c3d4」即可关联日志。
+* 异常消息脱敏后截断，堆栈只保留帧的定位信息，不附上源码行文本。
 
-File logging is ON by default: ``<repo>/logs/codelens.log`` (directory created
-automatically, 5 MiB x 5 rotation). It exists so a crashed process still leaves
-a trace. Override or disable:
+默认将日志写入 ``<repo>/logs/codelens.log``，自动创建目录，单文件达到
+5 MiB 时轮转，最多保留 5 个备份。进程意外退出后仍可查看已写入的日志。
 
-* ``--log-file <path>`` / ``CODELENS_LOG_FILE``   replace the default path
-* ``--no-log-file`` / ``CODELENS_LOG_DISABLE_FILE=1``   console only
-* ``--log-level`` / ``CODELENS_LOG_LEVEL``   DEBUG / INFO / WARNING / ERROR
+* ``--log-file <path>`` 或 ``CODELENS_LOG_FILE`` 可替换默认路径。
+* ``--no-log-file`` 或 ``CODELENS_LOG_DISABLE_FILE=1`` 仅输出到控制台。
+* ``--log-level`` 或 ``CODELENS_LOG_LEVEL`` 可设置 DEBUG、INFO、WARNING、ERROR。
 """
 from __future__ import annotations
 
@@ -64,14 +60,13 @@ API_PATHS = frozenset({API_STATUS, API_AI_STATUS, API_ANALYZE, API_AI,
                        API_HISTORY_DETAIL, API_HISTORY_DELETE})
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-# Defence in depth: even if a future call site passes a raw payload, scrub
-# key/value pairs that look like credentials or embedded source.
+# 日志入口的补充脱敏，识别形似凭据或源码内容的键值对。
 _SECRET_PAIRS = re.compile(
     r"(?i)\b(api[_-]?key|token|secret|password|authorization|content_base64|source|content)\b"
     r"""["']?\s*[=:]\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;&]+)"""
 )
 _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-]+")
-# Field names that must never be emitted even if a call site adds them later.
+# 按字段名识别敏感信息，后续新增日志字段也沿用此规则。
 _SENSITIVE_FIELD = re.compile(
     r"(?i)(project|filename|file_path|filepath|source|content|payload|body|code|api[_-]?key|token|secret)"
 )
@@ -84,12 +79,12 @@ ACTIVE_LOG_FILE: Path | None = None
 
 
 def new_id() -> str:
-    """Short, non-guessable correlation id safe to show in the UI."""
+    """生成可在界面展示的随机短编号，用于关联请求日志。"""
     return secrets.token_hex(4)
 
 
 def redact(value: Any, limit: int = MAX_MESSAGE) -> str:
-    """Collapse control characters, scrub credential-ish pairs, truncate."""
+    """规整控制字符、遮盖疑似凭据的键值对，再截断超长文本。"""
     text = _CONTROL_CHARS.sub(" ", str(value))
     text = _BEARER.sub("Bearer <redacted>", text)
     text = _SECRET_PAIRS.sub(lambda m: f"{m.group(1)}=<redacted>", text)
@@ -100,7 +95,7 @@ def redact(value: Any, limit: int = MAX_MESSAGE) -> str:
 
 
 def safe_path(path: str) -> str:
-    """Only known API routes are logged verbatim; everything else is opaque."""
+    """只原样记录已知的 API 路由，其他路径统一占位。"""
     return path if path in API_PATHS else "<other>"
 
 
@@ -117,7 +112,7 @@ def format_fields(fields: dict[str, Any]) -> str:
 
 
 class _PrivacyFilter(logging.Filter):
-    """Last line of defence: every outgoing record is sanitised."""
+    """在处理器输出前，为日志文本再执行一次脱敏。"""
 
     def filter(self, record: logging.LogRecord) -> bool:
         # 先合并参数再脱敏，清空 args 避免 handler 二次格式化原始参数。
@@ -135,7 +130,7 @@ def _build_formatter() -> logging.Formatter:
 
 def configure_logging(level: str | None = None, log_file: str | None = None,
                       enable_file: bool = True) -> logging.Logger:
-    """Idempotent, thread-safe setup. Returns the shared ``codelens`` logger."""
+    """线程安全地初始化日志，同一进程内复用 ``codelens`` 日志记录器。"""
     global _CONFIGURED, ACTIVE_LOG_FILE
     with _LOCK:
         logger = logging.getLogger(LOGGER_NAME)
@@ -179,7 +174,7 @@ def _attach_file_log(logger, target, formatter, privacy) -> Path | None:
         file_handler.addFilter(privacy)
         logger.addHandler(file_handler)
     except OSError as exc:
-        # Do not disclose filesystem paths from OS exceptions.
+        # 文件系统异常可能带有路径，只记录异常类型。
         logger.warning("file log disabled reason=%s", type(exc).__name__)
         return None
     logger.info("file log enabled rotation_mb=%s backups=%s",
@@ -188,18 +183,18 @@ def _attach_file_log(logger, target, formatter, privacy) -> Path | None:
 
 
 def active_log_file() -> Path | None:
-    """Where the process currently writes its file log (None = console only)."""
+    """返回当前日志文件路径，None 表示仅输出到控制台。"""
     return ACTIVE_LOG_FILE
 
 
 def get_logger(suffix: str | None = None) -> logging.Logger:
-    """Return the shared logger (or a named child) after basic setup."""
+    """完成基本配置后返回共享日志记录器，或指定名称的子记录器。"""
     root = configure_logging()
     return logging.getLogger(f"{LOGGER_NAME}.{suffix}") if suffix else root
 
 
 def reset_for_tests() -> None:
-    """Drop handlers so a test can reconfigure with its own level/file."""
+    """清除现有处理器，供测试重新设置日志等级和文件位置。"""
     global _CONFIGURED, ACTIVE_LOG_FILE
     with _LOCK:
         logger = logging.getLogger(LOGGER_NAME)
@@ -211,18 +206,18 @@ def reset_for_tests() -> None:
 
 
 def flush_all(logger: logging.Logger) -> None:
-    """Force buffered records to disk before a crash terminates the process."""
+    """进程退出前刷新日志处理器中尚未输出的记录。"""
     for handler in list(logger.handlers):
         try:
             handler.flush()
         except Exception as exc:
-            # Report only the exception type and bypass the failing logger.
+            # 日志处理器本身失败时，绕过它并只输出异常类型。
             with suppress(OSError, ValueError):
                 print(f"codelens: log flush failed ({type(exc).__name__})", file=sys.stderr)
 
 
 def exception_summary(exc: BaseException) -> dict[str, str]:
-    """Type + sanitised message + frame names. Never includes source lines."""
+    """提取异常类型、脱敏消息和栈帧定位信息，不读取源码行文本。"""
     # 从 traceback 直接读取元数据，避免查找源码行或生成完整堆栈。
     frames = deque(
         ((frame.f_code.co_filename, frame.f_code.co_name, line)
@@ -241,7 +236,7 @@ def exception_summary(exc: BaseException) -> dict[str, str]:
 
 def log_exception(logger: logging.Logger, exc: BaseException, request_id: str,
                   **context: Any) -> None:
-    """Record an exception with a correlation id, without leaking source text."""
+    """使用请求编号关联异常摘要，仅记录脱敏消息和栈帧位置。"""
     detail = exception_summary(exc)
     logger.error(
         "exception request_id=%s type=%s message=%s frames=%s %s",
@@ -276,10 +271,10 @@ def log_event(logger: logging.Logger, level: int, event: str, **context: Any) ->
 
 
 def install_crash_hooks(logger: logging.Logger) -> None:
-    """Persist uncaught / thread / process-exit traces for post-mortem debugging.
+    """记录主线程和工作线程的未捕获异常，以及进程退出信息，供事后排查。
 
-    ThreadingHTTPServer handles each request in its own thread, so
-    ``threading.excepthook`` matters as much as ``sys.excepthook`` here.
+    ThreadingHTTPServer 每个请求使用单独线程，因此同时安装
+    ``threading.excepthook`` 和 ``sys.excepthook``。
     """
     global _HOOKS_INSTALLED
     with _LOCK:
@@ -308,7 +303,7 @@ def install_crash_hooks(logger: logging.Logger) -> None:
         previous_thread(args)
 
     def on_exit():
-        # Handlers may already be closed (e.g. by a test harness).
+        # 测试等场景可能已关闭处理器，先确认还有处理器可用。
         if not logger.handlers:
             return
         exc = sys.exc_info()[1]

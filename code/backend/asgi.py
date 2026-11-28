@@ -1,4 +1,4 @@
-"""FastAPI transport for the local CodeLens workbench."""
+"""本机 CodeLens 工作台的 FastAPI 接口层。"""
 import argparse
 import asyncio
 import json

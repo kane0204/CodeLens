@@ -1,10 +1,9 @@
-"""Brace/lexer based analysis for non-Python sources.
+"""用花括号与词法规则分析非 Python 源码。
 
-Design constraints:
-- Never executes or imports analysed code.
-- Produces the same record shape as the Python AST path so the workbench can
-  render both without branching on language.
-- Metrics are approximations and are labelled as such in ``LIMITATIONS``.
+设计约定。
+- 不执行或导入待分析代码。
+- 输出沿用 Python 语法树分析的记录结构，工作台可用同一套组件展示。
+- 指标为近似值，限制说明见 ``LIMITATIONS``。
 """
 from __future__ import annotations
 
@@ -68,7 +67,7 @@ MAX_CALLS_PER_FILE = 4000
 
 
 class _LineIndex:
-    """Precomputed newline offsets: O(log n) line lookups instead of O(n) scans."""
+    """预先索引换行偏移，用 O(log n) 二分查找定位行号。"""
 
     __slots__ = ("offsets",)
 
@@ -84,7 +83,7 @@ def language_of(path):
 
 
 def code_line_count(source):
-    """Non-blank lines that are not pure comment lines."""
+    """统计非空且并非纯注释的行。"""
     total = 0
     for line in source.splitlines():
         text = line.strip()
@@ -120,7 +119,7 @@ def _blank_string(source, chars, start):
 
 
 def _sanitize(source):
-    """Blank out comments and string bodies while preserving offsets/newlines."""
+    """将注释和字符串正文替换为空格，保留原偏移与换行。"""
     chars = list(source)
     index = 0
     while index < len(source):
@@ -163,7 +162,7 @@ def _is_control_brace(segment):
 
 
 def _control_before(clean, index):
-    """Look back to the previous brace only: `for (a; b; c)` keeps its semicolons."""
+    """回溯到前一个花括号，保留 `for (a; b; c)` 内的分号。"""
     start = max(0, index - 400, clean.rfind("{", 0, index), clean.rfind("}", 0, index))
     return _is_control_brace(clean[start:index])
 
@@ -294,7 +293,7 @@ def _inner_spans(spans):
 
 
 def _kept_ranges(start, end, inner):
-    """Body ranges with nested-function bodies removed (they are separate units)."""
+    """返回扣除嵌套函数体后的区间。嵌套函数作为独立单元统计。"""
     kept, cursor = [], start
     for span_start, span_end in sorted(inner):
         if span_start <= start or span_end >= end:
@@ -367,7 +366,7 @@ def _add_expression_arrows(functions, clean, source, module, path, lines):
 
 
 def _scan_functions(clean, pairs, classes, module, path, lines):
-    """Locate function spans and identities; metrics are applied afterwards."""
+    """定位函数区间与标识，指标由后续阶段计算。"""
     functions = []
     seen_ids = set()
     for brace in sorted(pairs):
@@ -400,8 +399,8 @@ def _scan_functions(clean, pairs, classes, module, path, lines):
 
 
 def _apply_metrics(functions, clean, source, lines):
-    """CC / nesting / length / params, excluding nested-function bodies (the Python
-    AST path counts nested definitions separately; this keeps both aligned)."""
+    """计算圈复杂度、嵌套深度、长度和参数个数。
+    和 Python 路径一样，嵌套函数体单独统计。"""
     spans = {tuple(item["_span"]) for item in functions}
     inner = _inner_spans(spans)
     for item in functions:
@@ -512,7 +511,7 @@ def _call_edge(item, match, offset, by_name, path, lines):
 
 
 def _dead_code_findings(functions, calls, path):
-    """Conservative dead-code signal: private/underscored helpers with no inbound use."""
+    """只将没有入向引用的私有或下划线命名函数标为疑似死代码。"""
     inbound = {edge["target"] for edge in calls if edge["status"] == "resolved"}
     findings = []
     for item in functions:

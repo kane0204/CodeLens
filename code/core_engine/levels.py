@@ -1,12 +1,11 @@
-"""Shared string labels for findings: rule ids, severity, confidence, evidence.
+"""集中定义发现对象的规则 ID、严重程度、置信度和证据类型。
 
-Pure literals with no imports, so any module can import this safely. Keeping the
-labels in one place avoids duplicated string literals (S1192) and makes the
-finding contract the single source of truth for its vocabulary.
+常量不依赖分析模块，避免循环导入。集中定义标签可以减少重复的
+字符串字面量（S1192），并让发现对象的字段值保持一致。
 """
 from __future__ import annotations
 
-# --- Rule ids -------------------------------------------------------------
+# 规则 ID
 # 规则 ID 会被报告、历史比较和证据引用使用。修改中文说明时保留既有 ID。
 
 RULE_CC = "CC-01"
@@ -29,19 +28,19 @@ RULE_A8_DEFENSIVE = "A8-DEFENSIVE"
 RULE_CMT = "CMT-01"
 RULE_DUP = "DUP-01"
 
-# --- Severity -------------------------------------------------------------
+# 严重程度
 
 SEVERITY_CRITICAL = "critical"
 SEVERITY_WARNING = "warning"
 SEVERITY_INFO = "info"
 
-# --- Confidence -----------------------------------------------------------
+# 置信度
 
 CONFIDENCE_HIGH = "high"
 CONFIDENCE_MEDIUM = "medium"
 CONFIDENCE_LOW = "low"
 
-# --- Evidence type --------------------------------------------------------
+# 证据类型
 
 EVIDENCE_FACT = "fact"
 EVIDENCE_INFERENCE = "inference"

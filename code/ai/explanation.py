@@ -43,18 +43,18 @@ _CHAT_TIMEOUT = 1800
 
 
 class _ReviewJob:
-    """In-memory checkpoint so an interrupted project review can resume."""
+    """保存内存中的检查点，使中断的项目审查可以续跑。"""
 
     __slots__ = ("notes", "status", "result", "error", "updated", "finished", "truncated", "storage",
                  "summary", "sections")
 
     def __init__(self, notes=(), truncated=False, storage=None):
-        self.notes = list(notes)   # completed per-batch reading notes
+        self.notes = list(notes)   # 已完成批次的阅读笔记
         self.truncated = truncated
         self.storage = storage
         self.summary = None
         self.sections = {}
-        self.status = "running"    # running | done | failed
+        self.status = "running"    # 审查状态为运行中、已完成或失败。
         self.result = None
         self.error = None
         self.updated = time.time()
@@ -81,7 +81,7 @@ def _review_input(payload):
 
 
 def _review_fingerprint(result, endpoint, model, key, scope="project", history_project=None, memory=()):
-    """Same project content + same model config => same resumable job."""
+    """相同项目内容和模型配置对应同一个可续跑任务。"""
     settings = ["review-v2", scope, endpoint, model, MAX_PROJECT_BATCH_CHARS,
                 MAX_REVIEW_SYNTHESIS_CHARS, _review_budget(), result.get("project", ""),
                 hashlib.sha256(key.encode("utf-8")).hexdigest()]
@@ -99,7 +99,7 @@ def _review_fingerprint(result, endpoint, model, key, scope="project", history_p
 
 def _review_eviction_priority(key):
     job = _REVIEW_JOBS[key]
-    # Prefer discarding entries that can be recreated without losing a checkpoint.
+    # 优先淘汰可重新生成且不会丢失检查点的条目。
     return bool(job.notes or job.sections) and job.status == "failed", job.updated
 
 
@@ -113,7 +113,7 @@ def _evict_review_jobs(keep_key):
 
 
 def _callee_snippet(fn, records, record, start, end):
-    """Render one callee's numbered source if it lies outside the selected range."""
+    """目标函数位于所选范围之外时，生成带原始行号的源码片段。"""
     if fn['file'] == record['path'] and start <= fn['line'] and fn['end_line'] <= end:
         return None
     lines = records[fn['file']]['source'].splitlines()[fn['line']-1:fn['end_line']]
@@ -151,7 +151,7 @@ def _related_symbols(result, record, start, end):
 
 
 def context_for(result, record, start, end, enabled=True):
-    """Only resolved callees (two hops), with explicit size/range accounting."""
+    """最多补充两跳内已解析的被调函数，并记录材料大小与行号范围。"""
     ranges = [{'file': record['path'], 'line': start, 'end_line': end, 'kind': 'selected'}]
     snippets, used, omitted = [], 0, 0
     if not enabled:
@@ -237,7 +237,7 @@ def _read_model_response(request):
 
 
 def _chat(endpoint, model, key, system_prompt, user_prompt):
-    """Send one OpenAI-compatible request without following redirects."""
+    """发送 OpenAI 兼容请求，禁止跟随重定向。"""
     body = {"model": model, "temperature": 0.2, "stream": False,
             "messages": chat_messages(system_prompt, user_prompt)}
     request = urllib.request.Request(endpoint, data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -282,7 +282,7 @@ def _context_rejected(error):
 
 
 def _text_size(text):
-    # A provider-independent conservative estimate for byte-based tokenizers.
+    # 按字节数保守估算分词开销，无需依赖某个模型服务的分词器。
     return len(text.encode("utf-8", errors="replace"))
 
 
@@ -302,8 +302,8 @@ def _review_budget():
 
 
 def _line_pieces(line, limit):
-    # Split long physical lines for transport while retaining their line number.
-    # Each UTF-8 code point fits even when the line contains no ASCII.
+    # 拆分过长的物理行以便发送，各段仍保留原始行号。
+    # 即使一行全由非 ASCII 字符组成，也按完整的 UTF-8 字符切分。
     encoded = line.encode("utf-8", errors="replace")
     offset = 0
     while len(encoded) - offset > limit:
@@ -334,7 +334,7 @@ def _file_segments(record, budget=None):
 
 
 def _project_batches(records, budget=None):
-    """Cover every parsed source line, splitting long files and packing small ones."""
+    """拆分长文件并合并较小片段，使批次覆盖所有已解析的源码行。"""
     budget = MAX_PROJECT_BATCH_CHARS if budget is None else budget
     segments = (segment for record in records for segment in _file_segments(record, budget))
     batches, current, used = [], [], 0
@@ -351,7 +351,7 @@ def _project_batches(records, budget=None):
 
 
 def _project_units(records, budget=None):
-    """One cache unit per file segment, so an unrelated file can be reused."""
+    """每个文件片段独立缓存，其他文件变更时仍可复用该片段的结果。"""
     budget = MAX_PROJECT_BATCH_CHARS if budget is None else budget
     units = []
     for record in records:
@@ -434,12 +434,12 @@ def _save_batch_note(notes, note, job, hit_limit):
 
 def _read_batches(batches, project, endpoint, model, key, batch_instruction, reader_system,
                   notes=None, progress=None, job=None, total=None):
-    """Read source batches one by one and keep per-batch notes for synthesis.
+    """逐批阅读源码，保留每批笔记供综合阶段使用。
 
-    Shared by project explain/review. `notes` carries checkpointed notes from a
-    previous interrupted run, so finished batches are never re-read; `job` (when
-    given) receives heartbeat updates so eviction never treats it as stale.
-    Returns (notes, truncated).
+    项目解读与审查共用此函数。`notes` 包含上次中断前保存的笔记，
+    因此已完成批次无需重读。传入 `job` 时更新任务活跃时间，
+    避免它被缓存清理误判为过期。
+    返回笔记与是否截断的标记。
     """
     notes = notes if notes is not None else []
     resumed = len(notes)
@@ -934,7 +934,7 @@ _REVIEW_GRAPH = _build_review_graph()
 
 
 def review(payload, result=None, progress=None, store=None, *, memory=(), history_project=None):
-    """Resume the matching review from memory or the configured local store."""
+    """从内存或本机存储恢复匹配的审查任务。"""
     endpoint, model, key = _provider_config(payload)
     if result is None:
         result = _review_input(payload)
@@ -956,7 +956,7 @@ def _claim_review_job(fingerprint, store=None):
             return job, "done"
         owner = job is None or job.status == "failed"
         if owner:
-            # Existing waiters must keep the outcome and event of their attempt.
+            # 已在等待的请求仍使用各自那次执行的结果和完成事件。
             job = _resume_job(job, (store, fingerprint) if store is not None else None)
             _REVIEW_JOBS[fingerprint] = job
             _evict_review_jobs(fingerprint)
@@ -1058,7 +1058,7 @@ def _completion_endpoint(endpoint):
     if parts.scheme not in {"http", "https"} or not parts.hostname or any(
             (parts.username, parts.password, parts.query, parts.fragment)):
         raise ValueError("模型接口须为不含账号、查询参数或片段的 HTTP/HTTPS 地址")
-    # Accessing port validates both syntax and range before the HTTP request.
+    # 读取端口属性会提前检查格式和范围，避免把非法端口带进 HTTP 请求。
     if parts.port == 0:
         raise ValueError("模型接口端口必须在 1 到 65535 之间")
     endpoint = endpoint.rstrip("/")

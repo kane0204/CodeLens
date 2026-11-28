@@ -1,9 +1,9 @@
-"""Static LSP/ISP checks. Never import or execute analyzed code.
+"""静态检查 LSP 与 ISP。分析过程不导入或执行待分析代码。
 
-LSP compares accepted call shapes, binding mode, async mode and explicit refusal.
-ISP flags inherited multi-method contracts explicitly refused by implementations.
-Unknown bases, decorators and multiple inheritance are reported as coverage gaps.
-Behavioral pre/postconditions and arbitrary runtime types require human review.
+LSP 检查可接受的调用参数形式、绑定方式、同步或异步模式，以及显式拒绝实现。
+ISP 标记继承多方法契约后，显式拒绝实现其中方法的情况。
+未知基类、装饰器和多继承作为覆盖缺口报告。
+行为前置条件、后置条件和任意运行时类型需要人工复核。
 """
 import ast
 import inspect
@@ -121,14 +121,14 @@ def _rejected_call(parent, child, variants):
 
 
 def _narrowed(parent, child):
-    """Witness a parent-valid call rejected by the override (values are inert)."""
+    """寻找一组基类接受而重写方法拒绝的调用参数，参数值只作占位。"""
     p, c = _signature(parent), _signature(child)
     if p is None or c is None:
         return None
     kinds = inspect.Parameter
     positional = [a for a in p.parameters.values() if a.kind in (kinds.POSITIONAL_ONLY, kinds.POSITIONAL_OR_KEYWORD)]
     max_pos = max(len(p.parameters), len(c.parameters)) + 1 if parent.args.vararg else len(positional)
-    # Bound work for unusually huge generated signatures; coverage records the gap.
+    # 限制超大生成签名的检查开销，未检查部分计入覆盖缺口。
     if max_pos > 128:
         return None
     extra_keywords = set()

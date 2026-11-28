@@ -1,4 +1,4 @@
-"""Build the shared OpenAI-compatible chat messages with LangChain Core."""
+"""用 LangChain Core 构造共用的 OpenAI 兼容聊天消息。"""
 from langchain_core.messages import convert_to_openai_messages
 from langchain_core.prompts import ChatPromptTemplate
 

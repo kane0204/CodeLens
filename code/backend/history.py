@@ -1,4 +1,4 @@
-"""Local project snapshots, comparable findings and bounded review memory."""
+"""保存本机项目快照、比较静态发现，并为审查提供有长度限制的历史线索。"""
 from contextlib import closing, contextmanager
 from hashlib import sha256
 import json

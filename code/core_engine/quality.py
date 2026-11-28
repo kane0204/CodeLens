@@ -1,4 +1,4 @@
-"""Reproducible class metrics, exact AST clones and evidenced class relations."""
+"""计算可复现的类指标、语法树相同的重复实现和有证据支持的类关系。"""
 import ast
 import hashlib
 from itertools import combinations
@@ -15,7 +15,7 @@ NOTES = [
 
 
 def _annotation_targets(annotation, aliases, classes):
-    """Resolve a type annotation to class ids it references in this project."""
+    """将类型注解解析成它引用的项目内部类 ID。"""
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
         try:
             annotation = ast.parse(annotation.value, mode="eval").body
@@ -56,7 +56,7 @@ def _imported_symbols(record, statement):
 
 
 def _collect_aliases(result, trees, cls):
-    """Build a short-name -> qualified-name map for one class's module imports."""
+    """为类所在模块的导入语句建立从短名称到限定名称的映射。"""
     aliases = {}
     record = next(r for r in result["files"] if r["path"] == cls["file"])
     for item in trees[cls["file"]].body:
@@ -90,7 +90,7 @@ def _composition_target(item, constructors):
 
 
 def _emit_call_relations(cls, node, constructors, relation):
-    """Emit dependency/composition edges from method bodies."""
+    """依据方法体中的调用和赋值生成依赖边与组合边。"""
     for method in _methods_in(node):
         for item in own_walk(method):
             target = _constructor_of(item, constructors)
@@ -115,7 +115,7 @@ def _annotations_of(item, methods):
 
 
 def _emit_annotation_relations(cls, node, methods, aliases, classes, relation):
-    """Emit association/dependency edges from type annotations."""
+    """按照类型注解出现的位置生成关联边或依赖边。"""
     annotation_nodes = list(node.body)
     for method in _methods_in(node):
         annotation_nodes.extend(own_walk(method))
@@ -133,7 +133,7 @@ def _resolved_constructors(graph, methods, classes):
 
 
 def _collect_class_relations(result, cls, classes, functions, nodes, trees, graph, relation):
-    """Emit dependency/composition/association edges for one class."""
+    """为单个类收集依赖边、组合边和关联边。"""
     node = nodes.get((cls["file"], cls["line"]))
     if not node:
         return

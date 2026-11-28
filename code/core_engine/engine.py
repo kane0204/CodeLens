@@ -1,4 +1,4 @@
-"""CodeLens local, deterministic AST analysis. Never imports or executes input code."""
+"""CodeLens 的本机静态分析引擎。基于语法树和词法分析，不导入或执行待分析源码。"""
 from __future__ import annotations
 
 import ast
@@ -56,7 +56,7 @@ def module_name(path):
 
 
 def own_walk(node):
-    """Walk a function body, excluding nested definitions (separate metrics)."""
+    """遍历当前函数体，跳过单独计算指标的嵌套定义。"""
     stack = list(reversed(node.body))
     while stack:
         item = stack.pop()
@@ -111,7 +111,7 @@ def rank(cc):
 
 
 def code_line_numbers(source):
-    """Physical code lines, excluding blank/comment/docstring-only lines."""
+    """统计有效物理行，排除空行、纯注释行和仅有文档字符串的行。"""
     lines = set()
     try:
         for t in tokenize.generate_tokens(io.StringIO(source).readline):
@@ -134,7 +134,7 @@ def target_name(node):
 
 
 def statement_description(node):
-    # No string values in summaries or exported reports.
+        # 摘要和导出报告不包含源码中的字符串值。
     if isinstance(node, ast.Assign):
         return "赋值：" + ", ".join(target_name(n) for n in node.targets)
     if isinstance(node, (ast.AnnAssign, ast.AugAssign)):
@@ -192,15 +192,13 @@ def cycles_of(nodes, edges):
 
 
 # ---------------------------------------------------------------------------
-# Pipeline stages. `analyze()` used to be a single ~380-line function holding
-# all of these responsibilities plus a stack of closed-over mutable state. The
-# state now lives in `_AnalysisContext` and each stage is a small, testable
-# function; `analyze()` only orchestrates them. Behavior is unchanged.
+# 各分析阶段使用 `_AnalysisContext` 共享状态。`analyze()` 只负责安排阶段顺序，
+# 每个阶段可单独测试。
 # ---------------------------------------------------------------------------
 
 
 class _AnalysisContext:
-    """Mutable state shared by the analysis stages (scope tables, findings, etc.)."""
+    """保存各分析阶段共享的可变状态，例如作用域表和规则发现。"""
 
     __slots__ = (
         "records", "excluded_count", "trees", "definitions", "definition_nodes",
@@ -227,7 +225,7 @@ class _AnalysisContext:
         self.calls = []
         self.inheritance = []
 
-    # -- scope/symbol helpers (were closures inside analyze) -----------------
+    # 作用域和符号收集
 
     def finding(self, rule, severity, file, line, message, suggestion, evidence=levels.EVIDENCE_FACT,
                 actual=None, threshold=None, confidence=None):
@@ -236,7 +234,7 @@ class _AnalysisContext:
                                   actual=actual, threshold=threshold, confidence=confidence))
 
     def bind(self, scope, name, value):
-        # Multiple bindings are conservatively ambiguous, even if one shadows an import later.
+        # 同一个名称有多个绑定时按歧义处理，即使后出现的绑定遮盖了导入名。
         table = self.bindings.setdefault(scope, {})
         table[name] = value if name not in table else None
 
@@ -245,7 +243,7 @@ class _AnalysisContext:
             return ""
         if not node.level:
             return node.module or ""
-        # A selected package root is represented without a synthetic directory prefix.
+        # 用户选择的包根目录无需额外添加虚构的目录前缀。
         root_init = self.module_paths.get("__init__", "")
         at_root = root_init[:-3] == "__init__" and "/" not in record["path"]
         if at_root and node.level == 1:
@@ -291,7 +289,7 @@ class _AnalysisContext:
     def _collect_definition(self, node, scope, record):
         fqn = scope + "." + node.name
         self.bind(scope, node.name, fqn)
-        # Repeated names cannot become uniquely resolved call targets.
+        # 重名符号无法作为唯一确定的调用目标。
         if fqn in self.definitions:
             self.warnings.append({"file": record["path"], "line": node.lineno,
                                   "message": "重复定义名称；调用解析将保守处理：" + fqn})
@@ -312,7 +310,7 @@ class _AnalysisContext:
             for arg in (node.args.vararg, node.args.kwarg):
                 if arg:
                     self.bind(fqn, arg.arg, None)
-        # Definition decorators, defaults, annotations are not counted as body calls.
+        # 定义位置的装饰器、默认参数和注解里出现的调用不计入函数体。
         for stmt in node.body:
             self.collect(stmt, fqn, record)
 
@@ -337,7 +335,7 @@ class _AnalysisContext:
                                  "file": record["path"], "line": node.lineno})
 
     def _collect_expression_scope(self, node, scope, record):
-        # Keep comprehension/lambda locals from contaminating surrounding resolution.
+        # 推导式和 lambda 的局部变量不会参与外层作用域的解析。
         sub = scope + ".<expression:" + str(node.lineno) + ":" + str(node.col_offset) + ">"
         self.scope_parent[sub] = scope
         self.bindings[sub] = {}
@@ -350,7 +348,7 @@ class _AnalysisContext:
         for child in ast.iter_child_nodes(node):
             self.collect(child, sub, record)
 
-    # -- resolution helpers (were closures inside analyze) --------------------
+    # 符号解析
 
     def resolve_name(self, name, scope):
         visited = set()
@@ -361,7 +359,7 @@ class _AnalysisContext:
             if "*" in self.bindings.get(scope, {}):
                 return None, True
             parent = self.scope_parent.get(scope)
-            # A class body is not a lexical environment for its methods.
+        # 方法解析自由名称时跳过所在类的命名空间。
             if self.definitions.get(scope, {}).get("kind") == "function" and \
                     self.definitions.get(parent, {}).get("kind") == "class":
                 parent = self.scope_parent.get(parent)
@@ -406,7 +404,7 @@ class _AnalysisContext:
         return False
 
 
-# -- stage 1: load & validate file records -----------------------------------
+# 第一阶段：加载和校验文件记录。
 
 def _source_bytes(item):
     if "content_base64" in item:
@@ -487,7 +485,7 @@ def _load_records(payload):
     return records, excluded_count
 
 
-# -- stage 2: parse sources (Python AST + non-Python lexer) ------------------
+# 第二阶段：解析源码。Python 使用语法树，其他语言使用词法分析。
 
 def _build_module_paths(ctx):
     for record in ctx.records:
@@ -562,7 +560,7 @@ def _check_function_limits(ctx, function):
 
 
 def _score_python(ctx, record):
-    """Parse one Python record and attach symbols, metrics and threshold findings."""
+    """解析单个 Python 文件，记录符号、指标和超过阈值的发现。"""
     try:
         tree = ast.parse(record["source"], filename=record["path"], feature_version=(3, 11))
         # 第 100001 个节点已足以判定超限，避免继续遍历剩余节点。
@@ -599,7 +597,7 @@ def _parse_sources(ctx):
         ctx.findings.extend(privacy.findings(record["source"], record["path"]))
 
 
-# -- stage 3: resolve relations (calls, inheritance, secrets, IO) ------------
+# 第三阶段：解析调用和继承关系，检查凭据字面量与文件读写。
 
 def _resolve_nonpython_inheritance(ctx):
     class_names = {}
@@ -623,7 +621,7 @@ def _link_generic_bases(ctx, path, cls, class_names):
 
 
 def _check_call(ctx, record, item, scope, valid_defs):
-    """Record one resolved/unresolved call and flag unhandled builtin open()."""
+    """记录调用解析状态，并标记缺少异常处理的内置 `open()` 调用。"""
     target = ctx.resolve_expr(item.func, scope)
     resolved = target in valid_defs
     ctx.calls.append({"source": scope, "target": target if resolved else None,
@@ -647,7 +645,7 @@ def _credential_literal(node):
 
 
 def _check_assignment(ctx, record, item):
-    """Flag sensitive-named variables assigned a non-placeholder string literal."""
+    """敏感命名的变量被赋予非占位字符串字面量时，生成规则发现。"""
     if not _credential_literal(item.value):
         return
     targets = item.targets if isinstance(item, ast.Assign) else [item.target]
@@ -691,7 +689,7 @@ def _resolve_relations(ctx):
         _resolve_class_relations(ctx, record, valid_defs)
 
 
-# -- stage 4: dependencies & cycles ------------------------------------------
+# 第四阶段：构建依赖关系并查找循环依赖。
 
 def _module_dependencies(ctx):
     dependencies = []
@@ -699,7 +697,7 @@ def _module_dependencies(ctx):
         if edge["file"] not in ctx.trees:
             continue
         target = edge["target"]
-        # import pkg.sub can refer to an internal package parent.
+        # `import pkg.sub` 可以指向项目内部的上层包。
         while target not in ctx.module_paths and "." in target:
             target = target.rsplit(".", 1)[0]
         edge = dict(edge)
@@ -731,7 +729,7 @@ def _run_rule_checks(ctx):
     return dependencies, cycles
 
 
-# -- stage 5: assemble the report --------------------------------------------
+# 第五阶段：汇总分析报告。
 
 def _status_of(records, errors):
     if not records:

@@ -1,4 +1,4 @@
-"""Local SQLite storage for completed reviews and resumable reading notes."""
+"""使用本机 SQLite 保存已完成的审查结果和可续跑的阅读笔记。"""
 
 from contextlib import closing
 import json

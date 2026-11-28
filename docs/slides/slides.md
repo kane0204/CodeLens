@@ -28,7 +28,7 @@ Make Code Visible.
 ### 1.1.4 如何获得用户
 
 - 与高校开发者社团、开源项目合作；
-- 在 GitHub、掘金、抖音和 B 站发布推广与使用教程。
+- 在 小红书、B站、GitHub发布推广与使用教程。
 
 ### 1.1.5 团队优势
 团队多人有 OPC 项目开发经验。成员分工覆盖产品、市场、内容、开发和设计，技术和非技术能力互补。团队作为真实用户，重视用户体验，并能根据真实体验反馈快速校准规则。
@@ -133,9 +133,8 @@ img {
 | 问题类别 | 问题名称 | 发生原因 | 解决办法 |
 |---|---|---|---|
 | 分析 | 部分调用关系找不全 | 只分析源码、不运行程序，动态调用难以确认 | 标明不确定和未分析的位置，支持回查源码 |
-| 模型 | AI 解读可能不准确 | 模型可能误解代码或生成不存在的内容 | 核对源码引用，校验失败时保留静态分析结果 |
-| 交互 | 大项目的结果可能过长 | 分析内容多，一次输出有限 | 按文件或模块分批分析，支持单文件解读 |
-| 测试 | 提示可能误报或漏报 | 规则阈值不一定适合所有代码 | 用测试样例检查并调整规则，结合源码复核 |
+| 模型 | llm幻觉 | 模型可能误解代码或生成不存在的内容 | 核对源码引用，校验失败时保留静态分析结果 |
+| 交互 |项目结果过长 | 分析内容多，一次输出有限 | 按文件或模块分批分析，支持单文件解读 |
 
 ---
 
@@ -405,11 +404,11 @@ flowchart LR
 
 | 核心组件 | 源码位置 | 具体实现 | 作用 |
 |---|---|---|---|
-| **模型** | `code/ai/provider.py`<br/>`code/ai/explanation.py`<br/>`code/ai/prompts.py` | OpenAI 兼容 `chat/completions`，支持 GPT、DeepSeek、Qwen 或本地模型 | 生成逻辑、设计与风险说明（将静态输出翻译成人话） |
-| **规划** | `code/ai/explanation.py` | LangGraph 固定 DAG：`read → synthesize`，依次生成逻辑、设计、风险三部分 | 将复杂审查拆分为源码阅读与报告综合 |
+| **模型** | `code/ai/provider.py`<br/>`code/ai/explanation.py`<br/>`code/ai/prompts.py` | OpenAI 兼容 `chat/completions`，支持 GPT、DeepSeek、Qwen等 | 生成逻辑、设计与风险说明（将静态输出翻译成人话） |
+| **规划** | `code/ai/explanation.py` | LangGraph 固定流程：`阅读 → 综合`，依次生成逻辑、设计、风险三部分 | 将复杂审查拆分为源码阅读与报告综合 |
 | **记忆** | `code/ai/review_store.py`<br/>`code/backend/history.py` | PostgreSQL 检查点 + 阅读单元缓存 + 分层摘要 | 断点恢复和未变源码复用 |
-| **知识** | `code/core_engine/` | 本地 AST/IR、调用图、依赖图、复杂度指标 | 提供结构化事实和源码位置 |
-| **护栏** | `code/backend/asgi.py`<br/>`code/backend/credentials.py`<br/>`code/backend/observability.py` | NDJSON 进度流、有限重试、`source_consent` 授权及 `keyring` 密钥管理 | 异常风险代码、敏感信息在“风险评估”中报告，API Key 保存在系统凭据管理器中，防止外泄 |
+| **知识** | `code/core_engine/` | 本地 AST等、调用图、依赖图、复杂度指标 | 提供结构化事实和源码位置 |
+| **护栏** | `code/backend/credentials.py`<br/>`code/backend/observability.py`<br/>`code/ai/contract.py` | `source_consent` 授权、系统 `keyring` 密钥管理、证据校验、日志脱敏 | 异常风险代码、敏感信息在“风险评估”中报告；API Key 保存在系统凭据管理器中，防止外泄；丢弃无证据结论，不执行或修改目标代码 |
 
 <style>
 table {

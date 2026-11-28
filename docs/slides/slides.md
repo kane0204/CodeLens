@@ -31,7 +31,7 @@ Make Code Visible.
 - 在 GitHub、掘金、抖音和 B 站发布推广与使用教程。
 
 ### 1.1.5 团队优势
-具备 Python、TypeScript、React、FastAPI、静态分析和自动化测试能力，采用分工开发与交叉评审协作;真实用户，重视用户体验，能根据真实项目反馈快速校准规则。
+团队多人有 OPC 项目开发经验。成员分工覆盖产品、市场、内容、开发和设计，技术和非技术能力互补。团队作为真实用户，重视用户体验，并能根据真实体验反馈快速校准规则。
 
 ---
 
@@ -39,12 +39,11 @@ Make Code Visible.
 
 | 工具 | 核心定位 | 主要强项 | 与 CodeLens 的区别 |
 |---|---|---|---|
-| radon | 复杂度度量 | 圈复杂度、认知复杂度、可维护性指数 | 提供指标，不产出逻辑、结构和风险审查报告 |
+| radon | 复杂度度量 | 圈复杂度、认知复杂度、可维护性指数 | 不产出逻辑、结构和风险审查报告 |
 | pyan | 调用关系分析 | 函数与模块调用图 | 主要提供调用关系视图 |
 | pyreverse | UML 建模 | 类图、包图和继承关系 | 侧重结构表达，不做质量与风险审查 |
-| Noodles | 控制流可视化 | 函数级控制流图 | 提供 CFG，不负责完整项目审查与源码证据链 |
-| Sourcetrail | 代码导航 | 跨文件符号跳转和依赖浏览 | 侧重阅读与导航，不直接给出质量判断 |
-| **CodeLens** | **可审查的代码分析 Agent** | **逻辑、结构、质量与风险统一分析** | **一次解析、多视图、可复核** |
+| Noodles | 控制流可视化 | 函数级控制流图 | 不负责完整项目审查，无源码证据 |
+| **CodeLens** | **代码分析审查 Agent** | **逻辑、质量、设计与风险统一分析** | **/** |
 
 <style>
 table {
@@ -66,7 +65,7 @@ td {
 
 ### 1.2.1 解决的问题
 
-AI 代码逻辑不透明、隐含假设多、风险难定位。
+AI 代码逻辑不透明、通读困难、风险难定位。
 
 ### 1.2.2 对客户的价值
 
@@ -82,10 +81,10 @@ Web 应用
 
 | 原则 | 落地 |
 |---|---|
-| 需求 / 信息 / 创新 | 从总览进入文件、结构和逻辑步骤，再查看质量与风险，并可回查源码 |
-| 系统 / 收敛 / 优化 | 用统一静态事实组装报告，区分事实与推断，并标明覆盖缺口 |
-| 继承 / 效益 / 时间 | 以 Python `ast` 为核心解析源码，`tokenize` 辅助词法统计，规则引擎生成并校验结果 |
-| 定量 / 简化 / 审核 | 按圈复杂度、函数长度和最大嵌套计算函数健康度，项目分数取函数平均分 |
+| 需求 / 信息 / 创新 | 需求真实存在；通过静态处理降低大模型理解成本 |
+| 系统 / 收敛 / 优化 | 通过统一的静态事实保证结果一致性，使得 AI 推断收敛于源码，并通过源码证据和缺口标注优化报告质量。|
+| 继承 / 效益 / 时间 | 充分调研复用成熟技术，在保证分析效果的同时，控制开发时间成本|
+| 定量 / 简化 / 审核 | 统计圈复杂度、函数长度和最大嵌套将代码质量量化，结果可审核 |
 
 ---
 
@@ -106,7 +105,7 @@ Web 应用
 | 条目 | 技术 | 版本 |
 |---|---|---|
 | 语言 | Python / TypeScript | 本机 Python 3.11+ / TS `~5.7.2` | 共用静态核心与前端类型定义 |
-| 后端 | FastAPI / Uvicorn | 见依赖文件 | 本机分析与审查 API，网页历史同步 |
+| 后端 | FastAPI / Uvicorn | / | 本机分析与审查 API，网页历史同步 |
 | 前端 | React + Vite | `^18.3.1` / `^6.0.5` | 组件化界面与构建 |
 | 样式 / 网页引擎 | Tailwind / Pyodide | `^4.1.7` / `0.27.7` | 网页界面与浏览器内静态分析 |
 | 数据库 | PostgreSQL | 16 | 持久化本机与网页历史 |
@@ -133,10 +132,10 @@ img {
 
 | 问题类别 | 问题名称 | 发生原因 | 解决办法 |
 |---|---|---|---|
-| 分析 | 动态调用难还原 | 静态分析局限 | 标注静态推断与覆盖缺口，供人工复核 |
-| 模型 | 模型可能编造 | LLM 幻觉 | 校验结构化结果和引用，失败时保留静态结果 |
-| 交互 | 解读冗长或截断 | 范围过大或输出预算有限 | 按范围分批审查，支持单文件解读 |
-| 测试 | 阈值误报 | 启发式规则有适用范围 | 用带标签样例检查误报、召回和覆盖缺口 |
+| 分析 | 部分调用关系找不全 | 只分析源码、不运行程序，动态调用难以确认 | 标明不确定和未分析的位置，支持回查源码 |
+| 模型 | AI 解读可能不准确 | 模型可能误解代码或生成不存在的内容 | 核对源码引用，校验失败时保留静态分析结果 |
+| 交互 | 大项目的结果可能过长 | 分析内容多，一次输出有限 | 按文件或模块分批分析，支持单文件解读 |
+| 测试 | 提示可能误报或漏报 | 规则阈值不一定适合所有代码 | 用测试样例检查并调整规则，结合源码复核 |
 
 ---
 
@@ -162,56 +161,207 @@ flowchart LR
 
 ### 3.5.3 总工作流
 
-```mermaid
-%%{init: {"themeVariables": {"fontSize": "16px"}}}%%
-flowchart LR
-    subgraph FE["前端"]
-        direction LR
-        A["导入项目"] --> B["提交分析任务"]
-        U["结果展示"] --> X["源码回查与导出"]
-    end
+<div class="workflow-canvas">
+<svg viewBox="0 0 1200 620" role="img" aria-label="CodeLens 总工作流">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="context-stroke" />
+    </marker>
+    <marker id="arrow-reverse" markerWidth="10" markerHeight="10" refX="1" refY="3" orient="auto">
+      <path d="M9,0 L9,6 L0,3 z" fill="context-stroke" />
+    </marker>
+    <filter id="node-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#173a63" flood-opacity="0.16" />
+    </filter>
+  </defs>
 
-    subgraph CORE["后端（静态分析）"]
-        direction LR
-        C["文件识别（结构、语言）"] --> P["Python<br/>：AST(tokenize)"]
-        C --> G["其他语言<br/>：类AST(tokenize)函数"]
-        P --> R["生成IR、CFG、def-use等/定量计算code smell"]
-        G --> R
-        R --> E["切片/静态证据"]
-        E --> S["静态报告"]
-    end
+  <rect class="panel front" x="0" y="0" width="1200" height="140" rx="14" />
+  <rect class="panel-accent front" x="0" y="0" width="6" height="140" rx="3" />
+  <text class="panel-title" x="24" y="29">前端</text>
+  <rect class="panel agent" x="0" y="152" width="1200" height="224" rx="14" />
+  <rect class="panel-accent agent" x="0" y="152" width="6" height="224" rx="3" />
+  <text class="panel-title" x="24" y="179">Agent 与记忆</text>
+  <rect class="panel backend" x="0" y="388" width="1200" height="232" rx="14" />
+  <rect class="panel-accent backend" x="0" y="388" width="6" height="232" rx="3" />
+  <text class="panel-title" x="24" y="416">静态分析</text>
 
-    subgraph MEM["Agent 与记忆"]
-        direction LR
-        Q{"配置模型？"}
-        AG["Agent处理"]
-        MC["缓存 / 历史线索 / 检查点"]
-        AR["结果合并"]
-        DB[("PostgreSQL<br/>分析历史")]
-    end
+  <path class="edge" d="M315 110 V388 H110 V450" marker-end="url(#arrow)" />
+  <path class="edge" d="M190 480 H210 V444 H240" marker-end="url(#arrow)" />
+  <path class="edge" d="M190 510 H210 V547 H240" marker-end="url(#arrow)" />
+  <path class="edge" d="M420 444 H450 V485 H480" marker-end="url(#arrow)" />
+  <path class="edge" d="M420 547 H450 V485" />
+  <line class="edge" x1="670" y1="495" x2="720" y2="495" marker-end="url(#arrow)" />
+  <line class="edge" x1="860" y1="495" x2="920" y2="495" marker-end="url(#arrow)" />
+  <path class="edge" d="M990 455 V390 H950 V375" marker-end="url(#arrow)" />
+  <path class="edge storage-edge" d="M1060 495 H1080 V245" marker-end="url(#arrow)" />
+  <path class="edge return" d="M1040 310 H1160 V30 H435 V81 H460" marker-end="url(#arrow)" />
+  <path class="edge return" d="M545 225 V110" marker-end="url(#arrow)" />
 
-    B --> C
-    S --> Q
-    Q -- "否" --> U
-    Q -- "是" --> AG
+  <line class="edge" x1="180" y1="81" x2="230" y2="81" marker-end="url(#arrow)" />
+  <line class="edge" x1="630" y1="81" x2="750" y2="81" marker-end="url(#arrow)" />
+  <path class="edge" d="M860 310 H850 V252 H840" marker-end="url(#arrow)" />
+  <path class="edge" d="M760 280 V310" marker-start="url(#arrow-reverse)" marker-end="url(#arrow)" />
+  <line class="edge" x1="680" y1="252" x2="630" y2="252" marker-end="url(#arrow)" />
+  <path class="edge storage-edge" d="M630 240 H655 V200 H990" marker-start="url(#arrow-reverse)" marker-end="url(#arrow)" />
 
-    AG <--> MC
-    AG --> AR
-    S --> DB
-    AR --> DB
-    DB -. "历史回看" .-> U
-    AR --> U
+  <rect class="node" x="30" y="52" width="150" height="58" rx="8" />
+  <text class="label" x="105" y="87">导入项目</text>
+  <rect class="node" x="230" y="52" width="170" height="58" rx="8" />
+  <text class="label" x="315" y="73"><tspan x="315">提交分析</tspan><tspan x="315" dy="22">任务</tspan></text>
+  <rect class="node" x="460" y="52" width="170" height="58" rx="8" />
+  <text class="label" x="545" y="87">结果展示</text>
+  <rect class="node" x="750" y="52" width="190" height="58" rx="8" />
+  <text class="label" x="845" y="73"><tspan x="845">源码回查</tspan><tspan x="845" dy="22">与报告导出</tspan></text>
 
-    classDef input fill:#173a63,stroke:#4b78a6,color:#fff;
-    classDef decision fill:#0f2744,stroke:#7895b2,stroke-dasharray:4 3,color:#fff;
-    classDef agent fill:#285d6b,stroke:#71a9b8,color:#fff;
-    classDef output fill:#173a63,stroke:#4b78a6,color:#fff;
+  <polygon class="decision" points="950,245 1040,310 950,375 860,310" />
+  <text class="label" x="950" y="301"><tspan x="950">配置</tspan><tspan x="950" dy="21">模型?</tspan></text>
+  <rect class="agent-node" x="680" y="225" width="160" height="55" rx="8" />
+  <text class="label" x="760" y="259">Agent处理</text>
+  <rect class="agent-node" x="680" y="310" width="160" height="50" rx="8" />
+  <text class="label small-label" x="760" y="329"><tspan x="760">缓存 / 历史线索</tspan><tspan x="760" dy="19">/ 检查点</tspan></text>
+  <rect class="agent-node" x="460" y="225" width="170" height="60" rx="8" />
+  <text class="label" x="545" y="261">结果合并</text>
+  <rect class="node db-node" x="990" y="180" width="160" height="65" rx="12" />
+  <text class="label" x="1070" y="205"><tspan x="1070">PostgreSQL</tspan><tspan x="1070" dy="21">分析历史</tspan></text>
 
-    class A,B,C,P,G input;
-    class Q decision;
-    class AG,MC agent;
-    class R,E,S,AR,DB,U,X output;
-```
+  <rect class="node" x="30" y="450" width="160" height="90" rx="8" />
+  <text class="label" x="110" y="474"><tspan x="110">文件识别</tspan><tspan x="110" dy="20">（结构、</tspan><tspan x="110" dy="20">语言）</tspan></text>
+  <rect class="node" x="240" y="410" width="180" height="68" rx="8" />
+  <text class="label" x="330" y="437"><tspan x="330">Python</tspan><tspan x="330" dy="20">AST(tokenize)</tspan></text>
+  <rect class="node" x="240" y="505" width="180" height="85" rx="8" />
+  <text class="label small-label" x="330" y="526"><tspan x="330">其他语言</tspan><tspan x="330" dy="19">类AST(tokenize)</tspan><tspan x="330" dy="19">函数</tspan></text>
+  <rect class="node" x="480" y="445" width="190" height="100" rx="8" />
+  <text class="label small-label" x="575" y="475"><tspan x="575">生成IR、CFG、</tspan><tspan x="575" dy="20">def-use等/定量</tspan><tspan x="575" dy="20">计算code smell</tspan></text>
+  <rect class="node" x="720" y="455" width="140" height="75" rx="8" />
+  <text class="label" x="790" y="485"><tspan x="790">切片 /</tspan><tspan x="790" dy="22">静态证据</tspan></text>
+  <rect class="node report-node" x="920" y="455" width="140" height="75" rx="8" />
+  <text class="label" x="990" y="501">静态报告</text>
+
+  <rect class="edge-label-bg" x="842" y="282" width="24" height="20" rx="5" />
+  <text class="edge-label" x="854" y="297">是</text>
+  <rect class="edge-label-bg" x="1080" y="286" width="30" height="20" rx="5" />
+  <text class="edge-label" x="1095" y="301">否</text>
+  <rect class="edge-label-bg" x="1010" y="405" width="140" height="24" rx="6" />
+  <text class="edge-label" x="1080" y="422">静态结果分发</text>
+  <rect class="edge-label-bg" x="455" y="154" width="180" height="24" rx="6" />
+  <text class="edge-label" x="545" y="171">结果回传 / 历史回看</text>
+  <rect class="edge-label-bg" x="720" y="184" width="90" height="24" rx="6" />
+  <text class="edge-label" x="765" y="201">历史读写</text>
+</svg>
+</div>
+
+<style>
+.workflow-canvas {
+  width: 100%;
+  height: min(500px, calc(100vh - 12rem));
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.workflow-canvas svg {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+}
+.workflow-canvas text {
+  font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+}
+.workflow-canvas .panel {
+  stroke-width: 1.2;
+}
+.workflow-canvas .panel.front {
+  fill: #f4f7fb;
+  stroke: #d7e1ec;
+}
+.workflow-canvas .panel.agent {
+  fill: #f2f8f8;
+  stroke: #d4e4e6;
+}
+.workflow-canvas .panel.backend {
+  fill: #f6f6fa;
+  stroke: #deddea;
+}
+.workflow-canvas .panel-accent.front {
+  fill: #4b78a6;
+}
+.workflow-canvas .panel-accent.agent {
+  fill: #5793a1;
+}
+.workflow-canvas .panel-accent.backend {
+  fill: #77729d;
+}
+.workflow-canvas .panel-title {
+  fill: #3e4b5c;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.workflow-canvas .node {
+  fill: #173a63;
+  stroke: #4b78a6;
+  stroke-width: 1.2;
+  filter: url(#node-shadow);
+}
+.workflow-canvas .agent-node {
+  fill: #285d6b;
+  stroke: #71a9b8;
+  stroke-width: 1.2;
+  filter: url(#node-shadow);
+}
+.workflow-canvas .db-node {
+  fill: #443b6d;
+  stroke: #8b80b5;
+}
+.workflow-canvas .report-node {
+  fill: #214f76;
+  stroke: #6f9cbc;
+}
+.workflow-canvas .decision {
+  fill: #0f2744;
+  stroke: #7895b2;
+  stroke-width: 1.3;
+  stroke-dasharray: 5 4;
+  filter: url(#node-shadow);
+}
+.workflow-canvas .label {
+  fill: #fff;
+  font-size: 17px;
+  font-weight: 500;
+  text-anchor: middle;
+}
+.workflow-canvas .small-label {
+  font-size: 14.5px;
+}
+.workflow-canvas .edge {
+  fill: none;
+  stroke: #52657a;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.workflow-canvas .storage-edge {
+  stroke: #77729d;
+}
+.workflow-canvas .dotted {
+  stroke-dasharray: 4 4;
+}
+.workflow-canvas .return {
+  stroke: #3d8391;
+  stroke-width: 1.8;
+}
+.workflow-canvas .edge-label {
+  fill: #405165;
+  font-size: 13px;
+  font-weight: 500;
+  text-anchor: middle;
+}
+.workflow-canvas .edge-label-bg {
+  fill: rgba(255, 255, 255, 0.94);
+  stroke: rgba(82, 101, 122, 0.14);
+  stroke-width: 0.8;
+}
+</style>
 
 
 ---
@@ -219,7 +369,7 @@ flowchart LR
 ### 3.5.3 Agent工作流：Plan-and-Execute
 
 ```mermaid
-%%{init: {"themeVariables": {"fontSize": "16px"}}}%%
+%%{init: {"themeVariables": {"fontSize": "36px"}, "flowchart": {"padding": 14, "nodeSpacing": 8, "rankSpacing": 12, "minNodeWidth": 220, "wrappingWidth": 220}}}%%
 flowchart LR
     A["静态处理结果"] --> C["构造上下文"]
     C --> B{"缓存命中？"}
@@ -228,7 +378,7 @@ flowchart LR
     B -- "否" --> D["模型处理"]
     D --> E{"（gap函数）校验通过？"}
 
-    E -- "否" --> F["补充一次上下文（仅有一次）"]
+    E -- "否" --> F["补充一次上下文"]
     F --> C
     E -- "是" --> G{"还有下一部分？"}
 
@@ -249,6 +399,32 @@ flowchart LR
 
 ---
 
+### 3.5.3 Agent 组成
+
+本项目采用“确定性静态分析 + 可选模型增强”架构：静态分析负责事实与证据，模型基于证据生成说明。
+
+| 核心组件 | 源码位置 | 具体实现 | 作用 |
+|---|---|---|---|
+| **模型** | `code/ai/provider.py`<br/>`code/ai/explanation.py`<br/>`code/ai/prompts.py` | OpenAI 兼容 `chat/completions`，支持 GPT、DeepSeek、Qwen 或本地模型 | 生成逻辑、设计与风险说明（将静态输出翻译成人话） |
+| **规划** | `code/ai/explanation.py` | LangGraph 固定 DAG：`read → synthesize`，依次生成逻辑、设计、风险三部分 | 将复杂审查拆分为源码阅读与报告综合 |
+| **记忆** | `code/ai/review_store.py`<br/>`code/backend/history.py` | PostgreSQL 检查点 + 阅读单元缓存 + 分层摘要 | 断点恢复和未变源码复用 |
+| **知识** | `code/core_engine/` | 本地 AST/IR、调用图、依赖图、复杂度指标 | 提供结构化事实和源码位置 |
+| **护栏** | `code/backend/asgi.py`<br/>`code/backend/credentials.py`<br/>`code/backend/observability.py` | NDJSON 进度流、有限重试、`source_consent` 授权及 `keyring` 密钥管理 | 异常风险代码、敏感信息在“风险评估”中报告，API Key 保存在系统凭据管理器中，防止外泄 |
+
+<style>
+table {
+  font-size: 0.6em;
+  line-height: 1.28;
+}
+
+th,
+td {
+  padding: 0.26rem 0.34rem !important;
+}
+</style>
+
+---
+
 
 ### 3.5.4 数据库设计
 
@@ -258,7 +434,7 @@ erDiagram
     PROJECT ||--o{ VERSION : "本机项目版本"
     VERSION ||--o{ ANALYSIS : "分析历史"
     PROJECT ||--o{ PROJECT_CHECKPOINT : "项目检查点"
-    REVIEW_CHECKPOINT
+    REVIEW_CHECKPOINTAI（审查已经完成的批次和进度，单独保存）
     ACCOUNTS ||--o{ RUNS : "账号审查历史"
     RUNS ||--o{ CHECKPOINTS : "续跑检查点"
 ```
